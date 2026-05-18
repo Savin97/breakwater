@@ -1,0 +1,627 @@
+[33mcommit 27d0a2ce290fd56a2eb5ec91986d4f119be4e818[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun May 17 23:53:43 2026 +0300
+
+    17/5/26 Applied new features to the streamlit dash
+
+[33mcommit 2bf609be560c1ab8169bedeaac861637f205453c[m
+Author: Michael <savin992@gmail.com>
+Date:   Mon May 18 01:22:33 2026 +0300
+
+    18/5/26 Added claude memory
+
+[33mcommit 73a68460ae152e8c24fc607a4ca246f7d69f85b0[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sat May 16 22:21:27 2026 +0300
+
+    16/5/26
+    Tested earnings_explosiveness.
+    Added timing features that add prediciton:
+    surprise_features,
+    pre_earnings_drift_z.
+    This was added to report, labels changed to 'High Alert', 'Elevated', 'Normal'.
+    Weekly Calendar added to Streamlit dash.
+
+[33mcommit 293299d74d8672a47d897dd6b9a1f298c960c07f[m
+Author: Michael <savin992@gmail.com>
+Date:   Tue May 12 14:43:11 2026 +0300
+
+    12/5/26 simplified directories
+
+[33mcommit 2ec9a16d95a2f4ba4989dda9b178ad2501a5680e[m
+Author: Michael <savin992@gmail.com>
+Date:   Tue May 12 23:35:54 2026 +0300
+
+    12/5/26 Initialized Calude Code.
+    Worked on the earnings explosiveness score, reduced it to just 2 params, scores look much better now.
+    Also Reports are overhauled, content and design-wise
+
+[33mcommit 2db67d3c4b55d19d5dd820812baf7eaab2386633[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun May 3 00:36:12 2026 +0300
+
+    2/5/26 improved momentum_fragility_score
+
+[33mcommit e651fd85048371c5eaed9a19d0d35fe03a861769[m
+Author: Michael <savin992@gmail.com>
+Date:   Fri May 1 14:11:51 2026 +0300
+
+    30/4/26 testing
+
+[33mcommit b82f61a033115af318029b231b787eef3f0d2a99[m
+Author: Michael <savin992@gmail.com>
+Date:   Wed Apr 29 17:57:06 2026 +0300
+
+    28/4/26 testing
+
+[33mcommit 52b44e47a6cb2aecc805ddc32424580129dc2463[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sat Apr 25 23:56:59 2026 +0300
+
+    25/4/26 small changes for streamlit
+
+[33mcommit 20b3176ef4193127f2153faee0a2fd5df8a99e82[m
+Author: Michael <savin992@gmail.com>
+Date:   Thu Apr 23 18:34:24 2026 +0300
+
+    23/4/26 prepping for streamlit
+
+[33mcommit b07906649549cda237a0a63a11fdcf7a58ec94d8[m
+Author: Michael <savin992@gmail.com>
+Date:   Thu Apr 23 18:22:08 2026 +0300
+
+    23/4/26 prepping df for streamlit
+
+[33mcommit 0c4c324ea8362c3ada3af4cac04b7b5893d151bd[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun Apr 19 00:26:24 2026 +0300
+
+    18/4/26 minor tweaks
+
+[33mcommit a0651e3d1bae6fc2ff9943a1db4a7e7cc56f3126[m
+Merge: a3b0a09 cbf63f5
+Author: Michael <savin992@gmail.com>
+Date:   Wed Apr 15 13:43:01 2026 +0300
+
+    Merge branch 'master' of github.com:Savin97/Breakwater
+
+[33mcommit a3b0a091e3339288c9513e0a049f04ef5ecd337c[m
+Author: Michael <savin992@gmail.com>
+Date:   Wed Apr 15 13:41:27 2026 +0300
+
+    14/4/26 working on the landing page
+
+[33mcommit cbf63f5b277113db1060be44a798b500093e5e2a[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Mon Apr 13 23:42:25 2026 +0300
+
+    13/4/26 still testing scoring
+
+[33mcommit 1d3359d9a0f96ad6649731b06538b256b6c41d2f[m
+Author: Michael <savin992@gmail.com>
+Date:   Mon Apr 13 18:48:51 2026 +0300
+
+    13/4/26 not much
+
+[33mcommit 45c4f0856b3ddb1dc60bf3dc41b07514ab522f0f[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun Apr 12 23:07:33 2026 +0300
+
+    12/4/26 testing...
+
+[33mcommit 82ddd96e9ee67fb4c65d1a2ad5d7f008151f88d3[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sat Apr 11 23:56:42 2026 +0300
+
+    11/4/26 testing features in testing.py
+
+[33mcommit ff7fcc0071387cda9eb21b93eb1bbd399951649e[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun Mar 22 14:27:49 2026 +0200
+
+    21/3/26 Testing scoring features
+
+[33mcommit 93fcbc516a8a3292a9334a916638f39a2982cd32[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Mon Mar 16 23:55:22 2026 +0200
+
+    16/3/26 working out stage5 - reports, which features to use for scoring
+
+[33mcommit 66785fca9d24f2841b5ed4a7c9e19f8bd5d4c743[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Thu Mar 12 23:21:12 2026 +0200
+
+    12/3/26 not much since 28/2/26
+
+[33mcommit 9577d15d575275a7fa7a94a55dc16bb7498b7c6b[m
+Merge: 368face 43bae2e
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Fri Feb 27 14:49:39 2026 +0200
+
+    Merge branch 'master' of https://github.com/Savin97/Breakwater
+
+[33mcommit 368faceba6d2e16849b92ab0fff4d90c017f45ac[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Fri Feb 27 14:49:30 2026 +0200
+
+    Small change
+
+[33mcommit 43bae2efdda92683f4e9f688de862f10dc757cd5[m
+Author: Michael <savin992@gmail.com>
+Date:   Fri Feb 27 14:41:43 2026 +0200
+
+    26/2/26 Added fetching_next_earnings module
+
+[33mcommit 6150596647aef7de17ffd8f575b26392d171f3ab[m
+Author: Michael <savin992@gmail.com>
+Date:   Wed Feb 25 17:21:15 2026 +0200
+
+    25/2/26 Tested out timing_danger as a candidate for risk_score. Normalized it to 0-100 and it looks pretty good.
+    Added to the report template too.
+
+[33mcommit 3815afad1e475d5d1445abae61acdc00f5e27cb1[m
+Author: Michael <savin992@gmail.com>
+Date:   Tue Feb 24 17:43:38 2026 +0200
+
+    24/2/26 building report gen
+
+[33mcommit cb9945ae35aec02aea9fe4c48ed2fac2f142ab4a[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun Feb 22 23:39:34 2026 +0200
+
+    22/2/26 integrating duckdb into the pipeline
+
+[33mcommit 46ab14971375e88e3d28e23c3a34a879461e09ca[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sat Feb 21 23:20:53 2026 +0200
+
+    21/2/26 starting to integrate duckdb into main pipeline
+
+[33mcommit b2c50563c65d16ffc5537892b3f3eeeb4022a80e[m
+Merge: f1facc1 3d3de23
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Fri Feb 20 22:00:17 2026 +0200
+
+    Merge branch 'master' of https://github.com/Savin97/Breakwater
+
+[33mcommit f1facc1b398180019d03929f8dc89e47a84746b9[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Fri Feb 20 21:58:02 2026 +0200
+
+    merge
+
+[33mcommit 3d3de235f12c3f71a398a209cdfe244e55009090[m
+Author: Michael <savin992@gmail.com>
+Date:   Fri Feb 20 21:54:36 2026 +0200
+
+    19/2/26
+
+[33mcommit abb919427c06f20d476e652e2870ab78543874a6[m
+Author: Michael <savin992@gmail.com>
+Date:   Thu Feb 19 13:49:02 2026 +0200
+
+    19/2/26 duckdub work
+
+[33mcommit 6e09da1a392c14da0a13a14c59bf34f4efc818db[m
+Author: Michael <savin992@gmail.com>
+Date:   Wed Feb 18 17:05:36 2026 +0200
+
+    18/2/26 DuckDB earnings fetching should be OK
+
+[33mcommit ef8086fabfe2fa5ed82abaaac76f9e9655dbf74c[m
+Author: Michael <savin992@gmail.com>
+Date:   Wed Feb 18 00:29:41 2026 +0200
+
+    18/2/26
+    Forgot to add backtesting to git, fixed here
+
+[33mcommit be829b50b9e2a9201af92e03f9b5ed08b629eb69[m
+Author: Michael <savin992@gmail.com>
+Date:   Wed Feb 18 00:28:03 2026 +0200
+
+    18/2/26
+    Earnings dates duckdb tested for one stock.
+    Report Layer started:
+    dirs report,img created
+
+[33mcommit 8b9b85dfedb025c003f0bd786fabbecbc6f23fb0[m
+Author: Michael <savin992@gmail.com>
+Date:   Fri Feb 13 21:08:01 2026 +0200
+
+    12/2/26 Building Duckdb, building ingesting all stocks
+
+[33mcommit 0488523d67168430fdb0dec8363154a3adcb1f3e[m
+Author: Michael <savin992@gmail.com>
+Date:   Wed Feb 11 23:51:29 2026 +0200
+
+    11/2/26 Continuing DuckDB testing
+
+[33mcommit 9c259bd8c2dfb19127ef289187c5980bf6140b07[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Tue Feb 10 23:41:58 2026 +0200
+
+    10/2/26 continuing db testing
+
+[33mcommit e99282e816c4483306079774d9833baa02e3dd7e[m
+Author: Michael <savin992@gmail.com>
+Date:   Tue Feb 10 19:21:01 2026 +0200
+
+    10/2/26 Some more backtesting.
+    Started transitioning to DuckDB
+
+[33mcommit 1f030cdb023ae22513847c85f1cff893970221ac[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Mon Feb 9 23:16:47 2026 +0200
+
+    9/2/26 Back testing with GPT, might want to get rid of those files or archive them, and also remove from pipeline.py.
+
+[33mcommit c728fe74ce425a490054e4be82f58b09a80ebfd4[m
+Author: Michael <savin992@gmail.com>
+Date:   Mon Feb 9 20:59:21 2026 +0200
+
+    9/2/26 testing GPT genertated back testing files (stage5)
+
+[33mcommit 06a5b13cad55f6a37ce83eb17566afd0783c817b[m
+Author: Michael <savin992@gmail.com>
+Date:   Mon Feb 9 16:21:30 2026 +0200
+
+    9/2/26 Tested explosiveness feature, looks good. Continuing back testing. Added comments in stage1 for improved fetching
+
+[33mcommit 346d0a76786ea770d17b154666a45c02735fb175[m
+Author: Michael <savin992@gmail.com>
+Date:   Mon Feb 9 15:29:24 2026 +0200
+
+    9/2/26 Tested explosiveness feature, looks good. Continuing back testing
+
+[33mcommit 3c7d57d08b79a93839eef33989975f172d8a3f6b[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Thu Feb 5 00:09:49 2026 +0200
+
+    4/2/26 Wokring on back testing, tweaked features:
+    proximity score
+    vol_expnasion
+    earnings explosiveness
+    momentum fragility
+
+[33mcommit f3b56b7aa6c9a385469b3ea636e735e0a7582b23[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Tue Feb 3 23:26:03 2026 +0200
+
+    nothing
+
+[33mcommit 67bde4e411ac368460f26ec3cb5aeb37afdb0942[m
+Author: Michael <savin992@gmail.com>
+Date:   Mon Feb 2 17:25:58 2026 +0200
+
+    2/2/26 continuing back testing
+
+[33mcommit ddda92c61324705aa9360716e642901c5297bbcc[m
+Merge: 2f0dfd5 08f7dd8
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun Feb 1 20:10:25 2026 +0200
+
+    Merge branch 'master' of https://github.com/Savin97/Stock-Earnings-Risk-Model
+
+[33mcommit 2f0dfd58364f2369443e4691fd75a9ec6d772105[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun Feb 1 20:09:57 2026 +0200
+
+    minor thing
+
+[33mcommit 08f7dd852ca1814471d4fabe31f86331dc4a2546[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sun Feb 1 18:40:58 2026 +0200
+
+    1/02/26 started back ttesting
+
+[33mcommit b49a0425b49c61b3ee010303a3f7c0cdb6b481f9[m
+Merge: 3b4dc34 8e9a224
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sun Feb 1 14:42:04 2026 +0200
+
+    Merge branch 'master' of https://github.com/Savin97/Breakwater
+
+[33mcommit 3b4dc3492a3596736828acb39c467ed7e269741e[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sun Feb 1 14:42:00 2026 +0200
+
+    1/02/2026
+
+[33mcommit 8e9a224788b4bc2b4c3c5b5a17e9d96b81e5056f[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sat Jan 31 18:27:12 2026 +0200
+
+    31/1/26 sync check
+
+[33mcommit ef336e9c4ae457b0f1a03682f237cc24297b775e[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Fri Jan 30 23:44:31 2026 +0200
+
+    30/1/26 Working on scoring features, timing_danger
+
+[33mcommit ba3b5d8068c30a3bd7a16812bb8bc0a4d265dbb8[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Thu Jan 29 18:30:11 2026 +0200
+
+    29/1/26 Building Scoring Features
+
+[33mcommit a45c9126d15e28a4a1a42f8b9c67625ed00a3363[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Wed Jan 28 20:32:30 2026 +0200
+
+    28/1/26 working on vol stress
+
+[33mcommit bf909b9e73034839edb31b4ccea66d35553ef325[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Tue Jan 27 19:21:03 2026 +0200
+
+    27/1/26 Advanced stage2, started stage3 - risk scoring
+
+[33mcommit 8d21cdab36a0f49f65201994786d6bf49f0f76ed[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Tue Jan 27 14:35:14 2026 +0200
+
+    Delete output directory
+
+[33mcommit 60093a4391d77b8ea586f6e3fd6c00411a5c6edf[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Tue Jan 27 14:34:40 2026 +0200
+
+    Delete __pycache__ directory
+
+[33mcommit b644f78168e7721e4ada1d1482663f90ff3b5a7b[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Tue Jan 27 14:34:31 2026 +0200
+
+    Delete data directory
+
+[33mcommit 00f15b54f9b13049db09602d0442fd8d148f3a2c[m
+Merge: f26688d 0aaf50c
+Author: Michael Savin <savin992@gmail.com>
+Date:   Tue Jan 27 13:30:53 2026 +0200
+
+    Merge branch 'master' of https://github.com/Savin97/Breakwater
+
+[33mcommit f26688d60d61c1b2b5ccbba9b31de8adeb762921[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Tue Jan 27 13:30:34 2026 +0200
+
+    minor tweaks
+
+[33mcommit 0aaf50c67014067992c770235ad2e0bba75194da[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Tue Jan 27 12:23:55 2026 +0200
+
+    27/1/26 sector features
+
+[33mcommit 098da6301e38d70bd41c707bf61e29d3b364fe19[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Tue Jan 27 00:15:15 2026 +0200
+
+    26/1/26  minor tweaks
+
+[33mcommit f5c9283dd0f1856ed1a67660169f35937b5d1f2c[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Mon Jan 26 23:22:12 2026 +0200
+
+    26/1/26 added 2 TODO comments
+
+[33mcommit ab1ae79cb4e47e6ff83a4070a4486bfb3e7b60b0[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Mon Jan 26 20:35:42 2026 +0200
+
+    26/1/26 Added some more stage 2 features; Tested fetching and working on data from 2005
+
+[33mcommit 456c487edc96f611c6faab2cadbb3e59aee147e8[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Mon Jan 26 20:34:23 2026 +0200
+
+    26/1/26 Added some more stage 2 features; Tested fetching and working on data from 2005
+
+[33mcommit 8a0b8ff17e624a3ea8d15ec57dfa2e790a793a12[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun Jan 25 23:14:02 2026 +0200
+
+    25/1/26 Mid stage 2
+
+[33mcommit ff6bdd0197580efecf7cde7313ff2b1005b797c7[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sun Jan 25 17:35:14 2026 +0200
+
+    25/1/26 Engineering drift, vol, momentum, other stock features
+
+[33mcommit 1dd32b0d3e139ae499aaa531498f9206a046adec[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sat Jan 24 23:50:19 2026 +0200
+
+    24/1/26 Working on stage 2
+
+[33mcommit a34c7b907e07925328116b20c6ba8e1b667aa840[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sat Jan 24 22:03:13 2026 +0200
+
+    24/1/26 Data fetching stage complete.
+    Stage 2 started, several features built.
+
+[33mcommit a507670808fa473338a2a029b7be07033bd2033a[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Thu Jan 22 21:02:42 2026 +0200
+
+    22/21/26 Sector Fetching Works
+
+[33mcommit a2520f64414530d9a894a60a1001536b71f18e15[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Thu Jan 22 17:30:09 2026 +0200
+
+    22/1/26 Building Sector Fetching
+
+[33mcommit 8958e6511a675c7855ce59fbb8ec391b31bc9b59[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Wed Jan 21 20:08:20 2026 +0200
+
+    21/1/26 file name change
+
+[33mcommit 80f73387fc061ab373d861a354b0e15557739691[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Wed Jan 21 17:43:11 2026 +0200
+
+    21-1-26 Strengthening stage 1
+
+[33mcommit 779efc1868eefb9c37507186e54491b27cbc49c0[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Wed Jan 21 00:20:15 2026 +0200
+
+    Starting stage 2
+
+[33mcommit 6af1dbaa1e8c71f6d31b4547498b9dd22d2a4b28[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Mon Jan 19 17:35:38 2026 +0200
+
+    19/1/26 merging prices,earnings now works
+
+[33mcommit a725e68ab9622c14a7e85762727d94a41387eb7f[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sun Jan 18 20:06:34 2026 +0200
+
+    working out merging prices and earnings
+
+[33mcommit 3c47f9e1c0c845a65ed36f8489bd6bb7018306bf[m
+Merge: 8cf70b3 7a241c1
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sun Jan 18 19:08:02 2026 +0200
+
+    Merge branch 'master' of https://github.com/Savin97/Breakwater
+
+[33mcommit 8cf70b3a01eed1b965b00ce1c152f9040d8295de[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sun Jan 18 19:07:57 2026 +0200
+
+    minor
+
+[33mcommit 7a241c1fa33045546d43005fecc2689df1e6bf0d[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun Jan 18 00:50:06 2026 +0200
+
+    working on merge
+
+[33mcommit a35d4c82132ebca2f8ced5cb4da3941ae3d03e47[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Thu Jan 15 23:42:43 2026 +0200
+
+    fetch_eps MINOR TWEAKS
+
+[33mcommit 996d818b1fb15d3e5ee7cf3c4d48cf0783fb43f7[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Wed Jan 14 16:29:02 2026 +0200
+
+    evolving fetch_eps
+
+[33mcommit 2002236d1205240417d267ccff4a758d90d71077[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Wed Jan 14 15:22:16 2026 +0200
+
+    building fetch_eps functions
+
+[33mcommit 2d66ed090af2c9582285f089f14a413b5fa0f13b[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Mon Jan 12 17:43:16 2026 +0200
+
+    tweaks
+
+[33mcommit 3ee83ad49166d15cb174efaa9a3cd17220b40d10[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sun Jan 11 18:11:11 2026 +0200
+
+    started fetch_eps
+
+[33mcommit 8ee48215cdd87e34116ed89714668e73d1d1c82f[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sun Jan 11 16:28:29 2026 +0200
+
+    Started fetch_earnings
+
+[33mcommit 32649a2eb7646ad415f459418df6b8a7bbb894dd[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Sat Jan 10 23:26:02 2026 +0200
+
+    moved fetch_earnings back
+
+[33mcommit 7ef8ccd6ac253f9e2cefa439eba4c09f373bb4a9[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sat Jan 10 23:22:30 2026 +0200
+
+    fixed .venv
+
+[33mcommit ff8174e74f946eb9d8a62538beb14c887a9ca00e[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sat Jan 10 17:14:11 2026 +0200
+
+    fetching stocks from a simple txt/csv file now works
+
+[33mcommit e58b6239d0b333e89a9fc07dd2cb4154d668a156[m
+Merge: bdc7e1d 061e3f8
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Fri Jan 9 17:38:17 2026 +0200
+
+    Merge branch 'master' of https://github.com/Savin97/Stock-Earnings-Risk-Model
+
+[33mcommit bdc7e1dd1292630ed581ff22d1fe81d9ca0f1bd1[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Fri Jan 9 17:37:50 2026 +0200
+
+    9/1/26 commented out args functionality, added helper_funcs
+
+[33mcommit 061e3f896fb36dcd435a516587a56506e51f3b08[m
+Author: Michael Savin <savin992@gmail.com>
+Date:   Fri Jan 9 01:15:43 2026 +0200
+
+    added .venv
+
+[33mcommit 23a93ce38c975cb4e522ed34943bfa2740ea4258[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Tue Jan 6 22:29:11 2026 +0200
+
+    updates integrating fetch_stock_prices into the pipeline. added gitignore
+
+[33mcommit 9e1cb2757e18daafc5a1d0904d66e8eb21f4f312[m
+Merge: df6ca62 d02113d
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Mon Jan 5 16:11:00 2026 +0200
+
+    Merge branch 'master' of https://github.com/Savin97/Stock-Earnings-Risk-Model
+
+[33mcommit df6ca6237864d9e7be8ce91688ba5d99415e1e04[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Mon Jan 5 16:10:17 2026 +0200
+
+    push pull
+
+[33mcommit d02113da78668bb7bf1ad10b9770784ac26b1b42[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Sun Jan 4 16:36:40 2026 +0200
+
+    Looked over fetch_prices, added fetch_earnings
+
+[33mcommit d84b991216429743004754bf0419877b2c411cc5[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Fri Jan 2 16:09:40 2026 +0200
+
+    1
+
+[33mcommit e19af5e299a9d3e07ac8344fc0e98be7ea55252d[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Thu Jan 1 18:36:22 2026 +0200
+
+    built 1st versopm of fetch_prices
+
+[33mcommit c52d274c743e9548b255801d301e0736a8eeffcd[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Thu Jan 1 15:58:00 2026 +0200
+
+    data_ingestion folder created
+
+[33mcommit b08e7b7e7bd2009894611aa1e0d5f9bc0fac587f[m
+Author: Savin97 <47434031+Savin97@users.noreply.github.com>
+Date:   Thu Jan 1 10:43:19 2026 +0200
+
+    Project Initialization

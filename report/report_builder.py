@@ -29,12 +29,8 @@ def generate_report(stock, data):
         surprise_flag   = data.get("surprise_flag", ""),
         drift_flag      = data.get("drift_flag", ""),
         high_conviction = data.get("high_conviction", False),
+        recommendation  = data.get("recommendation", {}),
     )
-    # Executive Summary (1 page)
-    # Plain English:
-    # "This stock has structurally elevated earnings jump risk."
-    # "Top 5% of earnings tail risk across coverage universe."
-    # "Historically, extreme 3-day reactions occurred in 38% of similar regimes."
 
     REPORT_OUTPUT_PATH = f"output/{stock}_report.pdf"
     HTML(string=html_out, base_url=project_root).write_pdf(REPORT_OUTPUT_PATH)

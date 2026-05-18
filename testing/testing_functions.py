@@ -2,7 +2,6 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from testing.features_for_backtesting import add_joint_regime_flag
 """
     Backtesting & Regime Evaluation Utilities for Breakwater
 
@@ -69,9 +68,6 @@ from testing.features_for_backtesting import add_joint_regime_flag
     CLASSIFICATION METRICS
     ---------------------------------------------------------------------------
 
-    regime_confusion_metrics(df)
-        Computes TP/FN/FP/TN, precision, recall for regime flags
-        predicting extreme reactions.
 
     (Threshold sweep block)
         Iterates multiple quantile thresholds and evaluates confusion
@@ -441,32 +437,30 @@ def evaluate_high_risk_earnings_regime(df, score_feature):
                     cond.sum(),
                     subset.loc[cond, "is_extreme_reaction"].mean())
 
-def regime_confusion_metrics(input_df):
+def testing_precision_recall(input_df):
     df = input_df.copy()
-    for threshold in [0.5, 0.7, 0.8, 0.85, 0.9, 0.95]:
-        print(f"\n--- Joint Regime Flag at {threshold} Quantile ---")
-        df = add_joint_regime_flag(df, threshold)
-        earnings = df[df["is_earnings_day"] == 1].copy()
+    print(f"\n--- Precision & Recall tests ---")
+    earnings = df[df["is_earnings_day"] == 1].copy()
 
-        extreme = earnings["is_extreme_reaction"] == 1
-        regime = earnings["is_joint_regime"] == 1
+    extreme = earnings["is_extreme_reaction"] == 1
+    regime = earnings["is_joint_regime"] == 1
 
-        TP = ((regime) & (extreme)).sum()
-        FN = ((~regime) & (extreme)).sum()
-        FP = ((regime) & (~extreme)).sum()
-        TN = ((~regime) & (~extreme)).sum()
+    TP = ((regime) & (extreme)).sum()
+    FN = ((~regime) & (extreme)).sum()
+    FP = ((regime) & (~extreme)).sum()
+    TN = ((~regime) & (~extreme)).sum()
 
-        recall = TP / (TP + FN)
-        precision = TP / (TP + FP)
+    recall = TP / (TP + FN)
+    precision = TP / (TP + FP)
 
-        print("TP:", TP)
-        print("FN:", FN)
-        print("FP:", FP)
-        print("TN:", TN)
-        print("recall:", recall)
-        print("precision:", precision)
-        print(regime.sum(), "events flagged")
-        print(len(earnings), "total earnings events")
+    print("TP:", TP)
+    print("FN:", FN)
+    print("FP:", FP)
+    print("TN:", TN)
+    print("recall:", recall)
+    print("precision:", precision)
+    print(regime.sum(), "events flagged")
+    print(len(earnings), "total earnings events")
 
 def comparing_regime_results_to_volatility_only(df):
     earnings_df = df[df.is_earnings_day == 1].sort_values(["stock","date"]).copy()
@@ -854,3 +848,79 @@ def forward_eval_twofactor(
     return pd.concat([stats(train, "TRAIN"), stats(test, "TEST")], ignore_index=True), (thr1, thr2)
 
 
+def high_conviction_regime_test(df, test_years=range(2011, 2026)):
+    """
+        Testing whether adding the pre_earnings_drift_flag 
+        condition on top of "High Alert" actually improve prediction, or is it noise?
+    """
+    earn = df[df["is_earnings_day"] == 1].copy()
+    earn["year"] = pd.to_datetime(earn["date"]).dt.year
+    earn["y"] = earn["is_extreme_reaction"].astype(int)
+    earn["high_alert"] = earn["earnings_explosiveness_bucket"] == "High Alert"
+    drift = earn["pre_earnings_drift_flag"].fillna("") != ""
+    surprise = earn["surprise_momentum_flag"].fillna("") != ""
+
+    regimes = {
+        "High Alert":                earn["high_alert"],
+        "HA + Drift flag":           earn["high_alert"] & drift,
+        "HA + Any surprise flag":    earn["high_alert"] & surprise,
+        "HA + Beat Streak":          earn["high_alert"] & (earn["surprise_momentum_flag"] == "Beat Streak"),
+        "HA + Miss Streak":          earn["high_alert"] & (earn["surprise_momentum_flag"] == "Miss Streak"),
+        "HA + Overdue Miss":         earn["high_alert"] & (earn["surprise_momentum_flag"] == "Overdue Miss"),
+        "HA + Erratic":              earn["high_alert"] & (earn["surprise_momentum_flag"] == "Erratic"),
+        "HA + Drift OR Surprise":    earn["high_alert"] & (drift | surprise),
+        "HA + Drift AND Surprise":   earn["high_alert"] & drift & surprise,
+        "HA + Drift OR (Surprise ex-OM)": earn["high_alert"] & (
+            drift |
+            earn["surprise_momentum_flag"].isin(["Beat Streak", "Miss Streak", "Erratic"])
+        ),
+    }
+
+    test = earn[earn["year"].isin(test_years)].copy()
+
+    rows = []
+    for y, g in test.groupby("year"):
+        N = len(g)
+        K = int(g["y"].sum())
+        base = K / N if N else np.nan
+        for label, full_mask in regimes.items():
+            mask = full_mask[g.index]
+            sub = g[mask]
+            n = len(sub)
+            if n == 0:
+                continue
+            k = int(sub["y"].sum())
+            rate = k / n
+            rows.append({"regime": label, "year": int(y), "n": n,
+                         "extreme_rate": rate, "lift": rate / base if base else np.nan,
+                         "capture": k / K if K else np.nan})
+
+    result = pd.DataFrame(rows).sort_values(["regime", "year"])
+    cols = ["year", "n", "extreme_rate", "lift", "capture"]
+    base_rate = test["y"].mean()
+
+    print("\n--- Summary (all OOS years pooled) ---")
+    summary_rows = []
+    for label in regimes:
+        grp = result[result["regime"] == label]
+        if grp.empty:
+            continue
+        tot_n = grp["n"].sum()
+        avg_extreme = (grp["extreme_rate"] * grp["n"]).sum() / tot_n
+        summary_rows.append({
+            "regime": label, "total_n": tot_n,
+            "n_per_yr": round(tot_n / len(grp), 0),
+            "extreme_rate": round(avg_extreme, 3),
+            "lift": round(avg_extreme / base_rate, 2),
+            "avg_capture": round(grp["capture"].mean(), 3),
+        })
+    print(pd.DataFrame(summary_rows).to_string(index=False))
+    print(f"\nBaseline extreme rate: {base_rate:.3f}")
+
+    print("\n--- Year-by-year: HA + Any surprise flag ---")
+    grp = result[result["regime"] == "HA + Any surprise flag"]
+    print(grp[cols].to_string(index=False))
+
+    print("\n--- Year-by-year: HA + Drift OR Surprise ---")
+    grp = result[result["regime"] == "HA + Drift OR Surprise"]
+    print(grp[cols].to_string(index=False))

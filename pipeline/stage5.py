@@ -4,6 +4,7 @@ from datetime import date
 import pandas as pd
 from report.report_builder import generate_report
 from report.calendar_builder import generate_calendar
+from report.recommendations_builder import build_recommendation
 from pipeline.streamlit_export import export_streamlit_df
 
 def stage5(df):
@@ -16,7 +17,7 @@ def stage5(df):
         stocks_to_report_for = []
         print("Warning: data/report_stocks.csv not found. No reports generated.")
 
-    company_names = pd.read_csv("data/sp500_data.csv", usecols=["stock", "name"]).set_index("stock")["name"]
+    company_names = pd.read_csv("data/sp500_full_info.csv", usecols=["ticker", "name"]).set_index("ticker")["name"]
     generated_date = date.today().strftime("%B %d, %Y")
 
     global_earnings_df = df[df["is_earnings_day"] == 1].copy()
@@ -106,6 +107,18 @@ def stage5(df):
             .to_html(index=False, classes="bucket-table", float_format=lambda x: f"{x:.3f}")
         )
 
+        recommendation = build_recommendation(
+            risk_level        = current_bucket,
+            hist_extreme_prob = current_bucket_prob,
+            base_extreme_prob = P_extreme_global_rounded,
+            lift              = current_lift_vs_baseline,
+            surprise_flag     = surprise_flag,
+            drift_flag        = drift_flag,
+            high_conviction   = high_conviction,
+            stock             = stock,
+            earnings_date     = current_earnings_date,
+        )
+
         data_for_report = {
             "earnings_date":    current_earnings_date,
             "company_name":     company_name,
@@ -123,6 +136,7 @@ def stage5(df):
             "surprise_flag":    surprise_flag,
             "drift_flag":       drift_flag,
             "high_conviction":  high_conviction,
+            "recommendation":   recommendation,
         }
         generate_report(stock, data_for_report)
 

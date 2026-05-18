@@ -2,7 +2,8 @@
 import pandas as pd, warnings
 from testing.testing_functions import (
     forward_eval_onefactor,
-    yearly_oos_report)
+    yearly_oos_report,
+    high_conviction_regime_test)
 
 def backtesting_suite(input_df):
     df = input_df.copy()
@@ -14,6 +15,9 @@ def backtesting_suite(input_df):
 
     print("-------------------------------\nyearly_oos_report:")
     yearly_oos_report(df, date_col="date", score_feature="earnings_explosiveness_score", target_col="abs_reaction_3d")
+
+    print("-------------------------------\nhigh_conviction_regime_test:")
+    high_conviction_regime_test(df)
 
     return
 

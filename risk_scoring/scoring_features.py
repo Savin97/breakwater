@@ -142,7 +142,7 @@ def engineer_timing_danger(input_df, weights=[0.25,0.25,0.2,0.3]):
     prox = score_proximity(df)
     vol  = score_vol_expansion(df)
     mom  = score_momentum_fragility(df)
-    exp  = score_earnings_explosiveness(df)
+    exp  = df["earnings_explosiveness_score"]
 
     # timing_danger = (
     #     weights[0] * prox +
@@ -194,8 +194,21 @@ def engineer_momentum_fragility_score(input_df):
     return df
     
 def engineer_earnings_explosiveness_score(input_df):
+    """
+        When this stock moves on earnings, how violent can it get?
+        Uses rolling p75 (28 events); falls back to expanding p75 for thin history.
+        Vol-normalized components removed — grid search showed they add noise, not signal.
+        Signal is driven by raw p75 magnitude and reaction entropy.
+
+        Deprecated:
+        e1 = (df["earnings_explosiveness_z"].fillna(0) / 7).clip(0, 1)  # expanding median z, 7sigma ceiling                                                                    
+        e2 = (p75 / vol / 7).clip(0, 1)                                  # rolling tail z, 7sigma ceiling                                                                       
+    """
     df = input_df.copy()
-    df["earnings_explosiveness_score"] = score_earnings_explosiveness(df)
+    p75 = df["abs_reaction_p75_rolling"].fillna(df["abs_reaction_p75"])
+    e3 = (p75 / 0.12).clip(0, 1)           # raw magnitude: 12% ceiling
+    e4 = np.clip(df["reaction_entropy"], 0, 1)
+    df["earnings_explosiveness_score"] = 100 * np.clip(0.85 * e3 + 0.15 * e4, 0, 1)
 
     # Fixed thresholds from OOS decile calibration (testing/testing.py).
     # Equal-frequency qcut produced non-monotonic actual rates across buckets.
@@ -237,7 +250,6 @@ def engineer_surprise_momentum_flag(input_df):
     df["surprise_momentum_flag"] = flag
     return df
 
-
 def engineer_pre_earnings_drift_flag(input_df):
     """
     Categorical flag from pre_earnings_drift_z. Only populated on earnings days.
@@ -258,10 +270,9 @@ def engineer_pre_earnings_drift_flag(input_df):
     df["pre_earnings_drift_flag"] = flag
     return df
 
-
 def engineer_total_risk_score(input_df):
     df = input_df.copy()
-    df["risk_score"] = score_earnings_explosiveness(df)
+    df["risk_score"] = df["earnings_explosiveness_score"]
     return df
 
 def classify_large_relative_earnings_move_bucket(input_df):
@@ -374,23 +385,6 @@ def score_vol_expansion(df):
     # vol_expansion = 100 * np.clip(base + boost, 0, 1)
     # return vol_expansion
     return vol_expansion
-
-def score_earnings_explosiveness(df):
-    """
-        When this stock moves on earnings, how violent can it get?
-        Uses rolling p75 (28 events); falls back to expanding p75 for thin history.
-        Vol-normalized components removed — grid search showed they add noise, not signal.
-        Signal is driven by raw p75 magnitude and reaction entropy.
-
-        Deprecated:
-        e1 = (df["earnings_explosiveness_z"].fillna(0) / 7).clip(0, 1)  # expanding median z, 7sigma ceiling                                                                    
-        e2 = (p75 / vol / 7).clip(0, 1)                                  # rolling tail z, 7sigma ceiling                                                                       
-    """
-    p75 = df["abs_reaction_p75_rolling"].fillna(df["abs_reaction_p75"])
-    e3 = (p75 / 0.12).clip(0, 1)           # raw magnitude: 12% ceiling
-    e4 = np.clip(df["reaction_entropy"], 0, 1)
-    score = 100 * np.clip(0.85 * e3 + 0.15 * e4, 0, 1)
-    return score
 
 
 def score_momentum_fragility(df):

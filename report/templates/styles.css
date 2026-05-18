@@ -279,6 +279,42 @@ body {
 .flag-extended      { background: #fef0e6; color: #e67e22; }
 .flag-compressed    { background: #f4f0fb; color: #6c3483; }
 
+/* ── Recommendation block ────────────────────────────── */
+.recommendation {
+  border-left: 4px solid;
+  padding: 12px 16px;
+  margin-bottom: 24px;
+  border-radius: 2px;
+}
+.recommendation-normal     { border-color: #27ae60; background: #f0faf4; }
+.recommendation-elevated   { border-color: #e67e22; background: #fef6ee; }
+.recommendation-high-alert { border-color: #c0392b; background: #fdf3f2; }
+
+.rec-headline {
+  font-size: 12pt;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: #1a1a1a;
+}
+.rec-body {
+  font-size: 10pt;
+  color: #333;
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+.rec-flags {
+  margin: 4px 0 8px 0;
+  padding-left: 18px;
+  font-size: 9pt;
+  color: #444;
+}
+.rec-flags li { margin-bottom: 4px; }
+.rec-action {
+  font-size: 10pt;
+  color: #1a1a1a;
+  margin-top: 4px;
+}
+
 /* ── Footer ──────────────────────────────────────────── */
 .footer {
   margin-top: 32px;
