@@ -26,10 +26,13 @@ def generate_report(stock, data):
         bucket_table = data["bucket_table"],
         sector = data["sector"],
         sub_sector = data["sub_sector"],
-        surprise_flag   = data.get("surprise_flag", ""),
-        drift_flag      = data.get("drift_flag", ""),
-        high_conviction = data.get("high_conviction", False),
-        recommendation  = data.get("recommendation", {}),
+        surprise_flag        = data.get("surprise_flag", ""),
+        drift_flag           = data.get("drift_flag", ""),
+        high_conviction      = data.get("high_conviction", False),
+        recommendation       = data.get("recommendation", {}),
+        peer_percentile      = data.get("peer_percentile"),
+        days_to_earnings     = data.get("days_to_earnings"),
+        reactions_chart_svg  = data.get("reactions_chart_svg", ""),
     )
 
     REPORT_OUTPUT_PATH = f"output/{stock}_report.pdf"

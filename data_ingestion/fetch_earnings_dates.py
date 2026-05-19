@@ -11,7 +11,7 @@ def ingest_all_earnings_dates(con):
     FAILED_EARNINGS_LOG_PATH = "output/debug_failed_earnings_ingestion.txt"    
     API_KEY = get_alpha_vantage_api_key()
     min_sleep = 60.0 / float(ALPHAVANTAGE_CALLS_PER_MINUTE)
-    stocks = read_stocks_to_fetch
+    stocks = read_stocks_to_fetch()
     cutoff = pd.to_datetime(STOCKS_START_DATE).date()
 
     if not API_KEY:
@@ -95,7 +95,7 @@ def ingest_all_earnings_dates(con):
             print(f"  FAILED {stock}: {err}")
             # ensure tmp view not left behind
             try:
-                con.unregister("tmp_prices")
+                con.unregister("tmp_earnings_df")
             except Exception:
                 pass
             with open(FAILED_EARNINGS_LOG_PATH, "a", encoding="utf-8") as f:
@@ -113,7 +113,7 @@ def ingest_all_earnings_dates(con):
 def get_next_earnings_dates():
     # TODO: Change to actually today (datetime.now())
     stocks = read_stocks_to_fetch()
-    today = pd.Timestamp("2026-02-20",tz="America/New_York")
+    today = pd.Timestamp(datetime.now() ,tz="America/New_York")
     stock_dict = {}
     for i,stock in enumerate(stocks,start=1):
         if i%100==0:

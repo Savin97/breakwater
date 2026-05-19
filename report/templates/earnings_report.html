@@ -20,7 +20,19 @@
       <span class="value-lg">{{ stock }}</span>
       {% if company_name %}<span style="font-size:10pt; color:#555; margin-left:8px;">{{ company_name }}</span>{% endif %}
     </div>
-    <div class="meta-item"><span class="label">Earnings Date</span><span class="value">{{ earnings_date }}</span></div>
+    <div class="meta-item">
+      <span class="label">Earnings Date</span>
+      <span class="value">{{ earnings_date }}</span>
+      {% if days_to_earnings is not none %}
+        {% if days_to_earnings > 0 %}
+          <span style="font-size:8pt; color:#888; margin-left:6px;">(in {{ days_to_earnings }} days)</span>
+        {% elif days_to_earnings == 0 %}
+          <span style="font-size:8pt; color:#e67e22; margin-left:6px;">(today)</span>
+        {% else %}
+          <span style="font-size:8pt; color:#aaa; margin-left:6px;">({{ days_to_earnings | abs }} days ago)</span>
+        {% endif %}
+      {% endif %}
+    </div>
     {% if sector %}<div class="meta-item"><span class="label">Sector</span><span class="value">{{ sector }}</span></div>{% endif %}
     {% if sub_sector %}<div class="meta-item"><span class="label">Sub-Sector</span><span class="value">{{ sub_sector }}</span></div>{% endif %}
   </div>
@@ -51,7 +63,13 @@
         <div class="label">Risk Level</div>
         <div class="badge badge-{{ risk_level | lower | replace(' ', '-') }}">{{ risk_level }}</div>
       </div>
-      <!-- space for number of historical events -->
+      {% if peer_percentile is not none %}
+      <div class="score-block">
+        <div class="label">vs. S&amp;P 500</div>
+        <div class="score-number" style="font-size:18pt;">{{ peer_percentile }}<span class="score-denom">th pct</span></div>
+        <div class="peer-note">Higher earnings tail risk than {{ peer_percentile }}% of S&amp;P 500 stocks</div>
+      </div>
+      {% endif %}
     </div>
   </div>
 
@@ -86,6 +104,14 @@
       </div>
       {% endif %}
     </div>
+  </div>
+  {% endif %}
+
+  {% if reactions_chart_svg %}
+  <div class="section">
+    <h2>Historical Earnings Reactions</h2>
+    <p class="explainer">3-day post-earnings price move per quarter. Dashed lines mark the ±8% extreme threshold.</p>
+    <div class="chart-container">{{ reactions_chart_svg | safe }}</div>
   </div>
   {% endif %}
 

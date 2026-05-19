@@ -5,6 +5,7 @@ import pandas as pd
 from report.report_builder import generate_report
 from report.calendar_builder import generate_calendar
 from report.recommendations_builder import build_recommendation
+from report.chart_builder import generate_reactions_chart
 from pipeline.streamlit_export import export_streamlit_df
 
 def stage5(df):
@@ -22,6 +23,13 @@ def stage5(df):
 
     global_earnings_df = df[df["is_earnings_day"] == 1].copy()
     P_extreme_global = global_earnings_df["is_extreme_reaction"].mean()
+
+    # Peer percentile: latest earnings_explosiveness_score per stock across the universe
+    latest_scores = (
+        global_earnings_df.sort_values("earnings_date")
+        .groupby("stock")["earnings_explosiveness_score"].last()
+    )
+    n_universe = len(latest_scores)
     P_extreme_given_bucket = (
         global_earnings_df.groupby("earnings_explosiveness_bucket")["is_extreme_reaction"]
         .mean()
@@ -78,6 +86,14 @@ def stage5(df):
         drift_flag    = str(latest_row.get("pre_earnings_drift_flag",  "") or "")
         high_conviction = (current_bucket == "High Alert") and bool(drift_flag)
         n_events = len(earnings_df)
+
+        stock_score = latest_row["earnings_explosiveness_score"]
+        peer_percentile = int((latest_scores < stock_score).mean() * 100)
+
+        earnings_date_ts = pd.Timestamp(latest_row["earnings_date"]).date()
+        days_to_earnings = (earnings_date_ts - date.today()).days
+
+        reactions_chart_svg = generate_reactions_chart(earnings_df)
         P_extreme_global_rounded = round(P_extreme_global, 3)
         current_bucket_prob = f"{earnings_explosiveness_buckets.loc[current_bucket, 'shrunk_prob']:.3f}"
         current_lift_vs_baseline = f"{earnings_explosiveness_buckets.loc[current_bucket, 'lift_vs_baseline']:.3f}"
@@ -133,10 +149,13 @@ def stage5(df):
             "current_lift_vs_baseline": current_lift_vs_baseline,
             "current_lift_vs_same_bucket_global": current_lift_vs_same_bucket_global,
             "bucket_table": bucket_table_html,
-            "surprise_flag":    surprise_flag,
-            "drift_flag":       drift_flag,
-            "high_conviction":  high_conviction,
-            "recommendation":   recommendation,
+            "surprise_flag":       surprise_flag,
+            "drift_flag":          drift_flag,
+            "high_conviction":     high_conviction,
+            "recommendation":      recommendation,
+            "peer_percentile":     peer_percentile,
+            "days_to_earnings":    days_to_earnings,
+            "reactions_chart_svg": reactions_chart_svg,
         }
         generate_report(stock, data_for_report)
 
