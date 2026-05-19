@@ -37,4 +37,4 @@ def generate_report(stock, data):
 
     REPORT_OUTPUT_PATH = f"output/{stock}_report.pdf"
     HTML(string=html_out, base_url=project_root).write_pdf(REPORT_OUTPUT_PATH)
-    print(f"Report created in {REPORT_OUTPUT_PATH}")
+    print(f"{stock} Report created in {REPORT_OUTPUT_PATH}")

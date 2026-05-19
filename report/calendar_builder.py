@@ -37,7 +37,7 @@ def _bucket_stats(df):
     across the calendar, per-stock reports, and the Streamlit dashboard.
     Returns (bucket_stats_df, p_global_rounded).
     """
-    earn = df[df["is_earnings_day"] == 1].copy()
+    earn = df[df["is_earnings_day"] == 1].copy() if "is_earnings_day" in df.columns else df.copy()
     p_global = earn["is_extreme_reaction"].mean()
     prior = 20  # shrink toward global mean; 20 events ≈ ~5 years of quarterly data per stock
 
@@ -68,7 +68,6 @@ def build_calendar_data(df, reference_date=None, window_days=14):
     """
     df = df.copy()
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
-    df["date"]          = pd.to_datetime(df["date"])
 
     if reference_date is None:
         # Center window on latest available date so there's always something to show,
@@ -78,13 +77,14 @@ def build_calendar_data(df, reference_date=None, window_days=14):
     end_date = reference_date + pd.Timedelta(days=window_days)
 
     # Thresholds from full earnings history — stable across weeks
-    all_earn = df[df["is_earnings_day"] == 1]["momentum_fragility_score"].dropna()
-    frag_elevated_thr  = all_earn.quantile(FRAG_ELEVATED_PCTL)
-    frag_stretched_thr = all_earn.quantile(FRAG_STRETCHED_PCTL)
+    earn_all = df[df["is_earnings_day"] == 1].copy() if "is_earnings_day" in df.columns else df.copy()
+    all_frag = earn_all["momentum_fragility_score"].dropna()
+    frag_elevated_thr  = all_frag.quantile(FRAG_ELEVATED_PCTL)
+    frag_stretched_thr = all_frag.quantile(FRAG_STRETCHED_PCTL)
 
     bucket_stats, p_global = _bucket_stats(df)
 
-    earn   = df[df["is_earnings_day"] == 1].copy()
+    earn = earn_all
     window = earn[
         (earn["earnings_date"] >= reference_date) &
         (earn["earnings_date"] <= end_date)
@@ -187,4 +187,4 @@ def generate_calendar(df, reference_date=None, window_days=14):
     output_path = "output/weekly_calendar.html"
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_out)
-    print(f"Weekly calendar -> {output_path}")
+    print(f"Weekly calendar -> {output_path}\n--------------------")

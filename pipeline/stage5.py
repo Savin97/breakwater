@@ -6,7 +6,7 @@ from report.report_builder import generate_report
 from report.calendar_builder import generate_calendar
 from report.recommendations_builder import build_recommendation
 from report.chart_builder import generate_reactions_chart
-from pipeline.streamlit_export import export_streamlit_df
+from streamlit_dash.streamlit_export import export_streamlit_df
 
 def stage5(df):
     print("--------------------\nStage 5 - Generating Report...")
@@ -41,7 +41,6 @@ def stage5(df):
 
     report_txt = open("output/report_txt.txt", "w")
     for stock in stocks_to_report_for:
-        print(f"\n---------\n{stock}:")
         stock_df = df[df["stock"] == stock]
         if stock_df.empty:
             print(f"  No data found for {stock}, skipping.")

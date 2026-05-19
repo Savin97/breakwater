@@ -1,25 +1,24 @@
 # app.py
-import streamlit as st, sys, pandas as pd
+import streamlit as st, sys, pandas as pd, warnings
 from datetime import timedelta
 # Streamlit page configuration
 st.set_page_config(
     page_title="Breakwater",
     layout="wide"
 )
-
+warnings.filterwarnings('ignore')
 from pathlib import Path
 # Add project root (parent of "streamlit") to Python path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 # CSV with the dashboard output
-# put latest_earnings_df.csv in the repo root (same level as /streamlit)
-CSV_PATH = ROOT / "streamlit_df.csv"  # change if you keep it elsewhere
+# put streamlit_df.parquet in the output folder
+DF_PATH = ROOT / "output/streamlit_df.parquet"  # change if you keep it elsewhere
 from pipeline.pipeline import run_pipeline
 @st.cache_data(show_spinner="Loading parquet…")
 def get_full_df() -> pd.DataFrame:
-    df = pd.read_parquet(ROOT / "output" / "full_df.parquet")
+    df = pd.read_parquet(DF_PATH)
     df["earnings_date"] = pd.to_datetime(df["earnings_date"], errors="coerce")
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
     return df
 
 @st.cache_data(show_spinner="Loading dashboard data…")
@@ -30,8 +29,7 @@ def get_dashboard_df(use_cached_eps: bool = True) -> pd.DataFrame:
     Assumes run_pipeline(...) returns a DataFrame with at least:
         Date, Stock, risk_level, risk_score, hist_xtreme_prob, base_xtreme_prob, risk_lift
     """
-    df = pd.read_csv(CSV_PATH)
-    #df = run_pipeline()
+    df = get_full_df()
 
     # Sanity check for expected columns
     expected_cols = [
@@ -290,8 +288,7 @@ def main():
     with tab_calendar:
         st.subheader("Earnings Risk Calendar")
 
-        full_df = get_full_df()
-        earn = full_df[full_df["is_earnings_day"] == 1].copy()
+        earn = get_full_df()
 
         latest_date = earn["earnings_date"].max()
         default_start = latest_date - timedelta(days=7)

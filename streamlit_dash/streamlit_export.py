@@ -1,7 +1,6 @@
 import pandas as pd
 
-
-def export_streamlit_df(df: pd.DataFrame, output_path: str = "streamlit_df.csv") -> None:
+def export_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit_df.parquet") -> None:
     earnings_df = df[df["is_earnings_day"] == 1].copy()
 
     P_extreme_global = earnings_df["is_extreme_reaction"].mean()
@@ -29,6 +28,7 @@ def export_streamlit_df(df: pd.DataFrame, output_path: str = "streamlit_df.csv")
         "stock", "sector", "sub_sector", "earnings_date",
         "is_large_reaction", "is_extreme_reaction",
         "earnings_explosiveness_bucket", "earnings_explosiveness_score",
+        "momentum_fragility_score",
         "pre_earnings_drift_flag", "surprise_momentum_flag",
     ]].copy()
 
@@ -55,5 +55,5 @@ def export_streamlit_df(df: pd.DataFrame, output_path: str = "streamlit_df.csv")
     out["current_lift_vs_baseline"] = out["current_lift_vs_baseline"].round(3)
     out["current_lift_vs_same_bucket_global"] = out["current_lift_vs_same_bucket_global"].round(3)
 
-    out.to_csv(output_path, index=False)
-    print(f"Wrote {output_path} ({len(out)} rows)")
+    out.to_parquet(output_path, index=False)
+    print(f"Wrote {output_path} ({len(out)} rows)\n--------------------")
