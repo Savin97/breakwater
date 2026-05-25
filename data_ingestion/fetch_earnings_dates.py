@@ -110,6 +110,106 @@ def ingest_all_earnings_dates(con):
     print("Failures saved to:", FAILED_EARNINGS_LOG_PATH)
 
 
+def ingest_all_earnings_dates_yf(con):
+    """Incremental earnings update using yfinance (no API key required).
+    Fetches ~12 recent quarters + upcoming dates per stock.
+    Skips stocks that already have a future earnings date in the DB.
+    """
+    stocks = read_stocks_to_fetch()
+    today = datetime.now().date()
+    already, inserted, failed = 0, 0, 0
+    FAILED_LOG_PATH = "output/debug_failed_earnings_ingestion.txt"
+
+    with open(FAILED_LOG_PATH, "w") as f:
+        f.write("stock\terror\n")
+
+    # Skip stocks that already have an upcoming (future) earnings date
+    future_dates = set(
+        row[0] for row in
+        con.execute(
+            "SELECT DISTINCT stock FROM earnings WHERE earnings_date > current_date"
+        ).fetchall()
+    )
+
+    for i, stock in enumerate(stocks, start=1):
+        if stock in future_dates:
+            already += 1
+            if i % 100 == 0:
+                print(f"[{i}/{len(stocks)}] skipped: {already}, inserted: {inserted}, failed: {failed}")
+            continue
+
+        try:
+            ticker = yf.Ticker(stock)
+            ed = ticker.earnings_dates
+            if ed is None or ed.empty:
+                failed += 1
+                continue
+
+            ed = ed.reset_index()
+            ed = ed.rename(columns={
+                "Earnings Date":  "earnings_date",
+                "EPS Estimate":   "estimated_eps",
+                "Reported EPS":   "reported_eps",
+                "Surprise(%)":    "surprise_percentage",
+            })
+
+            ed["earnings_date"] = (
+                pd.to_datetime(ed["earnings_date"])
+                .dt.tz_localize(None)
+                .dt.date
+            )
+            ed["stock"]           = stock
+            ed["fiscal_end_date"] = None
+            ed["surprise_percentage"] = ed["surprise_percentage"] / 100
+            ed["ingested_at"]     = datetime.now()
+
+            ed = ed[["stock", "earnings_date", "fiscal_end_date",
+                     "reported_eps", "estimated_eps", "surprise_percentage", "ingested_at"]]
+
+            # fiscal_end_date is None so the DB unique index can't deduplicate — filter manually
+            existing = {
+                row[0] for row in
+                con.execute("SELECT earnings_date FROM earnings WHERE stock = ?", [stock]).fetchall()
+            }
+            ed = ed[~ed["earnings_date"].isin(existing)]
+            if ed.empty:
+                already += 1
+                continue
+
+            count_before = con.execute(
+                "SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]
+            ).fetchone()[0]
+            con.register("tmp_earnings_df", ed)
+            con.execute("INSERT INTO earnings SELECT * FROM tmp_earnings_df")
+            con.unregister("tmp_earnings_df")
+            count_after = con.execute(
+                "SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]
+            ).fetchone()[0]
+
+            added = count_after - count_before
+            if added > 0:
+                inserted += 1
+                print(f"[{i}/{len(stocks)}] {stock}: +{added} rows")
+            else:
+                already += 1
+
+        except Exception as e:
+            failed += 1
+            err = f"{type(e).__name__}: {e}"
+            print(f"  FAILED {stock}: {err}")
+            try:
+                con.unregister("tmp_earnings_df")
+            except Exception:
+                pass
+            with open(FAILED_LOG_PATH, "a") as f:
+                f.write(f"{stock}\t{err}\n")
+
+        time.sleep(0.3)
+
+    print(f"\nIngesting Earnings Done (yfinance).")
+    print(f"skipped/up-to-date: {already}, inserted: {inserted}, failed: {failed}")
+
+
 def get_next_earnings_dates():
     # TODO: Change to actually today (datetime.now())
     stocks = read_stocks_to_fetch()

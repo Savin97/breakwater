@@ -1,7 +1,8 @@
 # data_ingestion/fetch_prices.py
 import time
 import pandas as pd
-from datetime import datetime
+import yfinance as yf
+from datetime import datetime, date, timedelta
 from data_ingestion.db_functions import (stock_already_in_prices_db,get_max_dates_by_stock)
 from data_ingestion.api_functions import (fetch_daily_adjusted_prices)
 from data_ingestion.data_utilities import get_alpha_vantage_api_key, read_stocks_to_fetch
@@ -123,4 +124,66 @@ def ingest_all_stocks(con):
     print("inserted new:", inserted)
     print("failed:", failed)
     print("failures saved to:", FAILED_LOG_PATH)
-    return 
+    return
+
+
+_BATCH_SIZE = 100
+
+
+def ingest_all_stocks_yf(con):
+    """Incremental price update using yfinance (no API key required)."""
+    stocks = read_stocks_to_fetch()
+    if not stocks:
+        raise ValueError("No stocks found.")
+
+    global_max = con.execute("SELECT MAX(date) FROM prices").fetchone()[0]
+    start = (global_max + timedelta(days=1)) if global_max else pd.to_datetime(STOCKS_START_DATE).date()
+    end = date.today()
+
+    if start >= end:
+        print("Prices already up to date.")
+        return
+
+    print(f"Fetching prices {start} → {end} for {len(stocks)} stocks...")
+    total_inserted = 0
+    now = datetime.now()
+
+    for batch_start in range(0, len(stocks), _BATCH_SIZE):
+        batch = stocks[batch_start: batch_start + _BATCH_SIZE]
+        try:
+            raw = yf.download(
+                batch, start=str(start), end=str(end),
+                auto_adjust=True, progress=False,
+            )
+        except Exception as e:
+            print(f"  Batch [{batch_start+1}–{batch_start+len(batch)}] failed: {e}")
+            continue
+
+        if raw.empty:
+            continue
+
+        closes = raw["Close"] if "Close" in raw.columns else raw
+        if isinstance(closes, pd.Series):
+            closes = closes.to_frame(name=batch[0])
+
+        rows = []
+        for ticker in batch:
+            if ticker not in closes.columns:
+                continue
+            series = closes[ticker].dropna()
+            for dt, price in series.items():
+                rows.append((ticker, dt.date() if hasattr(dt, "date") else dt, float(price), now))
+
+        if not rows:
+            continue
+
+        df = pd.DataFrame(rows, columns=["stock", "date", "price", "ingested_at"])
+        con.register("tmp_prices", df)
+        before = con.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
+        con.execute("INSERT OR IGNORE INTO prices SELECT * FROM tmp_prices")
+        con.unregister("tmp_prices")
+        added = con.execute("SELECT COUNT(*) FROM prices").fetchone()[0] - before
+        total_inserted += added
+        print(f"  Batch [{batch_start+1}-{batch_start+len(batch)}]: +{added} rows")
+
+    print(f"\nIngesting Prices Done (yfinance). Total inserted: {total_inserted}")

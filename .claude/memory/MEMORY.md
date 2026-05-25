@@ -5,6 +5,27 @@ Entries are updated at the end of each session. Most recent first.
 
 ---
 
+## 2026-05-19 — Report content additions + yfinance migration (in progress)
+
+**Report additions (completed):**
+- Created `report/chart_builder.py` — `generate_reactions_chart(earnings_df, n=16)` returns SVG string of bar chart (green/red bars, ±8% threshold lines, darker shading for extreme events)
+- Added to stage5: peer_percentile (Xth percentile vs S&P 500), days_to_earnings, reactions_chart_svg
+- HTML: historical reactions chart section, peer percentile stat block, days-to-earnings in meta row
+- CSS: `.chart-container`, `.peer-note` added to styles.css
+- All 4 reports (AAPL, NVDA, TSLA, MSFT) regenerate cleanly
+
+**yfinance migration (partially done, NOT yet tested):**
+- AlphaVantage subscription cancelled — need yfinance replacement
+- Added `ingest_all_stocks_yf(con)` to `data_ingestion/fetch_prices.py` — batch download, incremental from global max date, chunks of 100
+- Added `ingest_all_earnings_dates_yf(con)` to `data_ingestion/fetch_earnings_dates.py` — uses `yf.Ticker().earnings_dates`, skips stocks with future dates already in DB, manual dedup since fiscal_end_date=None bypasses unique index
+- `pipeline/stage1.py`: old AlphaVantage calls commented out (19/5/26), new yf functions active
+- `config.py`: `STOCKS_END_DATE` now uses `date.today().isoformat()` dynamically; added `from datetime import date` at top
+- **NOT yet tested** — killed before smoke test could complete. Test first thing next session.
+
+**Next:** Run smoke test on 3 stocks (AAPL, TSLA, NVDA), verify prices + earnings update correctly, then run full pipeline with update=True.
+
+---
+
 ## 2026-05-18 — Memory setup + context recovery
 
 Set up `.claude/memory/` inside the repo so session notes sync via git across machines.

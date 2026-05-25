@@ -6,8 +6,8 @@ from data_ingestion.db_functions import (
     create_sectors_data_table_if_not_exists, 
     merge_tables,
     test_db)
-from data_ingestion.fetch_prices import ingest_all_stocks
-from data_ingestion.fetch_earnings_dates import ingest_all_earnings_dates, get_next_earnings_dates
+from data_ingestion.fetch_prices import ingest_all_stocks, ingest_all_stocks_yf
+from data_ingestion.fetch_earnings_dates import ingest_all_earnings_dates, ingest_all_earnings_dates_yf, get_next_earnings_dates
 from data_ingestion.fetch_sp500_sectors import ingest_all_sector_data
 from data_ingestion.data_utilities import directory_checks
 from config import DB_PATH
@@ -26,8 +26,10 @@ def stage1(update:bool):
     create_earnings_table_if_not_exists(con)
     create_sectors_data_table_if_not_exists(con)
     if update == True:
-        ingest_all_stocks(con)
-        ingest_all_earnings_dates(con)
+        # ingest_all_stocks(con)           # AlphaVantage — 19/5/26
+        # ingest_all_earnings_dates(con)   # AlphaVantage — 19/5/26
+        ingest_all_stocks_yf(con)
+        ingest_all_earnings_dates_yf(con)
         ingest_all_sector_data(con)
         merge_tables(con)
         get_next_earnings_dates()
