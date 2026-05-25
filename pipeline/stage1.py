@@ -32,7 +32,7 @@ def stage1(update:bool):
         ingest_all_earnings_dates_yf(con)
         ingest_all_sector_data(con)
         merge_tables(con)
-        get_next_earnings_dates()
+        # get_next_earnings_dates()    # redundant — ingest_all_earnings_dates_yf already fetches upcoming dates — 25/5/26
 
     con.close()
     print("Stage 1 DONE")
