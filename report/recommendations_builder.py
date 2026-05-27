@@ -40,11 +40,19 @@ def build_recommendation(risk_level, hist_extreme_prob, base_extreme_prob,
 
     if risk_level == "Normal":
         headline = "Normal — No Special Action Required"
-        body = (
-            f"{stock} shows no elevated tail risk ahead of earnings on {earnings_date}. "
-            f"The historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
-            f"in line with the {base_pct}% market average."
-        )
+        if lift_x >= 1.3:
+            body = (
+                f"{stock} is currently in its Normal risk tier — no active timing signals this quarter. "
+                f"Note that its historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
+                f"which is {lift_x}x the {base_pct}% market average. "
+                f"This reflects {stock}'s structural volatility profile, not an elevated signal for this event."
+            )
+        else:
+            body = (
+                f"{stock} shows no elevated tail risk ahead of earnings on {earnings_date}. "
+                f"The historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
+                f"in line with the {base_pct}% market average."
+            )
         action = "Standard position management applies. No special action required before earnings."
         flag_lines = []
 

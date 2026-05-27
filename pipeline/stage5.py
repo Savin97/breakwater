@@ -99,6 +99,16 @@ def stage5(df):
         current_lift_vs_same_bucket_global = f"{earnings_explosiveness_buckets.loc[current_bucket, 'lift_vs_same_bucket_global']:.3f}"
         earnings_explosiveness_buckets = earnings_explosiveness_buckets.reset_index()
 
+        # Bayesian override: if the stock's actual extreme-move rate materially exceeds
+        # what its model bucket implies, bump the reported risk level up.
+        lift_for_report = float(current_bucket_prob) / float(P_extreme_global)
+        if current_bucket == "Normal" and lift_for_report >= 1.5:
+            effective_risk_level = "Elevated"
+        elif current_bucket in ("Normal", "Elevated") and lift_for_report >= 3.0:
+            effective_risk_level = "High Alert"
+        else:
+            effective_risk_level = current_bucket
+
         report_txt.write(f"\n---------\n{stock}:\n")
         report_txt.write(f"Earnings Date: {current_earnings_date}\n")
         report_txt.write(f"Tail Risk Score: {risk_score}\n")
@@ -123,7 +133,7 @@ def stage5(df):
         )
 
         recommendation = build_recommendation(
-            risk_level        = current_bucket,
+            risk_level        = effective_risk_level,
             hist_extreme_prob = current_bucket_prob,
             base_extreme_prob = P_extreme_global_rounded,
             lift              = current_lift_vs_baseline,
@@ -138,7 +148,7 @@ def stage5(df):
             "earnings_date":    current_earnings_date,
             "company_name":     company_name,
             "generated_date":   generated_date,
-            "risk_level": current_bucket,
+            "risk_level": effective_risk_level,
             "risk_score": risk_score,
             "sector": sector,
             "sub_sector": sub_sector,

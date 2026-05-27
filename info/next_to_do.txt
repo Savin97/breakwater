@@ -1,6 +1,8 @@
 What's worth doing next, ranked
 
-1. Data freshness — update STOCKS_END_DATE to today, run update=True to pull Q1 2026 earnings data, confirm reports reflect upcoming Q2 events. This is a one-time unlock that makes everything else meaningful.
+1. 
 2. Report content — the recommendation block is there but the reports are thin. A chart of the stock's historical earnings reactions (scatter or bar, past N events) would be the single highest-value addition. It gives the reader the empirical basis for the risk level, not just the number.
 3. Coverage automation — right now report_stocks.csv is a 4-stock manual list. A useful product would auto-generate reports for all High Alert stocks in the upcoming 2-week window. That's maybe 30 lines in stage5.
 4. Dashboard + delivery — lower priority. The dashboard is functional; nobody needs it to be perfect before the data and reports are current.
+5. Options are market-priced bets/insurance on future stock movement.
+High option prices before earnings = market expects a bigger move.

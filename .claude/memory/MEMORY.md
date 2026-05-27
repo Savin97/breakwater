@@ -57,6 +57,15 @@ Set up `.claude/memory/` inside the repo so session notes sync via git across ma
 
 ---
 
+## DuckDB Schema — data/breakwater.duckdb
+
+**prices:** stock, date (DATE), price (DOUBLE), ingested_at — unique index (stock, date)
+**earnings:** stock, earnings_date (DATE), fiscal_end_date (DATE), reported_eps, estimated_eps, surprise_percentage (DOUBLE), ingested_at — unique index (stock, earnings_date, fiscal_end_date); fiscal_end_date=None for yfinance rows (manual dedup in code); surprise_percentage stored as decimal (÷100)
+**stock_data:** stock (PK), company_name, sector, sub_sector, ingested_at
+**merged_stock_data:** denormalised join of the above — NOT used by pipeline (stage2 reads raw tables directly)
+
+---
+
 ## 2026-05-17 — Streamlit dashboard overhaul (other machine)
 
 - Created `pipeline/streamlit_export.py`: generates `streamlit_df.csv` with Bayesian bucket stats; now called automatically at end of stage 5 (replaces manual `prep_for_streamlit.py` step)

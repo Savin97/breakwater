@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 # put streamlit_df.parquet in the output folder
 DF_PATH = ROOT / "output/streamlit_df.parquet"  # change if you keep it elsewhere
 from pipeline.pipeline import run_pipeline
+
 @st.cache_data(show_spinner="Loading parquet…")
 def get_full_df() -> pd.DataFrame:
     df = pd.read_parquet(DF_PATH)
@@ -181,8 +182,8 @@ def main():
 
         cols_to_show = [
             c for c in [
-                "earnings_date",
                 "stock",
+                "earnings_date",
                 "sector",
                 "sub_sector",
                 "risk_level",
@@ -205,6 +206,7 @@ def main():
         st.dataframe(
             df_display[cols_to_show],
             use_container_width=True,
+            hide_index=True,
             column_config={
                 "earnings_date": st.column_config.DateColumn("Earnings date", format="DD/MM/YYYY"),
                 "risk_score": st.column_config.NumberColumn("Risk score", format="%.0f"),
@@ -279,7 +281,7 @@ def main():
             if c in stock_df.columns
         ]
 
-        st.dataframe(stock_df[cols], use_container_width=True)
+        st.dataframe(stock_df[cols], use_container_width=True, hide_index=True)
 
         if {"earnings_date", "risk_score"}.issubset(stock_df.columns):
             chart_df = stock_df.set_index("earnings_date")["risk_score"]
@@ -343,6 +345,7 @@ def main():
             st.dataframe(
                 display,
                 use_container_width=True,
+                hide_index=True,
                 column_config={
                     "Date":             st.column_config.DateColumn("Date", format="DD MMM YYYY"),
                     "Risk Score":       st.column_config.NumberColumn("Risk Score", format="%.0f"),
@@ -355,7 +358,7 @@ def main():
                 if st.button("Export calendar HTML"):
                     sys.path.insert(0, str(ROOT))
                     from report.calendar_builder import generate_calendar
-                    generate_calendar(full_df, reference_date=start_date,
+                    generate_calendar(earn, reference_date=start_date,
                                       window_days=(end_date - start_date).days)
                     st.success("Written to output/weekly_calendar.html")
 
