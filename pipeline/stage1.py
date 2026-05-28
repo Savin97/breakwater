@@ -10,7 +10,6 @@ from data_ingestion.fetch_prices import ingest_all_stocks, ingest_all_stocks_yf
 from data_ingestion.fetch_earnings_dates import ingest_all_earnings_dates, ingest_all_earnings_dates_yf, get_next_earnings_dates
 from data_ingestion.fetch_sp500_sectors import ingest_all_sector_data
 from data_ingestion.data_utilities import directory_checks
-from data_ingestion.fetch_iv import ingest_iv_snapshots
 from config import DB_PATH
 def stage1(update:bool):
     """
@@ -32,7 +31,6 @@ def stage1(update:bool):
         ingest_all_earnings_dates_yf(con)
         ingest_all_sector_data(con)
         merge_tables(con)
-        ingest_iv_snapshots(con)
 
     con.close()
     print("Stage 1 DONE")
