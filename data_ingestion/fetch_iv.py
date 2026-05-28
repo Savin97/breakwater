@@ -20,32 +20,6 @@ from datetime import datetime, date, timedelta
 from config import DB_PATH
 
 
-# ── Table management ─────────────────────────────────────────────────────────
-
-def create_iv_table_if_not_exists(con):
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS iv_snapshots (
-            stock            TEXT,
-            snapshot_date    DATE,
-            earnings_date    DATE,
-            days_to_earnings INTEGER,
-            current_price    DOUBLE,
-            expiry_used      DATE,
-            atm_strike       DOUBLE,
-            atm_call_iv      DOUBLE,
-            atm_put_iv       DOUBLE,
-            atm_iv           DOUBLE,
-            expected_move_pct DOUBLE,
-            ingested_at      TIMESTAMP
-        )
-    """)
-    con.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS iv_snapshots_uq
-        ON iv_snapshots(stock, snapshot_date)
-    """)
-    print("IV snapshots table ready.")
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_upcoming_earnings(con, days_ahead: int) -> pd.DataFrame:
