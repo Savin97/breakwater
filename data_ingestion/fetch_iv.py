@@ -84,6 +84,10 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
         earnings_date = pd.Timestamp(r["earnings_date"]).date()
         days_to_earn  = (earnings_date - today).days
 
+        if days_to_earn == 0:
+            skipped += 1
+            continue
+
         try:
             # ── Price (from DB, no extra API call) ───────────────────────────
             price = _get_current_price(con, stock)
