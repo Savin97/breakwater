@@ -169,6 +169,7 @@ def stage5(df):
         generate_report(stock, data_for_report)
 
     report_txt.close()
+    print("--------------------")
     generate_calendar(df)
     export_streamlit_df(df)
     print("Stage 5 DONE")
