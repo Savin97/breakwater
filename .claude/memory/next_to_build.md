@@ -7,7 +7,25 @@ metadata:
 
 As of 2026-05-30, the model is proven (4.5x OOS lift). The gaps are product completeness and delivery. Build in this order:
 
-**1. Integrate IV into reports** ← next thing to build
+**All three original items shipped 2026-05-30.** Current next priorities:
+
+**1. Uncapped percentile ranking** ← next model improvement
+- Compute percentile from `abs_reaction_p75_rolling` directly (pre-clip), not from capped `earnings_explosiveness_score`
+- Fixes the 13-stocks-tied-at-97th problem for good
+- Requires updating `_select_stocks` in `cron/cron_weekly_digest.py` and optionally the reports
+
+**2. Historical calibration tables**
+- Run digest logic across past 20-30 earnings weeks, include all Normal stocks
+- Build: P(≥8%) and P(≥10%) by percentile band; capture rate of large moves by tier
+- Validates the product claim statistically
+
+**3. ~~Integrate IV into reports~~** ✅ done
+**4. ~~Coverage automation~~** ✅ done
+**5. ~~Weekly email digest~~** ✅ done
+
+---
+
+**1. ~~Integrate IV into reports~~ was next thing to build**
 - Join latest `iv_snapshots` row per stock into stage2 (left join on stock, latest snapshot_date)
 - Add `iv_vs_hist_ratio = expected_move_pct / abs_reaction_p75_rolling` in stage3/4
 - Add "Options Market Signal" block to per-stock HTML reports: implied move %, ATM IV, vs. historical p75 — plain-language interpretation ("options appear to underprize the tail risk")

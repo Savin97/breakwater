@@ -5,6 +5,24 @@ Entries are updated at the end of each session. Most recent first.
 
 ---
 
+## 2026-05-30 — Major product build session
+
+**Shipped:**
+- IV (expected_move_pct, atm_iv, iv_vs_hist_ratio) joined in stage2, shown in per-stock reports as "Options Market Signal" section
+- Coverage automation: stage5 auto-selects High Alert + Elevated stocks with earnings in 14-day window (manual CSV override kept commented)
+- Reports now output to `output/reports/`
+- Weekly email digest: `cron/cron_weekly_digest.py` — sends HTML email Mondays 07:00 UTC, reads full_df.parquet, `data/subscribers.txt` for list
+- Cron scripts moved from `data_ingestion/` to `cron/` folder
+- Digest: ordinal suffixes, company names, IV column hidden when empty, HC section at top, explicit date range, percentile display replacing raw score
+- "Overdue Miss" renamed to "Extended Beat Streak" in scoring_features.py
+- Reports: footer updated to harbor-markets.com, ordinal suffix fixed
+
+**IV cron bug fixed:** `cron_iv.py` was importing `create_iv_table_if_not_exists` from wrong module — fixed to import from `data_ingestion.db_functions`
+
+**Droplet crontab updated to:** `cron.cron_ingest`, `cron.cron_iv`, `cron.cron_weekly_digest`
+
+**Next model work (not done):** Compute percentile from uncapped raw score (pre-clip p75) to differentiate 100-scored stocks; historical calibration tables
+
 ## 2026-05-19 — Report content additions + yfinance migration (in progress)
 
 **Report additions (completed):**

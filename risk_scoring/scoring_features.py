@@ -228,7 +228,7 @@ def engineer_surprise_momentum_flag(input_df):
     Only populated on earnings days; blank string on all other rows.
 
     Flags (evaluated in priority order):
-      "Overdue Miss"  — streak >= 6: bar maximally elevated after long beat run
+      "Extended Beat Streak" — streak >= 6: bar maximally elevated after long beat streak
       "Beat Streak"   — streak >= 4 and mean_5 > 0.05: consistently beating big
       "Miss Streak"   — streak <= -3: consecutive misses, expectations reset lower
       "Erratic"       — std_5 > 0.20: highly unpredictable surprise magnitude
@@ -245,7 +245,7 @@ def engineer_surprise_momentum_flag(input_df):
     flag.loc[earnings_mask & (std5   >  0.20)]                     = "Erratic"
     flag.loc[earnings_mask & (streak <= -3)]                        = "Miss Streak"
     flag.loc[earnings_mask & (streak >=  4) & (mean5 > 0.05)]      = "Beat Streak"
-    flag.loc[earnings_mask & (streak >=  6)]                        = "Overdue Miss"
+    flag.loc[earnings_mask & (streak >=  6)]                        = "Extended Beat Streak"
 
     df["surprise_momentum_flag"] = flag
     return df
