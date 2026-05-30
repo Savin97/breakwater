@@ -213,6 +213,15 @@ body {
   line-height: 1.3;
 }
 
+/* ── IV signal rows ──────────────────────────────────── */
+.iv-underpriced td { background: #fef9f0; }
+.iv-overpriced  td { background: #f6faf6; }
+.iv-signal-note {
+  font-size: 8pt;
+  color: #555;
+  font-weight: normal;
+}
+
 /* ── Reactions chart ─────────────────────────────────── */
 .chart-container {
   width: 100%;

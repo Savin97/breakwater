@@ -57,6 +57,10 @@ Set up `.claude/memory/` inside the repo so session notes sync via git across ma
 
 ---
 
+## Product & Business
+- [Product direction](project_direction.md) — target market (retail options traders), value prop, pricing, live URLs (as of 2026-05-30)
+- [Next to build](next_to_build.md) — prioritized build list: IV into reports → coverage automation → weekly email digest (as of 2026-05-30)
+
 ## Infrastructure
 - [DigitalOcean droplet](infra_digitalocean.md) — cron_ingest.py + cron_iv.py run here daily (IV post-close)
 

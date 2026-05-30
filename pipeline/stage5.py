@@ -11,12 +11,35 @@ from streamlit_dash.streamlit_export import export_streamlit_df
 def stage5(df):
     print("--------------------\nStage 5 - Generating Report...")
 
-    report_stocks_path = "data/report_stocks.csv"
-    if os.path.exists(report_stocks_path):
-        stocks_to_report_for = pd.read_csv(report_stocks_path)["stock"].tolist()
-    else:
-        stocks_to_report_for = []
-        print("Warning: data/report_stocks.csv not found. No reports generated.")
+    # Manual override: populate data/report_stocks.csv to generate reports for specific stocks
+    # report_stocks_path = "data/report_stocks.csv"
+    # if os.path.exists(report_stocks_path):
+    #     stocks_to_report_for = pd.read_csv(report_stocks_path)["stock"].tolist()
+    # else:
+    #     stocks_to_report_for = []
+    #     print("Warning: data/report_stocks.csv not found. No reports generated.")
+
+    today = pd.Timestamp.today().normalize()
+    cutoff = today + pd.Timedelta(days=14)
+    latest_per_stock = (
+        df[df["is_earnings_day"] == 1]
+        .sort_values("earnings_date")
+        .groupby("stock")
+        .last()
+        .reset_index()
+    )
+    mask = (
+        latest_per_stock["earnings_explosiveness_bucket"].isin(["High Alert", "Elevated"]) &
+        (latest_per_stock["earnings_date"] >= today) &
+        (latest_per_stock["earnings_date"] <= cutoff)
+    )
+    stocks_to_report_for = (
+        latest_per_stock[mask]
+        .sort_values("risk_score", ascending=False)
+        .head(30)["stock"]
+        .tolist()
+    )
+    print(f"  Auto-selected {len(stocks_to_report_for)} stocks for reports (High Alert / Elevated, earnings within 14 days).")
 
     company_names = pd.read_csv("data/sp500_full_info.csv", usecols=["ticker", "name"]).set_index("ticker")["name"]
     generated_date = date.today().strftime("%B %d, %Y")
@@ -39,7 +62,6 @@ def stage5(df):
         "global_risk_lift_vs_baseline": P_extreme_given_bucket / P_extreme_global
     })
 
-    report_txt = open("output/report_txt.txt", "w")
     for stock in stocks_to_report_for:
         stock_df = df[df["stock"] == stock]
         if stock_df.empty:
@@ -92,6 +114,18 @@ def stage5(df):
         earnings_date_ts = pd.Timestamp(latest_row["earnings_date"]).date()
         days_to_earnings = (earnings_date_ts - date.today()).days
 
+        # IV data (may be NaN if cron hasn't run yet for this stock)
+        _exp_move = latest_row.get("expected_move_pct")
+        _atm_iv   = latest_row.get("atm_iv")
+        _p75      = latest_row.get("abs_reaction_p75_rolling")
+        iv_implied_move_pct = float(_exp_move) if pd.notna(_exp_move) else None
+        atm_iv_pct          = float(_atm_iv)   if pd.notna(_atm_iv)   else None
+        iv_vs_hist_ratio    = (
+            round(float(_exp_move) / float(_p75), 2)
+            if pd.notna(_exp_move) and pd.notna(_p75) and float(_p75) > 0
+            else None
+        )
+
         reactions_chart_svg = generate_reactions_chart(earnings_df)
         P_extreme_global_rounded = round(P_extreme_global, 3)
         current_bucket_prob = f"{earnings_explosiveness_buckets.loc[current_bucket, 'shrunk_prob']:.3f}"
@@ -108,15 +142,6 @@ def stage5(df):
             effective_risk_level = "High Alert"
         else:
             effective_risk_level = current_bucket
-
-        report_txt.write(f"\n---------\n{stock}:\n")
-        report_txt.write(f"Earnings Date: {current_earnings_date}\n")
-        report_txt.write(f"Tail Risk Score: {risk_score}\n")
-        report_txt.write(f"risk_level, {current_bucket}\n")
-        report_txt.write(f"base_extreme_prob, {P_extreme_global_rounded}\n")
-        report_txt.write(f"hist_extreme_prob, {current_bucket_prob}\n")
-        report_txt.write(f"current_lift_vs_baseline, {current_lift_vs_baseline}\n")
-        report_txt.write(f"current_lift_vs_same_bucket_global, {current_lift_vs_same_bucket_global}\n")
 
         bucket_table_html = (
             earnings_explosiveness_buckets
@@ -164,11 +189,13 @@ def stage5(df):
             "recommendation":      recommendation,
             "peer_percentile":     peer_percentile,
             "days_to_earnings":    days_to_earnings,
-            "reactions_chart_svg": reactions_chart_svg,
+            "reactions_chart_svg":   reactions_chart_svg,
+            "iv_implied_move_pct":   iv_implied_move_pct,
+            "atm_iv_pct":            atm_iv_pct,
+            "iv_vs_hist_ratio":      iv_vs_hist_ratio,
         }
         generate_report(stock, data_for_report)
 
-    report_txt.close()
     print("--------------------")
     generate_calendar(df)
     export_streamlit_df(df)

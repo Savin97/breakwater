@@ -61,6 +61,7 @@ def map_sector_data_to_main_df(main_df: pd.DataFrame,sector_df:pd.DataFrame):
 def directory_checks():
     Path("data").mkdir(exist_ok=True)
     Path("output").mkdir(exist_ok=True)
+    Path("output/reports/").mkdir(exist_ok=True)
 
 def get_alpha_vantage_api_key() -> str:
     load_dotenv() 

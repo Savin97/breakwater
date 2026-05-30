@@ -1,4 +1,12 @@
-On the server:
+Crontab (crontab -e):
+
+0 6 * * * cd /var/www/Breakwater && /var/www/Breakwater/.venv/bin/python -m cron.cron_ingest >> /var/log/breakwater_ingest.log 2>&1
+30 20 * * 1-5 cd /var/www/Breakwater && /var/www/Breakwater/.venv/bin/python -m cron.cron_iv >> /var/log/breakwater_iv.log 2>&1
+0 7 * * 1 cd /var/www/Breakwater && /var/www/Breakwater/.venv/bin/python -m cron.cron_weekly_digest >> /var/log/breakwater_digest.log 2>&1
+
+---
+
+On the server (cv_website / Streamlit):
 
 cd /var/www/cv_website
 git pull

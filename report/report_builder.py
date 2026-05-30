@@ -33,8 +33,11 @@ def generate_report(stock, data):
         peer_percentile      = data.get("peer_percentile"),
         days_to_earnings     = data.get("days_to_earnings"),
         reactions_chart_svg  = data.get("reactions_chart_svg", ""),
+        iv_implied_move_pct  = data.get("iv_implied_move_pct"),
+        atm_iv_pct           = data.get("atm_iv_pct"),
+        iv_vs_hist_ratio     = data.get("iv_vs_hist_ratio"),
     )
 
-    REPORT_OUTPUT_PATH = f"output/{stock}_report.pdf"
+    REPORT_OUTPUT_PATH = f"output/reports/{stock}_report.pdf"
     HTML(string=html_out, base_url=project_root).write_pdf(REPORT_OUTPUT_PATH)
     print(f"{stock} Report created in {REPORT_OUTPUT_PATH}")
