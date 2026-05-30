@@ -5,6 +5,30 @@ Entries are updated at the end of each session. Most recent first.
 
 ---
 
+## 2026-05-30 — Digest layout frozen, ready for historical evaluation (session 2 of 2)
+
+**Final digest changes (end of session):**
+- HC section title: "★ High Conviction" → "High Conviction ★"
+- Summary bar: "High Conviction ★ — N events · ★ = High Conviction (High Alert + pre-earnings drift)"
+- Footer split into two lines: Percentile definition + HC definition
+- "Overdue Miss" → "Extended Beat Streak" in scoring_features.py
+- Layout is now frozen per GPT review — stop iterating on presentation
+
+**Next session — historical evaluation:**
+Build a script that runs the digest selection logic across past earnings weeks and produces:
+- Total earnings events per week vs. number surfaced
+- Capture rate for moves ≥8%, ≥10%, ≥15% by tier (Normal/Elevated/High Alert/HC)
+- False-negative rate among omitted stocks
+- Calibration by percentile band
+- Comparison vs. simple baseline (recent realized vol)
+
+This validates the core product claim: "Breakwater reduces the earnings calendar while retaining a disproportionate share of the largest moves."
+
+**Also pending (lower priority):**
+- Uncapped percentile: rank by `abs_reaction_p75_rolling` pre-clip to break 97th-percentile ties
+- Flag glossary for digest (wait to see if users ask for it)
+- Payment gate on harbor-markets.com (website repo, separate)
+
 ## 2026-05-30 — Major product build session
 
 **Shipped:**

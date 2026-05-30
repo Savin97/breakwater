@@ -143,7 +143,7 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> 
         hc_section = f"""
   <div style="margin-bottom:24px;">
     <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:#c0392b;margin-bottom:8px;">
-      &#9733; High Conviction — {n_hc} event{"s" if n_hc != 1 else ""}
+      High Conviction &#9733; — {n_hc} event{"s" if n_hc != 1 else ""}
     </div>
     <table style="width:100%;border-collapse:collapse;border:1px solid #f0d8cc;border-radius:3px;">
       <thead>
@@ -171,7 +171,7 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> 
         rows_html = f'<tr><td colspan="{colspan}" style="padding:16px;text-align:center;color:#999;">No High Alert or Elevated events this week.</td></tr>'
 
     date_line = date_range if date_range else f"Week of {week_of}"
-    hc_pill   = f' &nbsp;·&nbsp; <strong style="color:#c0392b;">&#9733; {n_hc} High Conviction</strong>' if n_hc else ""
+    hc_pill   = f' &nbsp;·&nbsp; <strong style="color:#c0392b;">High Conviction &#9733; &mdash; {n_hc} event{"s" if n_hc != 1 else ""}</strong> &nbsp;·&nbsp; <span style="color:#888;">&#9733; = High Conviction (High Alert + pre-earnings drift)</span>' if n_hc else ""
 
     return f"""<!DOCTYPE html>
 <html>
@@ -213,11 +213,11 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> 
     </tbody>
   </table>
 
-  <div style="margin-top:16px;font-size:11px;color:#999;">
-    <strong>Percentile:</strong> historical earnings-risk rank vs. the S&amp;P 500 universe,
+  <div style="margin-top:16px;font-size:11px;color:#999;line-height:1.7;">
+    <strong>Percentile:</strong> Historical earnings-risk rank versus the S&amp;P 500 universe,
     based only on information available before the announcement.
-    A 97th-percentile event ranks as riskier than ~97% of comparable historical events.
-    &nbsp;·&nbsp; &#9733; <strong>High Conviction</strong> = High Alert + active pre-earnings drift signal.
+    A 97th-percentile event ranks as riskier than approximately 97% of comparable historical events.<br>
+    <strong>High Conviction &#9733;:</strong> High Alert with an active pre-earnings drift signal.
   </div>
 
   <div style="margin-top:20px;padding-top:12px;border-top:1px solid #ddd;font-size:11px;color:#999;text-align:center;">
