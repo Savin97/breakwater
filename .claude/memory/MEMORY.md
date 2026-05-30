@@ -57,6 +57,9 @@ Set up `.claude/memory/` inside the repo so session notes sync via git across ma
 
 ---
 
+## Infrastructure
+- [DigitalOcean droplet](infra_digitalocean.md) — cron_ingest.py + cron_iv.py run here daily (IV post-close)
+
 ## DuckDB Schema — data/breakwater.duckdb
 
 **prices:** stock, date (DATE), price (DOUBLE), ingested_at — unique index (stock, date)
