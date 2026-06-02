@@ -84,49 +84,35 @@ def get_dashboard_df(use_cached_eps: bool = True) -> pd.DataFrame:
 
     return df
 
-def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
+def sidebar_filters(df: pd.DataFrame, upcoming: pd.DataFrame) -> tuple:
     st.sidebar.header("Filters")
 
+    stock_choice = "(All)"
     if "stock" in df.columns:
         stocks = sorted(df["stock"].dropna().unique())
-        stock_choice = st.sidebar.selectbox(
-            "Stock",
-            options=["(All)"] + stocks,
-        )
+        stock_choice = st.sidebar.selectbox("Stock", options=["(All)"] + stocks)
         if stock_choice != "(All)":
             df = df[df["stock"] == stock_choice]
 
+    selected_sectors = None
     if "sector" in df.columns:
         sectors = sorted(df["sector"].dropna().unique())
-        selected_sectors = st.sidebar.multiselect(
-            "Sector",
-            options=sectors,
-            default=sectors,
-        )
+        selected_sectors = st.sidebar.multiselect("Sector", options=sectors, default=sectors)
         if selected_sectors:
             df = df[df["sector"].isin(selected_sectors)]
 
+    selected_risks = None
     if "risk_level" in df.columns:
         risk_levels = sorted(df["risk_level"].dropna().unique())
-        selected_risks = st.sidebar.multiselect(
-            "Risk level",
-            options=risk_levels,
-            default=risk_levels,
-        )
+        selected_risks = st.sidebar.multiselect("Risk level", options=risk_levels, default=risk_levels)
         if selected_risks:
             df = df[df["risk_level"].isin(selected_risks)]
 
+    lo, hi = None, None
     if "risk_score" in df.columns and not df["risk_score"].isna().all():
         min_rs = int(df["risk_score"].min())
         max_rs = int(df["risk_score"].max())
-
-        lo, hi = st.sidebar.slider(
-            "Risk score range",
-            min_value=min_rs,
-            max_value=max_rs,
-            value=(min_rs, max_rs),
-        )
-
+        lo, hi = st.sidebar.slider("Risk score range", min_value=min_rs, max_value=max_rs, value=(min_rs, max_rs))
         df = df[(df["risk_score"] >= lo) & (df["risk_score"] <= hi)]
 
     if "is_extreme_reaction" in df.columns:
@@ -139,12 +125,29 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
         if only_large:
             df = df[df["is_large_reaction"] == 1]
 
+    only_hc = False
     if "is_high_conviction" in df.columns:
         only_hc = st.sidebar.checkbox("High Conviction only", value=False)
         if only_hc:
             df = df[df["is_high_conviction"] == True]
 
-    return df
+    # Apply same filter state to upcoming df
+    if not upcoming.empty:
+        if stock_choice != "(All)" and "stock" in upcoming.columns:
+            upcoming = upcoming[upcoming["stock"] == stock_choice]
+        if selected_sectors and "sector" in upcoming.columns:
+            upcoming = upcoming[upcoming["sector"].isin(selected_sectors)]
+        if selected_risks and "earnings_explosiveness_bucket" in upcoming.columns:
+            upcoming = upcoming[upcoming["earnings_explosiveness_bucket"].isin(selected_risks)]
+        if lo is not None and "earnings_explosiveness_score" in upcoming.columns:
+            upcoming = upcoming[
+                (upcoming["earnings_explosiveness_score"] >= lo) &
+                (upcoming["earnings_explosiveness_score"] <= hi)
+            ]
+        if only_hc and "is_high_conviction" in upcoming.columns:
+            upcoming = upcoming[upcoming["is_high_conviction"] == True]
+
+    return df, upcoming
 
 def main():
     st.title("Breakwater - Earnings Risk Dashboard")
@@ -156,7 +159,8 @@ def main():
             get_upcoming_df.clear()
 
     raw_df = get_dashboard_df()
-    df = sidebar_filters(raw_df.copy())
+    raw_upcoming = get_upcoming_df()
+    df, upcoming_filtered = sidebar_filters(raw_df.copy(), raw_upcoming.copy())
 
     if df.empty:
         st.warning("No rows match the current filters.")
@@ -238,7 +242,7 @@ def main():
     with tab_upcoming:
         st.subheader("Upcoming Earnings Events")
 
-        upcoming = get_upcoming_df()
+        upcoming = upcoming_filtered
 
         if upcoming.empty:
             st.info("No upcoming earnings found. Run the pipeline to generate upcoming_df.parquet.")
