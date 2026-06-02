@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 At the start of every conversation, read `.claude/memory/MEMORY.md` to restore context from previous sessions. At the end of every conversation (or when asked), update it with what was done and what's next.
 
+**Memory location:** All session memory lives in `.claude/memory/` inside this repo. It syncs via git across machines and is the single source of truth. Do NOT write to the Claude harness auto-memory location (`~/.claude/projects/*/memory/`) — that path is not used for this project and will diverge.
+
 ## What This Is
 
 Breakwater is an earnings tail-risk model for S&P 500 stocks. It ingests price/earnings/sector data, engineers features, scores each stock's upcoming earnings event on a risk scale, and produces reports and a Streamlit dashboard.

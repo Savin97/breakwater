@@ -1,8 +1,35 @@
 What's worth doing next, ranked
 
-1. 
-2. Report content — the recommendation block is there but the reports are thin. A chart of the stock's historical earnings reactions (scatter or bar, past N events) would be the single highest-value addition. It gives the reader the empirical basis for the risk level, not just the number.
-3. Coverage automation — right now report_stocks.csv is a 4-stock manual list. A useful product would auto-generate reports for all High Alert stocks in the upcoming 2-week window. That's maybe 30 lines in stage5.
-4. Dashboard + delivery — lower priority. The dashboard is functional; nobody needs it to be perfect before the data and reports are current.
-5. Options are market-priced bets/insurance on future stock movement.
+--- Dual-window p75 + IV bump for Normal bucket false negatives ---
+Stocks like A (Agilent) can sit at Normal while having 9-11% earnings moves, because
+the 28-event rolling window includes a quiet 2015-2018 period that suppresses the p75.
+
+Two fixes to implement together:
+
+1. Dual-window p75: replace abs_reaction_p75_rolling with max(rolling_28, rolling_8).
+   One-line change in engineer_abs_reaction_p75_rolling() in
+   feature_engineering/pre_earnings_stock_features.py. Short window catches recent
+   volatility returning; long window anchors against one-off spikes.
+
+2. IV-based bucket bump: if iv_vs_hist_ratio is high (options pricing in a move well
+   above historical p75), bump Normal → Elevated. IV data already ingested, just not
+   wired into bucket classification. Affects stage4 scoring or bucket assignment in
+   risk_scoring/scoring_features.py (the pd.cut call at line ~217).
+
+Note: AAPL being Normal is correct — it genuinely moves 2-4% at earnings now.
+The false-negative problem is specifically stocks whose recent volatility has returned
+after a quiet period, and stocks where the options market disagrees with historical p75.
+
+
+1. Options are market-priced bets/insurance on future stock movement.
 High option prices before earnings = market expects a bigger move.
+
+--- Dashboard: upcoming events view ---
+The Streamlit dashboard (harbor-markets.com/breakwater) is currently historical-only.
+streamlit_export.py filters to is_earnings_day == 1, so no upcoming events appear.
+
+To fix: extend the export to also include latest row per stock where earnings_date is in
+the future (same logic as the weekly digest _select_stocks). Add a "Upcoming Events" tab
+to streamlit_dash/app.py showing flagged stocks for the next 2-4 weeks, sorted by
+earnings_date asc. This makes the dashboard useful as a forward-looking product, not just
+a historical analysis tool.

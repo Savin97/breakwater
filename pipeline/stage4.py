@@ -42,5 +42,4 @@ def stage4(stage3_df):
     if stage4_df is None:
         raise ValueError("\n---ERROR! Stage 4 Returned None.---\n")
     print("Stage 4 DONE")
-    stage4_df.to_parquet("output/full_df.parquet", index=False)
     return stage4_df

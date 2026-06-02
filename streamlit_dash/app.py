@@ -13,12 +13,21 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 # CSV with the dashboard output
 # put streamlit_df.parquet in the output folder
-DF_PATH = ROOT / "output/streamlit_df.parquet"  # change if you keep it elsewhere
+DF_PATH = ROOT / "output/streamlit_df.parquet"
+UPCOMING_PATH = ROOT / "output/upcoming_df.parquet"
 from pipeline.pipeline import run_pipeline
 
 @st.cache_data(show_spinner="Loading parquet…")
 def get_full_df() -> pd.DataFrame:
     df = pd.read_parquet(DF_PATH)
+    df["earnings_date"] = pd.to_datetime(df["earnings_date"], errors="coerce")
+    return df
+
+@st.cache_data(show_spinner="Loading upcoming events…")
+def get_upcoming_df() -> pd.DataFrame:
+    if not UPCOMING_PATH.exists():
+        return pd.DataFrame()
+    df = pd.read_parquet(UPCOMING_PATH)
     df["earnings_date"] = pd.to_datetime(df["earnings_date"], errors="coerce")
     return df
 
@@ -142,8 +151,9 @@ def main():
 
     with st.sidebar:
         st.markdown("### Data options")
-        if st.button("Reload CSV from disk"):
+        if st.button("Reload data from disk"):
             get_dashboard_df.clear()
+            get_upcoming_df.clear()
 
     raw_df = get_dashboard_df()
     df = sidebar_filters(raw_df.copy())
@@ -173,8 +183,8 @@ def main():
         if "is_high_conviction" in df.columns:
             st.metric("High Conviction", int(df["is_high_conviction"].sum()))
 
-    tab_overview, tab_buckets, tab_stock, tab_calendar = st.tabs(
-        ["Overview", "Bucket stats", "Stock drill-down", "Weekly Calendar"]
+    tab_overview, tab_upcoming, tab_stock, tab_calendar, tab_buckets = st.tabs(
+        ["Overview", "Upcoming Events", "Stock drill-down", "Weekly Calendar", "Bucket stats"]
     )
 
     with tab_overview:
@@ -224,6 +234,56 @@ def main():
             st.markdown("#### Count of events by risk level")
             risk_counts = df["risk_level"].value_counts().sort_index()
             st.bar_chart(risk_counts)
+
+    with tab_upcoming:
+        st.subheader("Upcoming Earnings Events")
+
+        upcoming = get_upcoming_df()
+
+        if upcoming.empty:
+            st.info("No upcoming earnings found. Run the pipeline to generate upcoming_df.parquet.")
+        else:
+            window_days = st.radio(
+                "Show events in the next",
+                options=[14, 30, 60, 999],
+                format_func=lambda x: "All" if x == 999 else f"{x} days",
+                horizontal=True,
+            )
+            mask = upcoming["days_to_earnings"] <= window_days
+            view = upcoming[mask].copy()
+
+            if view.empty:
+                st.info(f"No events in the next {window_days} days.")
+            else:
+                u1, u2, u3, u4 = st.columns(4)
+                u1.metric("Events", len(view))
+                u2.metric("High Alert", int((view["earnings_explosiveness_bucket"] == "High Alert").sum()))
+                u3.metric("High Conviction ★", int(view["is_high_conviction"].sum()))
+                u4.metric("Elevated", int((view["earnings_explosiveness_bucket"] == "Elevated").sum()))
+
+                display_cols = [c for c in [
+                    "earnings_date", "days_to_earnings", "stock", "sector",
+                    "earnings_explosiveness_bucket", "earnings_explosiveness_score",
+                    "peer_percentile", "pre_earnings_drift_flag",
+                    "surprise_momentum_flag", "is_high_conviction",
+                ] if c in view.columns]
+
+                st.dataframe(
+                    view[display_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "earnings_date":                  st.column_config.DateColumn("Date", format="DD MMM YYYY"),
+                        "days_to_earnings":               st.column_config.NumberColumn("Days", format="%d"),
+                        "stock":                          st.column_config.TextColumn("Ticker"),
+                        "earnings_explosiveness_bucket":  st.column_config.TextColumn("Risk Level"),
+                        "earnings_explosiveness_score":   st.column_config.NumberColumn("Score", format="%.0f"),
+                        "peer_percentile":                st.column_config.NumberColumn("Percentile", format="%dth"),
+                        "pre_earnings_drift_flag":        st.column_config.TextColumn("Drift"),
+                        "surprise_momentum_flag":         st.column_config.TextColumn("Surprise Pattern"),
+                        "is_high_conviction":             st.column_config.CheckboxColumn("HC ★"),
+                    },
+                )
 
     with tab_buckets:
         st.subheader("Risk bucket statistics")

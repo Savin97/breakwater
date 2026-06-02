@@ -22,8 +22,7 @@ def stage5(df):
     today = pd.Timestamp.today().normalize()
     cutoff = today + pd.Timedelta(days=14)
     latest_per_stock = (
-        df[df["is_earnings_day"] == 1]
-        .sort_values("earnings_date")
+        df.sort_values("date")
         .groupby("stock")
         .last()
         .reset_index()
@@ -41,18 +40,16 @@ def stage5(df):
     )
     print(f"  Auto-selected {len(stocks_to_report_for)} stocks for reports (High Alert / Elevated, earnings within 14 days).")
 
+    # Indexed for per-stock upcoming-date lookup; scores for universe-wide percentile (matches digest)
+    latest_per_stock_idx = latest_per_stock.set_index("stock")
+    all_latest_scores = latest_per_stock_idx["earnings_explosiveness_score"].dropna()
+
     company_names = pd.read_csv("data/sp500_full_info.csv", usecols=["ticker", "name"]).set_index("ticker")["name"]
     generated_date = date.today().strftime("%B %d, %Y")
 
     global_earnings_df = df[df["is_earnings_day"] == 1].copy()
     P_extreme_global = global_earnings_df["is_extreme_reaction"].mean()
 
-    # Peer percentile: latest earnings_explosiveness_score per stock across the universe
-    latest_scores = (
-        global_earnings_df.sort_values("earnings_date")
-        .groupby("stock")["earnings_explosiveness_score"].last()
-    )
-    n_universe = len(latest_scores)
     P_extreme_given_bucket = (
         global_earnings_df.groupby("earnings_explosiveness_bucket")["is_extreme_reaction"]
         .mean()
@@ -99,7 +96,8 @@ def stage5(df):
             current_bucket = latest_row["earnings_explosiveness_bucket"]
 
         risk_score = f"{latest_row['risk_score']:.0f}"
-        current_earnings_date = pd.Timestamp(latest_row["earnings_date"]).strftime("%B %d, %Y")
+        upcoming_date = pd.Timestamp(latest_per_stock_idx.loc[stock, "earnings_date"])
+        current_earnings_date = upcoming_date.strftime("%B %d, %Y")
         sector = latest_row.get("sector", "")
         sub_sector = latest_row.get("sub_sector", "")
         company_name = company_names.get(stock, "")
@@ -108,11 +106,12 @@ def stage5(df):
         high_conviction = (current_bucket == "High Alert") and bool(drift_flag)
         n_events = len(earnings_df)
 
-        stock_score = latest_row["earnings_explosiveness_score"]
-        peer_percentile = int((latest_scores < stock_score).mean() * 100)
+        _rank_key = latest_per_stock_idx["abs_reaction_p75_rolling"].fillna(
+            latest_per_stock_idx["abs_reaction_p75"]
+        )
+        peer_percentile = int(_rank_key.rank(pct=True).fillna(0).loc[stock] * 100)
 
-        earnings_date_ts = pd.Timestamp(latest_row["earnings_date"]).date()
-        days_to_earnings = (earnings_date_ts - date.today()).days
+        days_to_earnings = (upcoming_date.date() - date.today()).days
 
         # IV data (may be NaN if cron hasn't run yet for this stock)
         _exp_move = latest_row.get("expected_move_pct")

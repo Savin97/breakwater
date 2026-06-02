@@ -14,8 +14,10 @@ import os
 import smtplib
 import pandas as pd
 from datetime import date
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email import encoders
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,6 +25,7 @@ load_dotenv()
 PARQUET_PATH   = "output/full_df.parquet"
 COMPANY_NAMES  = "data/sp500_full_info.csv"
 SUBSCRIBERS    = "data/subscribers.txt"
+REPORTS_DIR    = "output/reports"
 SMTP_HOST      = os.getenv("DIGEST_SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT      = int(os.getenv("DIGEST_SMTP_PORT", "587"))
 SMTP_USER      = os.getenv("DIGEST_SMTP_USER", "")
@@ -56,17 +59,18 @@ def _load_company_names() -> dict:
 def _select_stocks(df: pd.DataFrame, company_names: dict) -> pd.DataFrame:
     today  = pd.Timestamp.today().normalize()
     cutoff = today + pd.Timedelta(days=7)
+    # Use most recent row per stock; groupby last() is skipna=True by default so
+    # earnings_explosiveness_bucket/score come from the last historical earnings day
+    # while earnings_date comes from the most recent row (upcoming event).
     all_latest = (
-        df[df["is_earnings_day"] == 1]
-        .sort_values("earnings_date")
+        df.sort_values("date")
         .groupby("stock")
         .last()
         .reset_index()
     )
     # Percentile from raw continuous score — sort ties by raw score
-    all_latest["peer_percentile"] = (
-        all_latest["earnings_explosiveness_score"].rank(pct=True) * 100
-    ).fillna(0).astype(int)
+    _rank_key = all_latest["abs_reaction_p75_rolling"].fillna(all_latest["abs_reaction_p75"])
+    all_latest["peer_percentile"] = (_rank_key.rank(pct=True) * 100).fillna(0).astype(int)
     all_latest["company_name"] = all_latest["stock"].map(company_names)
 
     mask = (
@@ -223,31 +227,57 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> 
   <div style="margin-top:20px;padding-top:12px;border-top:1px solid #ddd;font-size:11px;color:#999;text-align:center;">
     Breakwater &mdash;
     <a href="https://harbor-markets.com/breakwater" style="color:#999;">harbor-markets.com/breakwater</a>
-    &mdash; Not financial advice. For informational purposes only.
+    &mdash; Not financial advice. For informational purposes only.<br>
+    <a href="mailto:unsubscribe@harbor-markets.com?subject=Unsubscribe" style="color:#bbb;">Unsubscribe</a>
   </div>
 
 </body>
 </html>"""
 
 
-def _send(recipients: list[str], subject: str, html: str):
+def _collect_reports(tickers: list[str]) -> list[tuple[str, bytes]]:
+    """Return (filename, bytes) for each ticker that has a report PDF."""
+    found = []
+    for ticker in tickers:
+        path = os.path.join(REPORTS_DIR, f"{ticker}_report.pdf")
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                found.append((os.path.basename(path), f.read()))
+    return found
+
+
+def _send(recipients: list[str], subject: str, html: str, attachments: list[tuple[str, bytes]] | None = None):
     if not SMTP_USER or not SMTP_PASS:
         print("SMTP credentials not set — printing digest to stdout.\n")
         print(f"To: {recipients}\nSubject: {subject}\n")
         print(html)
         return
 
-    msg = MIMEMultipart("alternative")
+    if attachments:
+        msg = MIMEMultipart("mixed")
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(html, "html"))
+        msg.attach(alt)
+        for filename, data in attachments:
+            part = MIMEBase("application", "pdf")
+            part.set_payload(data)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=filename)
+            msg.attach(part)
+    else:
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(html, "html"))
+
     msg["Subject"] = subject
     msg["From"]    = SMTP_USER
     msg["To"]      = ", ".join(recipients)
-    msg.attach(MIMEText(html, "html"))
 
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
         server.starttls()
         server.login(SMTP_USER, SMTP_PASS)
         server.sendmail(SMTP_USER, recipients, msg.as_string())
-    print(f"Digest sent to {len(recipients)} subscriber(s).")
+    n_att = len(attachments) if attachments else 0
+    print(f"Digest sent to {len(recipients)} subscriber(s) with {n_att} report attachment(s).")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -268,14 +298,15 @@ def run_weekly_digest():
     html          = _build_html(stocks_df, week_of, date_range=date_range)
     recipients    = _load_subscribers()
 
-    print(f"Digest: {len(stocks_df)} stocks selected, {len(recipients)} subscriber(s).")
+    attachments = _collect_reports(stocks_df["stock"].tolist())
+    print(f"Digest: {len(stocks_df)} stocks selected, {len(attachments)} reports found, {len(recipients)} subscriber(s).")
 
     if not recipients:
         print("No subscribers — printing digest to stdout.\n")
         print(html)
         return
 
-    _send(recipients, subject, html)
+    _send(recipients, subject, html, attachments=attachments or None)
 
 
 if __name__ == "__main__":

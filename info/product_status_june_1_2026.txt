@@ -1,0 +1,14 @@
+Model:
+- 5.8x lift at ≥8% sustained across 11 years, no regime dependency
+- Percentile ranking now clean and differentiated end-to-end
+- Calibration tables confirm the story holds at every cut
+
+Product:
+- Weekly digest sending with PDF attachments
+- Reports auto-generated for flagged stocks
+- IV integrated and showing in reports
+- Dashboard live at harbor-markets.com/breakwater
+
+What's left before charging money:
+- Stripe payment gate (website repo)
+- Landing page copy leading with the 40% / 7% stat
