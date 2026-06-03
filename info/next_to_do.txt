@@ -1,5 +1,14 @@
 What's worth doing next, ranked
 
+--- Weekly chart visual polish (report/chart_weekly.py) ---
+Current state: functional but aesthetics aren't great on dark background.
+Dark background with near-white text works but lacks visual punch.
+Options to explore: better box styling, maybe a light/cream background instead,
+stronger tier color contrast, larger ticker font, tighter layout.
+Generated chart saved to output/weekly_chart.png.
+
+
+
 --- Dual-window p75 + IV bump for Normal bucket false negatives ---
 Stocks like A (Agilent) can sit at Normal while having 9-11% earnings moves, because
 the 28-event rolling window includes a quiet 2015-2018 period that suppresses the p75.

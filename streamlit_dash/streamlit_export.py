@@ -84,11 +84,20 @@ def export_upcoming_df(df: pd.DataFrame, output_path: str = "output/upcoming_df.
 
     upcoming["days_to_earnings"] = (upcoming["earnings_date"] - today).dt.days
 
+    # IV vs historical p75 ratio — only valid for upcoming events (current IV snapshot)
+    p75_for_ratio = upcoming["abs_reaction_p75_rolling"].fillna(upcoming["abs_reaction_p75"])
+    upcoming["iv_vs_hist_ratio"] = (
+        upcoming["expected_move_pct"]
+        .div(p75_for_ratio)
+        .where(p75_for_ratio > 0)
+        .round(2)
+    )
+
     cols = [
         "stock", "sector", "sub_sector", "earnings_date", "days_to_earnings",
         "earnings_explosiveness_bucket", "earnings_explosiveness_score",
         "peer_percentile", "pre_earnings_drift_flag", "surprise_momentum_flag",
-        "is_high_conviction",
+        "is_high_conviction", "expected_move_pct", "iv_vs_hist_ratio",
     ]
     out = upcoming[[c for c in cols if c in upcoming.columns]].copy()
     out = out.sort_values("earnings_date")

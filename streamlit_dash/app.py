@@ -270,6 +270,7 @@ def main():
                     "earnings_explosiveness_bucket", "earnings_explosiveness_score",
                     "peer_percentile", "pre_earnings_drift_flag",
                     "surprise_momentum_flag", "is_high_conviction",
+                    "expected_move_pct", "iv_vs_hist_ratio",
                 ] if c in view.columns]
 
                 st.dataframe(
@@ -286,6 +287,8 @@ def main():
                         "pre_earnings_drift_flag":        st.column_config.TextColumn("Drift"),
                         "surprise_momentum_flag":         st.column_config.TextColumn("Surprise Pattern"),
                         "is_high_conviction":             st.column_config.CheckboxColumn("HC ★"),
+                        "expected_move_pct":              st.column_config.NumberColumn("IV Implied", format="%.1f%%"),
+                        "iv_vs_hist_ratio":               st.column_config.NumberColumn("IV/Hist", format="%.2fx"),
                     },
                 )
 

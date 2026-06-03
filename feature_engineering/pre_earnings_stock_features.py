@@ -160,17 +160,20 @@ def engineer_abs_reaction_p75(input_df):
     return df
 
 
-def engineer_abs_reaction_p75_rolling(df, window=28, percentile=0.75):
-    earnings_df = df["is_earnings_day"] == True
-    # Rolling percentile per stock, using past earnings only
-    df.loc[earnings_df, "abs_reaction_p75_rolling"] = (
-        df.loc[earnings_df]
+def engineer_abs_reaction_p75_rolling(df, window=28, short_window=8, percentile=0.75):
+    earnings_mask = df["is_earnings_day"] == True
+    # Dual-window: take max(rolling_28, rolling_8) so recent regime shifts aren't suppressed
+    # by a quiet historical period. np.fmax ignores NaN, so whichever window has data wins.
+    df.loc[earnings_mask, "abs_reaction_p75_rolling"] = (
+        df.loc[earnings_mask]
           .groupby("stock")["abs_reaction_3d"]
           .transform(
-              lambda x: (
-                  x.shift(1)
-                   .rolling(window, min_periods=window)
-                   .quantile(percentile)
+              lambda x: pd.Series(
+                  np.fmax(
+                      x.shift(1).rolling(window, min_periods=window).quantile(percentile),
+                      x.shift(1).rolling(short_window, min_periods=short_window).quantile(percentile),
+                  ),
+                  index=x.index,
               )
           )
     )
