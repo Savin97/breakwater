@@ -155,6 +155,7 @@ def main():
     with st.sidebar:
         st.markdown("### Data options")
         if st.button("Reload data from disk"):
+            get_full_df.clear()
             get_dashboard_df.clear()
             get_upcoming_df.clear()
 
@@ -187,8 +188,8 @@ def main():
         if "is_high_conviction" in df.columns:
             st.metric("High Conviction", int(df["is_high_conviction"].sum()))
 
-    tab_overview, tab_upcoming, tab_stock, tab_calendar, tab_buckets = st.tabs(
-        ["Overview", "Upcoming Events", "Stock drill-down", "Weekly Calendar", "Bucket stats"]
+    tab_upcoming, tab_overview, tab_stock, tab_calendar = st.tabs(
+        ["Upcoming Events", "Overview", "Stock drill-down", "Weekly Calendar"]
     )
 
     with tab_overview:
@@ -203,8 +204,19 @@ def main():
             "hist_extreme_prob", "current_lift_vs_baseline",
         ] if c in df.columns]
 
+        years_back = st.radio(
+            "Show events from last",
+            options=[1, 2, 5, 0],
+            format_func=lambda x: "All time" if x == 0 else f"{x} year{'s' if x > 1 else ''}",
+            horizontal=True,
+            index=1,
+        )
+
         df_display = df.sort_values("earnings_date", ascending=False).copy()
         df_display["earnings_date"] = df_display["earnings_date"].dt.date
+        if years_back > 0:
+            cutoff = (pd.Timestamp(date.today()) - pd.DateOffset(years=years_back)).date()
+            df_display = df_display[df_display["earnings_date"] >= cutoff]
         if "abs_reaction_3d" in df_display.columns:
             df_display["abs_reaction_3d"] = (df_display["abs_reaction_3d"] * 100).round(2)
 
@@ -249,7 +261,9 @@ def main():
                 horizontal=True,
             )
             mask = upcoming["days_to_earnings"] <= window_days
-            view = upcoming[mask].copy()
+            view = upcoming[mask].sort_values(
+                ["earnings_date", "earnings_explosiveness_score"], ascending=[True, False]
+            ).copy()
 
             if view.empty:
                 st.info(f"No events in the next {window_days} days.")
@@ -289,28 +303,6 @@ def main():
                         "iv_vs_hist_ratio":               st.column_config.NumberColumn("IV/Hist", format="%.2fx"),
                     },
                 )
-
-    with tab_buckets:
-        st.subheader("Risk bucket statistics")
-
-        bucket_cols = [
-            "risk_level",
-            "hist_extreme_prob",
-            "global_hist_prob",
-            "current_lift_vs_baseline",
-            "current_lift_vs_same_bucket_global",
-            "extreme_count",
-        ]
-
-        bucket_cols = [c for c in bucket_cols if c in df.columns]
-
-        bucket_df = (
-            df[bucket_cols]
-            .drop_duplicates()
-            .sort_values("hist_extreme_prob", ascending=False)
-        )
-
-        st.dataframe(bucket_df, use_container_width=True)
 
     with tab_stock:
         st.subheader("Single-stock history")
@@ -392,11 +384,16 @@ def main():
                 (window["pre_earnings_drift_flag"].fillna("") != "")
             )
 
+            today_dt = pd.Timestamp(date.today())
+            window["status"] = window["earnings_date"].apply(
+                lambda d: "Scheduled" if pd.Timestamp(d) > today_dt else "Reported"
+            )
+
             window["earnings_date"] = window["earnings_date"].dt.date
             display = window[[
                 "earnings_date", "stock", "sector", "sub_sector",
                 "earnings_explosiveness_score", "earnings_explosiveness_bucket",
-                "pre_earnings_drift_flag", "surprise_momentum_flag",
+                "status", "pre_earnings_drift_flag", "surprise_momentum_flag",
                 "is_high_conviction",
             ]].rename(columns={
                 "earnings_date":                "Date",
@@ -405,12 +402,14 @@ def main():
                 "sub_sector":                   "Sub-Sector",
                 "earnings_explosiveness_score": "Risk Score",
                 "earnings_explosiveness_bucket": "Risk Level",
+                "status":                       "Status",
                 "pre_earnings_drift_flag":      "Drift",
                 "surprise_momentum_flag":       "Surprise Pattern",
                 "is_high_conviction":           "High Conviction",
             }).sort_values(["Date", "Risk Score"], ascending=[True, False])
 
             # Summary KPIs
+
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("Events", len(display))
             k2.metric("High Conviction", int(display["High Conviction"].sum()))
@@ -427,6 +426,7 @@ def main():
                 column_config={
                     "Date":             st.column_config.DateColumn("Date", format="DD MMM YYYY"),
                     "Risk Score":       st.column_config.NumberColumn("Risk Score", format="%.0f"),
+                    "Status":           st.column_config.TextColumn("Status"),
                     "High Conviction":  st.column_config.CheckboxColumn("High Conviction"),
                 },
             )

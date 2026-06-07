@@ -5,11 +5,21 @@ Entries are updated at the end of each session. Most recent first.
 
 ---
 
-## 2026-06-07 — Codebase audit & refactor
+## 2026-06-07 — Incremental pipeline + codebase audit
 
-- [Full change log](codebase_audit_2026_06_07.md) — every file touched, what changed and why, what was deliberately kept. Read this before debugging any score/pipeline regression introduced after this date.
-- Backtesting verified bit-for-bit identical before and after.
-- Key changes: fixed WMB ticker bug, fixed 3× `.to_numpy()` alignment risk, removed ~34 redundant `df.copy()` calls across feature/scoring functions, stage5 loop pre-grouped by stock, streamlit filter copy removed, `engineer_timing_danger` deleted, 3 dead file/folders deleted.
+**Incremental pipeline (new):**
+- `stage2(lookback_days=N)` toggle: loads only last N days of prices (default=None = full load)
+- `stage3(incremental=True)`: skips expanding earnings stats, reads cached values from `full_df.parquet` via `groupby().last(skipna=True)`; cached cols defined in `config.INCREMENTAL_CACHED_COLS`
+- `stage4(incremental=True)`: skips functions requiring `abs_reaction_3d`; `earnings_explosiveness_score` + `earnings_explosiveness_bucket` read from cache to avoid score drift when most recent earnings has incomplete reaction window
+- `pipeline/incremental.py`: `run_incremental()` auto-detects new earnings via per-stock max-date comparison (DB vs parquet), falls back to `run_pipeline()` if any found
+- `cron/cron_ingest.py`: now calls `run_incremental()` after `stage1(update=True)`
+- Result: **0.8s** incremental vs 80s full run; scores bit-for-bit identical to full pipeline
+- Constants in `config.py`: `INCREMENTAL_CACHED_COLS`, `INCREMENTAL_LOOKBACK_DAYS = 90`
+
+**Audit & refactor (same commit):**
+- [Full change log](codebase_audit_2026_06_07.md) — every file touched, what changed and why, what was deliberately kept. Read this before debugging any score/pipeline regression.
+- Key changes: fixed WMB ticker bug, fixed 3× `.to_numpy()` alignment risk, removed ~34 redundant `df.copy()` calls, stage5 loop pre-grouped by stock, `engineer_timing_danger` deleted, 3 dead file/folders deleted.
+- Backtesting lift numbers verified unchanged after all changes (High Alert 3.82x, HA+Drift 4.94x).
 
 ---
 
