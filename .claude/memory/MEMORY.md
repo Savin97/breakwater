@@ -5,6 +5,14 @@ Entries are updated at the end of each session. Most recent first.
 
 ---
 
+## 2026-06-07 — Codebase audit & refactor
+
+- [Full change log](codebase_audit_2026_06_07.md) — every file touched, what changed and why, what was deliberately kept. Read this before debugging any score/pipeline regression introduced after this date.
+- Backtesting verified bit-for-bit identical before and after.
+- Key changes: fixed WMB ticker bug, fixed 3× `.to_numpy()` alignment risk, removed ~34 redundant `df.copy()` calls across feature/scoring functions, stage5 loop pre-grouped by stock, streamlit filter copy removed, `engineer_timing_danger` deleted, 3 dead file/folders deleted.
+
+---
+
 ## 2026-06-01 — Calibration, percentile fix, landing page, dashboard diagnosis
 
 **Model work:**

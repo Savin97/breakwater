@@ -48,11 +48,15 @@ As of 2026-06-01, the model is proven and calibration is complete. The gaps are 
 - Subscriber list: `data/subscribers.txt`
 - Add crontab entry on droplet
 
-**4. Dual-window p75 + IV bucket bump** ← false negative reducer for Normal bucket
-- Some stocks (e.g. A/Agilent) sit at Normal while having 9-11% actual moves, because the 28-event window includes a quiet period that suppresses rolling p75
-- Fix 1: `max(rolling_28, rolling_8)` in `engineer_abs_reaction_p75_rolling()` — one-line change in `feature_engineering/pre_earnings_stock_features.py`
-- Fix 2: IV-based bucket bump — if `iv_vs_hist_ratio` is high (options pricing well above historical p75), bump Normal → Elevated. Wire into `risk_scoring/scoring_features.py` ~line 217
-- Note: AAPL Normal is correct (genuinely low earnings vol now). Problem is specifically stocks with recent volatility returning after a quiet period.
+**4. ~~Dual-window p75~~** ✅ done 2026-06-04
+- `max(rolling_28, rolling_8)` in `engineer_abs_reaction_p75_rolling()` — affects 210 stocks
+- IV bucket bump was re-scoped: stage2 broadcasts current IV across all historical rows, making an IV-based bucket change invalid for backtesting. Instead, `iv_vs_hist_ratio` added to `upcoming_df.parquet` as a display signal only.
+
+**5. IV signal validation** ← deferred, not urgent
+- Before wiring IV into the score, validate it lifts predictive accuracy
+- Plan: `testing/test_iv_signal.py` — time-aware join of iv_snapshots to historical earnings events (latest snapshot per stock WHERE snapshot_date < earnings_date), run `forward_eval_onefactor(df, "iv_vs_hist_ratio")` from testing_functions.py
+- Sample will be small (IV collection only started ~May 2026) — revisit in a few months when more data has accumulated
+- scripts/sync_iv.sh handles pulling IV from droplet to local before running
 
 **What NOT to build yet:** SHAP/explainability, sector-specific models, API, portfolio-level aggregation — all institutional features, not needed for retail market.
 

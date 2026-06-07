@@ -1,3 +1,4 @@
+# streamlit_dash/streamlit_export.py
 import pandas as pd
 from datetime import date
 
@@ -30,7 +31,7 @@ def export_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit_d
         "stock", "sector", "sub_sector", "earnings_date",
         "is_large_reaction", "is_extreme_reaction",
         "earnings_explosiveness_bucket", "earnings_explosiveness_score",
-        "momentum_fragility_score",
+        "momentum_fragility_score", "abs_reaction_3d",
         "pre_earnings_drift_flag", "surprise_momentum_flag",
     ]].copy()
 

@@ -73,7 +73,6 @@ def get_earnings_data_from_api(stock, max_attempts=5):
 
 def get_earnings_dates_yf(ticker: str, limit : int = 12):
     t = yf.Ticker(ticker)
-    t = yf.Ticker("wmb")
     df = t.get_earnings_dates(limit=limit)
     if df is None or df.empty:
         return pd.DataFrame(columns=[

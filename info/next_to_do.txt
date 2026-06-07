@@ -1,5 +1,14 @@
 What's worth doing next, ranked
 
+--- IV signal validation (testing/test_iv_signal.py) ---
+Before wiring iv_vs_hist_ratio into the score, validate it lifts accuracy.
+Plan: time-aware join of iv_snapshots to historical earnings events (latest snapshot
+per stock WHERE snapshot_date < earnings_date), then run forward_eval_onefactor()
+from testing/testing_functions.py. Sample is small (IV collection started ~May 2026)
+— revisit in a few months when more data has accumulated.
+scripts/sync_iv.sh handles pulling IV from droplet first.
+
+
 --- Weekly chart visual polish (report/chart_weekly.py) ---
 Current state: functional but aesthetics aren't great on dark background.
 Dark background with near-white text works but lacks visual punch.
@@ -8,37 +17,14 @@ stronger tier color contrast, larger ticker font, tighter layout.
 Generated chart saved to output/weekly_chart.png.
 
 
-
 --- Dual-window p75 + IV bump for Normal bucket false negatives ---
-Stocks like A (Agilent) can sit at Normal while having 9-11% earnings moves, because
-the 28-event rolling window includes a quiet 2015-2018 period that suppresses the p75.
+DONE 2026-06-04: dual-window p75 implemented (max rolling_28, rolling_8), affects 210 stocks.
+IV bucket bump re-scoped: stage2 broadcasts current IV across all historical rows,
+making IV-based bucket change invalid for backtesting. iv_vs_hist_ratio added to
+upcoming_df.parquet as a display signal instead. See IV signal validation above.
 
-Two fixes to implement together:
-
-1. Dual-window p75: replace abs_reaction_p75_rolling with max(rolling_28, rolling_8).
-   One-line change in engineer_abs_reaction_p75_rolling() in
-   feature_engineering/pre_earnings_stock_features.py. Short window catches recent
-   volatility returning; long window anchors against one-off spikes.
-
-2. IV-based bucket bump: if iv_vs_hist_ratio is high (options pricing in a move well
-   above historical p75), bump Normal → Elevated. IV data already ingested, just not
-   wired into bucket classification. Affects stage4 scoring or bucket assignment in
-   risk_scoring/scoring_features.py (the pd.cut call at line ~217).
-
-Note: AAPL being Normal is correct — it genuinely moves 2-4% at earnings now.
-The false-negative problem is specifically stocks whose recent volatility has returned
-after a quiet period, and stocks where the options market disagrees with historical p75.
-
-
-1. Options are market-priced bets/insurance on future stock movement.
-High option prices before earnings = market expects a bigger move.
 
 --- Dashboard: upcoming events view ---
-The Streamlit dashboard (harbor-markets.com/breakwater) is currently historical-only.
-streamlit_export.py filters to is_earnings_day == 1, so no upcoming events appear.
-
-To fix: extend the export to also include latest row per stock where earnings_date is in
-the future (same logic as the weekly digest _select_stocks). Add a "Upcoming Events" tab
-to streamlit_dash/app.py showing flagged stocks for the next 2-4 weeks, sorted by
-earnings_date asc. This makes the dashboard useful as a forward-looking product, not just
-a historical analysis tool.
+DONE 2026-06-03: Upcoming Events tab added to streamlit_dash/app.py.
+upcoming_df.parquet exported via streamlit_export.py. Sidebar filters applied.
+IV Implied + IV/Hist columns added 2026-06-04.

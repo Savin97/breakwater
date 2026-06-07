@@ -1,6 +1,6 @@
-# app.py
+# streamlit_dash/app.py
 import streamlit as st, sys, pandas as pd, warnings
-from datetime import timedelta
+from datetime import timedelta, date
 # Streamlit page configuration
 st.set_page_config(
     page_title="Breakwater",
@@ -160,7 +160,7 @@ def main():
 
     raw_df = get_dashboard_df()
     raw_upcoming = get_upcoming_df()
-    df, upcoming_filtered = sidebar_filters(raw_df.copy(), raw_upcoming.copy())
+    df, upcoming_filtered = sidebar_filters(raw_df, raw_upcoming)
 
     if df.empty:
         st.warning("No rows match the current filters.")
@@ -194,43 +194,38 @@ def main():
     with tab_overview:
         st.subheader("Filtered earnings events")
 
-        cols_to_show = [
-            c for c in [
-                "stock",
-                "earnings_date",
-                "sector",
-                "sub_sector",
-                "risk_level",
-                "risk_score",
-                "pre_earnings_drift_flag",
-                "surprise_momentum_flag",
-                "is_high_conviction",
-                "hist_extreme_prob",
-                "base_extreme_prob",
-                "current_lift_vs_baseline",
-                "current_lift_vs_same_bucket_global",
-                "is_large_reaction",
-                "is_extreme_reaction",
-            ]
-            if c in df.columns
-        ]
+        cols_to_show = [c for c in [
+            "stock", "earnings_date", "sector",
+            "risk_level", "risk_score", "is_high_conviction",
+            "pre_earnings_drift_flag", "surprise_momentum_flag",
+            "abs_reaction_3d",
+            "is_large_reaction", "is_extreme_reaction",
+            "hist_extreme_prob", "current_lift_vs_baseline",
+        ] if c in df.columns]
 
-        df_display = df.sort_values("earnings_date", ascending=False)
+        df_display = df.sort_values("earnings_date", ascending=False).copy()
+        df_display["earnings_date"] = df_display["earnings_date"].dt.date
+        if "abs_reaction_3d" in df_display.columns:
+            df_display["abs_reaction_3d"] = (df_display["abs_reaction_3d"] * 100).round(2)
 
         st.dataframe(
             df_display[cols_to_show],
             use_container_width=True,
             hide_index=True,
             column_config={
-                "earnings_date": st.column_config.DateColumn("Earnings date", format="DD/MM/YYYY"),
-                "risk_score": st.column_config.NumberColumn("Risk score", format="%.0f"),
-                "pre_earnings_drift_flag": st.column_config.TextColumn("Drift"),
-                "surprise_momentum_flag": st.column_config.TextColumn("Surprise Pattern"),
-                "is_high_conviction": st.column_config.CheckboxColumn("High Conviction"),
-                "hist_extreme_prob": st.column_config.NumberColumn("Hist extreme prob", format="%.3f"),
-                "base_extreme_prob": st.column_config.NumberColumn("Base extreme prob", format="%.3f"),
-                "current_lift_vs_baseline": st.column_config.NumberColumn("Lift vs baseline", format="%.2f"),
-                "current_lift_vs_same_bucket_global": st.column_config.NumberColumn("Lift vs same bucket", format="%.2f"),
+                "earnings_date":            st.column_config.DateColumn("Date", format="DD MMM YYYY"),
+                "stock":                    st.column_config.TextColumn("Ticker"),
+                "sector":                   st.column_config.TextColumn("Sector"),
+                "risk_level":               st.column_config.TextColumn("Risk Level"),
+                "risk_score":               st.column_config.NumberColumn("Score", format="%.0f"),
+                "is_high_conviction":       st.column_config.CheckboxColumn("HC ★"),
+                "pre_earnings_drift_flag":  st.column_config.TextColumn("Drift"),
+                "surprise_momentum_flag":   st.column_config.TextColumn("Surprise"),
+                "abs_reaction_3d":          st.column_config.NumberColumn("Actual Move %", format="%.2f"),
+                "is_large_reaction":        st.column_config.CheckboxColumn("Large"),
+                "is_extreme_reaction":      st.column_config.CheckboxColumn("Extreme"),
+                "hist_extreme_prob":        st.column_config.NumberColumn("P(Extreme)", format="%.3f"),
+                "current_lift_vs_baseline": st.column_config.NumberColumn("Lift", format="%.2fx"),
             }
         )
 
@@ -272,6 +267,9 @@ def main():
                     "surprise_momentum_flag", "is_high_conviction",
                     "expected_move_pct", "iv_vs_hist_ratio",
                 ] if c in view.columns]
+
+                view = view.copy()
+                view["earnings_date"] = view["earnings_date"].dt.date
 
                 st.dataframe(
                     view[display_cols],
@@ -359,9 +357,21 @@ def main():
 
         earn = get_full_df()
 
-        latest_date = earn["earnings_date"].max()
-        default_start = latest_date - timedelta(days=7)
-        default_end   = latest_date + timedelta(days=7)
+        # Merge upcoming events so the calendar spans past + future
+        _upcoming_cal = get_upcoming_df()
+        if not _upcoming_cal.empty:
+            _cal_cols = [c for c in [
+                "stock", "sector", "sub_sector", "earnings_date",
+                "earnings_explosiveness_score", "earnings_explosiveness_bucket",
+                "pre_earnings_drift_flag", "surprise_momentum_flag", "is_high_conviction",
+            ] if c in _upcoming_cal.columns]
+            earn = pd.concat([earn, _upcoming_cal[_cal_cols]], ignore_index=True)
+            earn = earn.drop_duplicates(subset=["stock", "earnings_date"], keep="first")
+            earn["earnings_date"] = pd.to_datetime(earn["earnings_date"], errors="coerce")
+
+        today = pd.Timestamp(date.today())
+        default_start = today - timedelta(days=7)
+        default_end   = today + timedelta(days=14)
 
         c1, c2 = st.columns(2)
         with c1:
@@ -382,6 +392,7 @@ def main():
                 (window["pre_earnings_drift_flag"].fillna("") != "")
             )
 
+            window["earnings_date"] = window["earnings_date"].dt.date
             display = window[[
                 "earnings_date", "stock", "sector", "sub_sector",
                 "earnings_explosiveness_score", "earnings_explosiveness_bucket",

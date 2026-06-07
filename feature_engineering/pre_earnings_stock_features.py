@@ -32,14 +32,14 @@ from config import (DEFAULT_REACTION_WINDOW,
                     LONG_TERM_MOMENTUM)
 
 def engineer_daily_ret(input_df):
-    df = input_df.copy()
+    df = input_df
     # Daily return
     df['daily_ret'] = df.groupby('stock')['price'].pct_change()
     
     return df
 
 def engineer_drift(input_df):
-    df = input_df.copy()
+    df = input_df
     group = df.groupby('stock')['daily_ret']
     df[f'drift_30d'] = group.transform(lambda x: x.rolling(SHORT_TERM_DRIFT).mean().shift(1))
     df[f'drift_60d'] = group.transform(lambda x: x.rolling(LONG_TERM_DRIFT).mean().shift(1))
@@ -47,7 +47,7 @@ def engineer_drift(input_df):
     return df
 
 def engineer_volatility(input_df):
-    df = input_df.copy()
+    df = input_df
     group = df.groupby('stock')['daily_ret']
     # Volatility (short + baseline)
     df[f'vol_10d'] = group.transform(lambda x: x.rolling(SHORT_TERM_VOLATILITY).std().shift(1))
@@ -59,7 +59,7 @@ def engineer_volatility(input_df):
     return df
 
 def engineer_momentum(input_df):
-    df = input_df.copy()
+    df = input_df
     group = df.groupby('stock')['daily_ret']
     # Momentum (fast + standard)
     df['mom_5d']  = group.transform(lambda x: x.rolling(SHORT_TERM_MOMENTUM).sum().shift(1))
@@ -75,7 +75,7 @@ def engineer_earnings_windows(input_df):
         is_earnings_week: Earnings date - current date <= 5
         is_earnings_window: Earnings date - current date <= 10
     """
-    df = input_df.copy()
+    df = input_df
     df["days_to_earnings"] = (df["earnings_date"] - df["date"]).dt.days
     df["is_earnings_day"] = ( df["days_to_earnings"].notna()  # Avoids errors when days_to_earnings is N/A which leads to False->0
                                & (df["days_to_earnings"] == 0 ) ).astype("Int64")
@@ -100,23 +100,17 @@ def engineer_abs_reaction_median(input_df):
 
         Median so one crazy quarter doesn't dominate the signal
     """
-    df = input_df.copy()
+    df = input_df
     
     # Separate earnings rows
     earnings_mask =  df[DEFAULT_REACTION_WINDOW].notna()
     earnings_df = df.loc[earnings_mask, ["stock","earnings_date", DEFAULT_REACTION_WINDOW]].copy()
     earnings_df = earnings_df.sort_values(["stock", "earnings_date"])
 
-    # write back only on earnings rows
     earnings_df["abs_reaction_median"] = (
         earnings_df.groupby("stock")[DEFAULT_REACTION_WINDOW]
-        .transform(lambda x: x.abs().shift(1).expanding().median() ) 
+        .transform(lambda x: x.abs().shift(1).expanding().median())
         )
-    
-    
-    #df.loc[earnings_mask, "abs_reaction_median"] = earnings_df["abs_reaction_median"].to_numpy()
-    # TODO: .to_numpy might be dangerous. It assumes positional alignment, not logical alignment.
-    # Switch previous line with the following one:
     df.loc[earnings_mask, "abs_reaction_median"] = earnings_df["abs_reaction_median"]
     assert earnings_mask.sum() == len(earnings_df), "Mismatch: earnings rows vs earnings_df"
     return df
@@ -140,21 +134,17 @@ def engineer_abs_reaction_p75(input_df):
         Values are populated only on earnings rows; non-earnings rows remain NaN.
         
     """
-    df = input_df.copy()
+    df = input_df
     # Separate earnings rows
     earnings_mask = df[DEFAULT_REACTION_WINDOW].notna()
     earnings_df = df.loc[earnings_mask, ["stock","earnings_date",DEFAULT_REACTION_WINDOW]].copy()
     earnings_df = earnings_df.sort_values(["stock", "earnings_date"])
 
-    # write back only on earnings rows
-    #TODO: FIX -1 back to 1!!!!!!!!!!!!!!!!!!!!!!!!
     earnings_df["abs_reaction_p75"] = (
         earnings_df.groupby("stock")[DEFAULT_REACTION_WINDOW]
-        .transform(lambda x:x.abs().shift(1).expanding().quantile(0.75) ) 
+        .transform(lambda x: x.abs().shift(1).expanding().quantile(0.75))
         )
-    
-    # TODO: .to_numpy might be dangerous. It assumes positional alignment, not logical alignment.
-    df.loc[earnings_mask, "abs_reaction_p75"] = earnings_df["abs_reaction_p75"].to_numpy()
+    df.loc[earnings_mask, "abs_reaction_p75"] = earnings_df["abs_reaction_p75"]
     assert earnings_mask.sum() == len(earnings_df), "Mismatch: earnings rows vs earnings_df"
 
     return df
@@ -209,7 +199,7 @@ def engineer_surprise_features(input_df):
       surprise_mean_5    — rolling mean of surprise_percentage over last 5 earnings (min_periods=3)
       surprise_std_5     — rolling std over last 5 earnings (min_periods=3)
     """
-    df = input_df.copy()
+    df = input_df
     earnings_mask = df["is_earnings_day"] == 1
     earnings_df = df.loc[earnings_mask, ["stock", "earnings_date", "surprise_percentage"]].copy()
     earnings_df = earnings_df.sort_values(["stock", "earnings_date"])
@@ -259,7 +249,7 @@ def engineer_pre_earnings_drift_z(input_df):
       pre_earnings_drift_z  — z-score of current drift_30d vs stock's own historical distribution.
                               Positive = running in hotter than usual. Negative = sold off more than usual.
     """
-    df = input_df.copy()
+    df = input_df
     earnings_mask = df["is_earnings_day"] == 1
     earnings_df = df.loc[earnings_mask, ["stock", "earnings_date", "drift_30d"]].copy()
     earnings_df = earnings_df.sort_values(["stock", "earnings_date"])

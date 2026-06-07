@@ -1,4 +1,6 @@
 # pipeline/stage3.py
+import pandas as pd
+from config import INCREMENTAL_CACHED_COLS
 from feature_engineering.pre_earnings_stock_features import (
     engineer_daily_ret,
     engineer_drift,
@@ -22,61 +24,74 @@ from feature_engineering.pre_earnings_sector_features import (
     engineer_sector_drift_vol,
     engineer_stock_vs_sector_vol,
     engineer_sector_earnings_density)
-def stage3(stage2_df):
-    """ 
-        Pipeline Stage 3 - Feature Engineering
-        Input is a df with columns
-        stock | date | price | sector | sub_sector | earnings_date | reported_eps | estimated_eps | surprise_percentage
 
-        Adds:
-        daily_ret = price/yesterday's price
-        drift_30d,60d = mean of rolling 30/60 day daily_ret, shift(1)
-        vol_10d,30d = STD of rolling 10/30 day daily_ret, shift(1)
-        vol_ratio_10_to_30 = vol_10d / vol_30d
-        mom_5d,20d = sum of rolling 5/20 day daily_ret, shift(1)
-        days_to_earnings = next earnings_date - today's date
-        is_earnings_day = 1 if days_to_earnings == 0, else it's 0
-        is_earnings_week = 1 if days_to_earnings is between(0, 5), else it's 0
-        is_earnings_window = 1 if days_to_earnings is between(0, 10), else it's 0
-        reaction_1d,3d,5d = stock price 1d/3d/5d after earnings_date
-        is_up/is_down/is_nochange = reaction_3d above, below REACTION_THRESHOLD
-        reaction_std = rolling std of |reaction_3d| values, shift(1), min_periods = 3, window = 8 periods
-        reaction_entropy = Shannon entropy of the histogram of absolute past reactions, gives how unpredictable and distributionally diverse the stock is
-        directional_bias = For each earnings event, expanding mean of past signed reactions for that stock, no leakage.
-        abs_reaction_median = Median of |reaction_3d| over past earnings, shift(1)
-        abs_reaction_p75 = 75th percentile of historical |reaction_3d| earnings reactions for each stock, using only past earnings events
-        sector_drift_60d = mean of drift_60d values for that sector's stocks
-        sector_vol_10d,30d = mean of vol_10d/30d values for that sector's stocks
-        stock_vs_sector_vol = ratio vol_30d / sector_vol_30d
-        sector_earnings_density = fraction of stocks in the sector whose earnings are within the next week, mean of is_earnings_week per sector
+
+def stage3(stage2_df, incremental=False):
+    """
+    Pipeline Stage 3 - Feature Engineering.
+
+    incremental=False (default): full run — all features computed from scratch.
+    incremental=True:  fast path — only price-dependent rolling features are
+                       recomputed; expanding earnings stats are read from
+                       output/full_df.parquet and broadcast across all rows.
+                       Use only when no new earnings events have been reported
+                       since the last full run (run_incremental() ensures this).
     """
     print("--------------------\nStage 3 - Feature Engineering...")
     stage3_df = stage2_df.copy()
     stage3_df = stage3_df.sort_values(["stock","date"], kind="mergesort")
-    feature_steps = [
-        engineer_daily_ret,
-        engineer_drift,
-        engineer_volatility,
-        engineer_momentum,
-        engineer_earnings_windows,
-        engineer_earnings_reactions,
-        engineer_reaction_class,
-        engineer_reaction_std,
-        engineer_reaction_entropy,
-        engineer_directional_bias,
-        engineer_abs_reaction_3d,
-        engineer_abs_reaction_median,
-        engineer_abs_reaction_p75,
-        engineer_abs_reaction_p75_rolling,
-        engineer_abs_reaction_p90_rolling,
-        engineer_surprise_features,       # needs surprise_percentage + is_earnings_day
-        engineer_pre_earnings_drift_z,    # needs drift_30d + is_earnings_day
-        engineer_sector_drift_vol,
-        engineer_stock_vs_sector_vol,
-        engineer_sector_earnings_density
-    ]
-    for feature in feature_steps:
-        stage3_df = feature(stage3_df)
+
+    if incremental:
+        # Price-dependent rolling features + cross-sectional sector features.
+        feature_steps = [
+            engineer_daily_ret,
+            engineer_drift,
+            engineer_volatility,
+            engineer_momentum,
+            engineer_earnings_windows,
+            engineer_sector_drift_vol,
+            engineer_stock_vs_sector_vol,
+            engineer_sector_earnings_density,
+        ]
+        for feature in feature_steps:
+            stage3_df = feature(stage3_df)
+
+        # Read stable expanding stats (last non-null value per stock via skipna=True).
+        cached_stats = (
+            pd.read_parquet("output/full_df.parquet",
+                            columns=["stock"] + INCREMENTAL_CACHED_COLS)
+            .groupby("stock")[INCREMENTAL_CACHED_COLS]
+            .last()
+            .reset_index()
+        )
+        stage3_df = stage3_df.merge(cached_stats, on="stock", how="left")
+
+    else:
+        feature_steps = [
+            engineer_daily_ret,
+            engineer_drift,
+            engineer_volatility,
+            engineer_momentum,
+            engineer_earnings_windows,
+            engineer_earnings_reactions,
+            engineer_reaction_class,
+            engineer_reaction_std,
+            engineer_reaction_entropy,
+            engineer_directional_bias,
+            engineer_abs_reaction_3d,
+            engineer_abs_reaction_median,
+            engineer_abs_reaction_p75,
+            engineer_abs_reaction_p75_rolling,
+            engineer_abs_reaction_p90_rolling,
+            engineer_surprise_features,
+            engineer_pre_earnings_drift_z,
+            engineer_sector_drift_vol,
+            engineer_stock_vs_sector_vol,
+            engineer_sector_earnings_density,
+        ]
+        for feature in feature_steps:
+            stage3_df = feature(stage3_df)
+
     if stage3_df is None:
         raise ValueError("\n---ERROR! Stage 3 Returned None.---\n")
     print("Stage 3 DONE")

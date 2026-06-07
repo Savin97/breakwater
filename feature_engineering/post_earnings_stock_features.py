@@ -35,7 +35,7 @@ def engineer_earnings_reactions(df):
         - Output columns exist only on earnings days; non-earnings rows are NaN
         - Prevents leakage of post-event information into normal days
     """
-    df = df.copy().sort_values(["stock", "date"])
+    df = df.sort_values(["stock", "date"])
     group = df.groupby("stock")["price"]
 
     # forward returns from *today* to +k trading days
@@ -124,7 +124,7 @@ def engineer_reaction_entropy(df) -> pd.DataFrame:
             .transform( lambda x: x.abs().shift(1).expanding().apply(reaction_entropy))
     )
     earnings_mask = df[DEFAULT_REACTION_WINDOW].notna()
-    df.loc[earnings_mask, "reaction_entropy"] = earnings_df["reaction_entropy"].to_numpy()
+    df.loc[earnings_mask, "reaction_entropy"] = earnings_df["reaction_entropy"]
     assert earnings_mask.sum() == len(earnings_df), "Mismatch: earnings rows vs earnings_df"
     return df
 
@@ -145,12 +145,5 @@ def engineer_directional_bias(df):
     )
 
     earnings_mask = df[DEFAULT_REACTION_WINDOW].notna()
-    df.loc[earnings_mask, "directional_bias"] = earnings_df["directional_bias"].to_numpy()
-
-    # TODO: Should be the correct way of integrating the new column, but didnt do exactly what i watned.
-    # # Merge back ONLY the new column 
-    # df = df.merge(
-    #     earnings_df[["stock", "earnings_date", "directional_bias"]],
-    #     on = ["stock", "earnings_date"], how="left", validate="m:1" )
-    
+    df.loc[earnings_mask, "directional_bias"] = earnings_df["directional_bias"]
     return df

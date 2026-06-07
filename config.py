@@ -27,3 +27,17 @@ MAX_RETRIES = 5
 DEFAULT_FETCH_CHUNK_SIZE = 50
 CORRECT_STOCK_COL_NAME = "stock"
 LIST_OF_POSSIBLE_STOCK_COL_NAMES = ["ticker", "Ticker", "Symbol", "symbol", "Stock", "stock"]
+
+# Incremental pipeline — expanding stats that are stable between earnings events.
+# Cached from full_df.parquet in incremental mode instead of recomputed.
+INCREMENTAL_CACHED_COLS = [
+    "abs_reaction_median", "abs_reaction_p75",
+    "abs_reaction_p75_rolling", "abs_reaction_p90_rolling",
+    "reaction_std", "reaction_entropy", "directional_bias",
+    "surprise_streak", "surprise_mean_5", "surprise_std_5",
+    "pre_earnings_drift_z",
+    # Cached directly to avoid score drift when the most recent earnings event
+    # has an incomplete reaction window (reaction_entropy=NaN).
+    "earnings_explosiveness_score", "earnings_explosiveness_bucket",
+]
+INCREMENTAL_LOOKBACK_DAYS = 90  # warm-up buffer for longest rolling window (drift_60d = 60d)

@@ -73,7 +73,7 @@ Key engineered columns:
 
 ## Risk Scoring
 
-Stage 4 produces these component scores (all in `risk_scoring/scoring_features.py`):
+Stage 4 produces these component scores (all in `feature_engineering/scoring_features.py`):
 - `proximity_score`: how close the stock is to earnings
 - `vol_expansion_score`: vol expansion relative to baseline
 - `momentum_fragility_score`: momentum divergence signal

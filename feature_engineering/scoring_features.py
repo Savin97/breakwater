@@ -1,4 +1,4 @@
-# risk_scoring/scoring_features.py
+# feature_engineering/scoring_features.py
 import numpy as np, pandas as pd
 from config import (
     LARGE_EARNINGS_REACTION_THRESHOLD,
@@ -9,7 +9,7 @@ def engineer_large_reaction(input_df):
         Adds a binary column 'is_large_reaction' indicating if the earnings move is large (≥ threshold).
         Threshold can be set based on historical distribution of abs_reaction_3d or business needs.
     """
-    df = input_df.copy()
+    df = input_df
     df["is_large_reaction"] = (df["abs_reaction_3d"] >= LARGE_EARNINGS_REACTION_THRESHOLD).astype(int)
     return df
 
@@ -18,7 +18,7 @@ def engineer_extreme_reaction(input_df):
         Adds a binary column 'is_extreme' indicating if the earnings move is extreme (≥ threshold).
         Threshold can be set based on historical distribution of abs_reaction_3d or business needs.
     """
-    df = input_df.copy()
+    df = input_df
     df["is_extreme_reaction"] = (df["abs_reaction_3d"] >= EXTREME_EARNINGS_REACTION_THRESHOLD).astype(int)
     return df
 
@@ -39,7 +39,7 @@ def engineer_vol_stress(input_df, ratio_col: str = "vol_ratio_10_to_30"):
         - vol_stress_high: top (1-q_extreme)
         - vol_stress_elevated: top (1-q_high)
     """
-    df = input_df.copy()
+    df = input_df
     q_high = 0.80  # elevated
     q_extreme = 0.90 # high / extreme
 
@@ -75,7 +75,7 @@ def engineer_momentum_pressure(input_df, quantile = 0.8) -> pd.DataFrame:
         - 'momentum_pressure_regime' : str
           {'normal', 'short_term_extreme', 'trend_extreme', 'crowded_trend'}
     """
-    df = input_df.copy()
+    df = input_df
 
     abs5 = df["mom_5d"].abs()
     abs20 = df["mom_20d"].abs()
@@ -91,7 +91,6 @@ def engineer_momentum_pressure(input_df, quantile = 0.8) -> pd.DataFrame:
         ["normal", "short_term_extreme", "trend_extreme", "crowded_trend"],
         default="normal"
     )
-    #TODO: CHANGE ADDED
     regime_score_map = {
         "normal": 0.0,
         "short_term_extreme": 35.0,
@@ -100,6 +99,7 @@ def engineer_momentum_pressure(input_df, quantile = 0.8) -> pd.DataFrame:
     }
     df["momentum_pressure_regime"] = df["momentum_pressure_regime"].map(regime_score_map).fillna(0.0)
     return df
+
 
 def engineer_earnings_explosiveness(input_df, epsilon = 1e-6):
     """
@@ -114,7 +114,7 @@ def engineer_earnings_explosiveness(input_df, epsilon = 1e-6):
         - med_col / p75_col are already computed using ONLY past earnings events (shifted).
         - vol_30d is rolling vol from daily returns (ideally shifted by 1 day).
     """
-    df = input_df.sort_values(["stock", "date"]).copy()
+    df = input_df
     df["earnings_explosiveness_z"] = (
         df["abs_reaction_median"] / np.maximum(df["vol_30d"], epsilon)
         )
@@ -123,54 +123,10 @@ def engineer_earnings_explosiveness(input_df, epsilon = 1e-6):
         )
     return df
 
-def engineer_timing_danger(input_df, weights=[0.25,0.25,0.2,0.3]):
-    """
-        timing_danger = 
-        w1 * proximity_score +
-        w2 * vol_expansion_score +
-        w3 * momentum_fragility_score +
-        w4 * earnings_explosiveness_score
-
-        How likely is this earnings event to produce a big move, given:
-        (a) where earnings is in time
-        (b) how stretched volatility already is
-        (c) how fragile the recent price action is
-        (d) how violent this stock tends to be on earnings historically
-    """
-    df = input_df.copy()
-
-    prox = score_proximity(df)
-    vol  = score_vol_expansion(df)
-    mom  = score_momentum_fragility(df)
-    exp  = df["earnings_explosiveness_score"]
-
-    # timing_danger = (
-    #     weights[0] * prox +
-    #     weights[1] * vol +
-    #     weights[2] * mom +
-    #     weights[3] * exp
-    # )
-    timing_danger = (
-        df["momentum_pressure_regime"] & exp
-    )
-    df["timing_danger"] = np.clip(timing_danger, 0, 100)
-    df["timing_danger_bucket"] =  pd.qcut(
-            df["timing_danger"],
-            q=5,
-            labels=["Very Low", "Low", "Moderate", "High", "Extreme"],
-            duplicates="drop"
-        )
-    
-    # scores = {
-    #     "timing_danger": np.clip(timing_danger, 0, 100), 
-    # }
-    # df = df.assign(**scores)
-    return df
-
 def engineer_sector_vol_stress(input_df: pd.DataFrame, q_high = 0.9) -> pd.DataFrame:
     """
     """
-    df = input_df.copy()
+    df = input_df
     df["sector_vol_ratio_pct"] = (
         df.groupby(["sector", "date"])["vol_ratio_10_to_30"]
         .rank(pct=True, method="average")
@@ -179,17 +135,17 @@ def engineer_sector_vol_stress(input_df: pd.DataFrame, q_high = 0.9) -> pd.DataF
     return df
 
 def engineer_proximity_score(input_df):
-    df = input_df.copy()
+    df = input_df
     df["proximity_score"] = score_proximity(df)
     return df
 
 def engineer_vol_expansion_score(input_df):
-    df = input_df.copy()
+    df = input_df
     df["vol_expansion_score"] = score_vol_expansion(df)
     return df
 
 def engineer_momentum_fragility_score(input_df):
-    df = input_df.copy()
+    df = input_df
     df["momentum_fragility_score"] = score_momentum_fragility(df)
     return df
     
@@ -204,7 +160,7 @@ def engineer_earnings_explosiveness_score(input_df):
         e1 = (df["earnings_explosiveness_z"].fillna(0) / 7).clip(0, 1)  # expanding median z, 7sigma ceiling                                                                    
         e2 = (p75 / vol / 7).clip(0, 1)                                  # rolling tail z, 7sigma ceiling                                                                       
     """
-    df = input_df.copy()
+    df = input_df
     p75 = df["abs_reaction_p75_rolling"].fillna(df["abs_reaction_p75"])
     e3 = (p75 / 0.12).clip(0, 1)           # raw magnitude: 12% ceiling
     e4 = np.clip(df["reaction_entropy"], 0, 1)
@@ -234,7 +190,7 @@ def engineer_surprise_momentum_flag(input_df):
       "Erratic"       — std_5 > 0.20: highly unpredictable surprise magnitude
       ""              — everything else (normal)
     """
-    df = input_df.copy()
+    df = input_df
     earnings_mask = df["is_earnings_day"] == 1
 
     streak = df["surprise_streak"]
@@ -259,7 +215,7 @@ def engineer_pre_earnings_drift_flag(input_df):
       "Compressed" — drift_z <= -1.5: sold off more than usual heading into earnings
       ""           — normal range or insufficient history (< 5 prior earnings)
     """
-    df = input_df.copy()
+    df = input_df
     earnings_mask = df["is_earnings_day"] == 1
     z = df["pre_earnings_drift_z"]
 
@@ -271,7 +227,7 @@ def engineer_pre_earnings_drift_flag(input_df):
     return df
 
 def engineer_total_risk_score(input_df):
-    df = input_df.copy()
+    df = input_df
     df["risk_score"] = df["earnings_explosiveness_score"]
     return df
 
@@ -280,7 +236,7 @@ def classify_large_relative_earnings_move_bucket(input_df):
         large_earnings_move = 1 if abs_reaction_3d ≥ abs_reaction_p75_rolling
         window: 20-40 past earnings for that stock; 28
     """
-    df = input_df.copy()
+    df = input_df
     # Only meaningful on earnings rows and when p75, p90 aren't NaN
     eligible = (
         df["is_earnings_day"]

@@ -59,9 +59,12 @@ def stage5(df):
         "global_risk_lift_vs_baseline": P_extreme_given_bucket / P_extreme_global
     })
 
+    # Pre-group by stock so the loop doesn't scan 2.8M rows per iteration
+    df_by_stock = {s: grp for s, grp in df.groupby("stock")}
+
     for stock in stocks_to_report_for:
-        stock_df = df[df["stock"] == stock]
-        if stock_df.empty:
+        stock_df = df_by_stock.get(stock)
+        if stock_df is None or stock_df.empty:
             print(f"  No data found for {stock}, skipping.")
             continue
         earnings_df = stock_df[stock_df["is_earnings_day"] == 1]
