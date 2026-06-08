@@ -58,6 +58,9 @@ def export_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit_d
     out["current_lift_vs_baseline"] = out["current_lift_vs_baseline"].round(3)
     out["current_lift_vs_same_bucket_global"] = out["current_lift_vs_same_bucket_global"].round(3)
 
+    cutoff = pd.Timestamp.today() - pd.DateOffset(years=5)
+    out = out[out["earnings_date"] >= cutoff]
+
     out.to_parquet(output_path, index=False)
     print(f"Wrote {output_path} ({len(out)} rows)\n--------------------")
 

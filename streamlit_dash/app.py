@@ -204,19 +204,25 @@ def main():
             "hist_extreme_prob", "current_lift_vs_baseline",
         ] if c in df.columns]
 
-        years_back = st.radio(
+        _period_options = {
+            "1 month":  pd.DateOffset(months=1),
+            "3 months": pd.DateOffset(months=3),
+            "6 months": pd.DateOffset(months=6),
+            "1 year":   pd.DateOffset(years=1),
+            "2 years":  pd.DateOffset(years=2),
+            "5 years":  pd.DateOffset(years=5),
+        }
+        period_label = st.radio(
             "Show events from last",
-            options=[1, 2, 5, 0],
-            format_func=lambda x: "All time" if x == 0 else f"{x} year{'s' if x > 1 else ''}",
+            options=list(_period_options.keys()),
             horizontal=True,
-            index=1,
+            index=3,
         )
 
         df_display = df.sort_values("earnings_date", ascending=False).copy()
         df_display["earnings_date"] = df_display["earnings_date"].dt.date
-        if years_back > 0:
-            cutoff = (pd.Timestamp(date.today()) - pd.DateOffset(years=years_back)).date()
-            df_display = df_display[df_display["earnings_date"] >= cutoff]
+        cutoff = (pd.Timestamp(date.today()) - _period_options[period_label]).date()
+        df_display = df_display[df_display["earnings_date"] >= cutoff]
         if "abs_reaction_3d" in df_display.columns:
             df_display["abs_reaction_3d"] = (df_display["abs_reaction_3d"] * 100).round(2)
 
