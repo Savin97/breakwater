@@ -211,7 +211,7 @@ def engineer_surprise_features(input_df):
     # Beat indicator: 1=beat, 0=miss, NaN if no estimate — based on prior event
     def _streak(x):
         shifted = x.shift(1)
-        beat = (shifted > 0).astype(float)   # 1=beat, 0=miss
+        beat = (shifted >= 0).astype(float)   # 1=beat, 0=miss
         beat[shifted.isna()] = np.nan
         # Convert to direction: +1 for beat, -1 for miss
         direction = beat.where(beat == 1, -1)

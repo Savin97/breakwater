@@ -5,6 +5,24 @@ Entries are updated at the end of each session. Most recent first.
 
 ---
 
+- [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
+
+## 2026-06-09 — Flag fix + social media launch
+
+**Flag fix:**
+- `pre_earnings_drift_flag` and `surprise_momentum_flag` were always empty for upcoming events (both only populated on `is_earnings_day==1` rows; `export_upcoming_df` uses latest price row = `is_earnings_day==0`)
+- Fixed in `feature_engineering/scoring_features.py`:
+  - `engineer_pre_earnings_drift_flag`: now also computes for pre-earnings window rows (1-60 days before earnings) using current `drift_30d` vs stock's historical earnings-day drift distribution
+  - `engineer_surprise_momentum_flag`: now forward-fills within each stock after computing on earnings days; earnings-day rows act as reset anchors (even "" resets the carry-forward)
+- Also fixed: `surprise_percentage >= 0` now counts as beat in streak (was `> 0`)
+- Verified: backtesting metrics unchanged (High Alert 3.82x, HA+Drift 4.94x, avg corr 0.432)
+- ORCL now shows: Extended drift + Erratic surprise → `is_high_conviction = True`
+
+**Social media:**
+- First weekly post: week of Jun 9, 2026. Chart generated via `report/chart_weekly.py`
+- Posts drafted for X and Reddit (see social_media_strategy.md for templates)
+- Strategy saved to `.claude/memory/social_media_strategy.md`
+
 ## 2026-06-07 — Incremental pipeline + codebase audit
 
 **Incremental pipeline (new):**

@@ -181,7 +181,8 @@ def engineer_earnings_explosiveness_score(input_df):
 def engineer_surprise_momentum_flag(input_df):
     """
     Categorical flag derived from surprise_streak, surprise_mean_5, surprise_std_5.
-    Only populated on earnings days; blank string on all other rows.
+    Computed on earnings days; forward-filled within each stock so pre-earnings rows
+    carry the most recent earnings event's flag state (streak doesn't change between events).
 
     Flags (evaluated in priority order):
       "Extended Beat Streak" — streak >= 6: bar maximally elevated after long beat streak
@@ -204,11 +205,22 @@ def engineer_surprise_momentum_flag(input_df):
     flag.loc[earnings_mask & (streak >=  6)]                        = "Extended Beat Streak"
 
     df["surprise_momentum_flag"] = flag
+
+    # Propagate earnings-day flag to subsequent non-earnings rows.
+    # Earnings-day rows act as anchors — even "" resets the carry-forward so a streak
+    # that ends on earnings day N doesn't bleed into the following pre-earnings rows.
+    propagated = df["surprise_momentum_flag"].copy()
+    propagated.loc[~earnings_mask] = np.nan          # clear non-earnings rows (fill targets)
+    propagated = propagated.groupby(df["stock"]).ffill().fillna("")
+    df.loc[~earnings_mask, "surprise_momentum_flag"] = propagated.loc[~earnings_mask]
     return df
 
 def engineer_pre_earnings_drift_flag(input_df):
     """
-    Categorical flag from pre_earnings_drift_z. Only populated on earnings days.
+    Categorical flag from pre_earnings_drift_z. Computed on earnings days using the
+    historical z-score. Also computed for pre-earnings window rows (1-60 days before
+    earnings) from current drift_30d vs the stock's full historical earnings-day drift
+    distribution — so the upcoming-events view gets a meaningful current-state flag.
 
     Flags:
       "Extended"   — drift_z >= 1.5: running into earnings hotter than historical norm
@@ -222,6 +234,26 @@ def engineer_pre_earnings_drift_flag(input_df):
     flag = pd.Series("", index=df.index)
     flag.loc[earnings_mask & (z >= 1.5)]  = "Extended"
     flag.loc[earnings_mask & (z <= -1.5)] = "Compressed"
+
+    # For pre-earnings window rows: recompute from current drift_30d vs historical
+    # earnings-day distribution. Uses full history as baseline (correct for upcoming
+    # events; historical pre-earnings rows aren't consumed by any downstream path).
+    pre_mask = (df["is_earnings_day"] == 0) & df["days_to_earnings"].between(1, 60)
+    if pre_mask.any():
+        past_stats = (
+            df.loc[earnings_mask, ["stock", "drift_30d"]]
+            .dropna(subset=["drift_30d"])
+            .groupby("stock")["drift_30d"]
+            .agg(_mean="mean", _std="std")
+        )
+        pre_df = df.loc[pre_mask, ["stock", "drift_30d"]].join(past_stats, on="stock")
+        has_hist = (
+            pre_df["_mean"].notna() & pre_df["_std"].notna() &
+            (pre_df["_std"] > 0) & pre_df["drift_30d"].notna()
+        )
+        z_pre = (pre_df["drift_30d"] - pre_df["_mean"]) / pre_df["_std"]
+        flag.loc[pre_df.index[has_hist & (z_pre >= 1.5)]]  = "Extended"
+        flag.loc[pre_df.index[has_hist & (z_pre <= -1.5)]] = "Compressed"
 
     df["pre_earnings_drift_flag"] = flag
     return df

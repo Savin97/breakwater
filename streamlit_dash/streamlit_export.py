@@ -71,7 +71,7 @@ def export_upcoming_df(df: pd.DataFrame, output_path: str = "output/upcoming_df.
     today = pd.Timestamp(date.today())
 
     latest = df.sort_values("date").groupby("stock").last().reset_index()
-    upcoming = latest[latest["earnings_date"] > today].copy()
+    upcoming = latest[latest["earnings_date"] >= today].copy()
 
     if upcoming.empty:
         print(f"No upcoming earnings events (today={today.date()})")

@@ -12,14 +12,14 @@ from pathlib import Path
 
 
 TIER_COLORS = {
-    "High Alert": "#c9a84c",
-    "Elevated":   "#2e2c28",
-    "Normal":     None,
+    "High Alert": "#c9a84c",   # gold — loud
+    "Elevated":   "#1e1a08",   # dark amber bg
+    "Normal":     "#141820",   # dark navy bg
 }
 TIER_TEXT_COLORS = {
-    "High Alert": "#0a0a0a",
-    "Elevated":   "#ffffff",
-    "Normal":     "#e8e8e8",
+    "High Alert": "#0a0a0a",   # black on gold
+    "Elevated":   "#c8a035",   # amber text — clearly visible
+    "Normal":     "#ffffff",   # white
 }
 BG       = "#0a0a0a"
 BORDER   = "#2a2a28"
@@ -29,24 +29,26 @@ ACCENT   = "#c9a84c"
 
 
 def generate_weekly_earnings_chart(
-    days_ahead: int = 7,
     output_path: str = "output/weekly_chart.png",
     parquet_path: str = "output/upcoming_df.parquet",
 ) -> str:
     df = pd.read_parquet(parquet_path)
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
 
-    today     = pd.Timestamp(date.today())
-    week_end  = today + timedelta(days=days_ahead)
-    week = df[(df["earnings_date"] >= today) & (df["earnings_date"] <= week_end)].copy()
+    today      = pd.Timestamp(date.today())
+    week_start = today - timedelta(days=today.weekday())          # Monday
+    week_end   = week_start + timedelta(days=4)                   # Friday
+    week = df[(df["earnings_date"] >= week_start) & (df["earnings_date"] <= week_end)].copy()
 
     if week.empty:
         print("No upcoming events in window.")
         return ""
 
     week = week.sort_values(["earnings_date", "peer_percentile"], ascending=[True, False])
-    dates = sorted(week["earnings_date"].dt.date.unique())
-    n_days = len(dates)
+
+    # Always show Mon-Fri regardless of whether events fall on every day
+    all_days = [week_start.date() + timedelta(days=i) for i in range(5)]
+    n_days = 5
 
     fig_w = max(10, n_days * 2.2)
     fig, ax = plt.subplots(figsize=(fig_w, 7))
@@ -63,18 +65,18 @@ def generate_weekly_earnings_chart(
         ax.axhline(y, color=BORDER, linewidth=0.6, zorder=1)
 
     # ── Zone labels (right margin) ─────────────────────────────────────────
-    ax.text(n_days - 0.45, 95,  "HIGH ALERT", va="center", ha="right",
-            color=ACCENT, fontsize=7, fontfamily="monospace", alpha=0.55)
-    ax.text(n_days - 0.45, 82,  "ELEVATED",   va="center", ha="right",
-            color="#7a6a42", fontsize=7, fontfamily="monospace", alpha=0.55)
-    ax.text(n_days - 0.45, 38,  "NORMAL",     va="center", ha="right",
-            color=TEXT_MUT, fontsize=7, fontfamily="monospace", alpha=0.45)
+    ax.text(4.45, 95,  "HIGH ALERT", va="center", ha="right",
+            color=ACCENT,     fontsize=7, fontfamily="monospace", alpha=0.80)
+    ax.text(4.45, 82,  "ELEVATED",   va="center", ha="right",
+            color="#c8a035",  fontsize=7, fontfamily="monospace", alpha=0.80)
+    ax.text(4.45, 38,  "NORMAL",     va="center", ha="right",
+            color="#ffffff",  fontsize=7, fontfamily="monospace", alpha=0.80)
 
     # ── Plot stocks ────────────────────────────────────────────────────────
-    date_to_x = {d: i for i, d in enumerate(dates)}
+    date_to_x = {d: i for i, d in enumerate(all_days)}
 
     # Track placed positions to avoid overlap within same day
-    placed: dict[date, list[float]] = {d: [] for d in dates}
+    placed: dict[date, list[float]] = {d: [] for d in all_days}
 
     for _, row in week.iterrows():
         d     = row["earnings_date"].date()
@@ -92,23 +94,19 @@ def generate_weekly_earnings_chart(
                 break
         placed[d].append(y)
 
-        fc = TIER_COLORS.get(tier)
+        fc = TIER_COLORS.get(tier, TIER_COLORS["Normal"])
         tc = TIER_TEXT_COLORS.get(tier, TIER_TEXT_COLORS["Normal"])
-
-        if fc is not None:
-            box = dict(boxstyle="round,pad=0.35", facecolor=fc, edgecolor="none")
-            ax.text(x, y, label, ha="center", va="center",
-                    fontsize=9, fontweight="bold" if tier == "High Alert" else "normal",
-                    color=tc, bbox=box, zorder=3, fontfamily="monospace")
-        else:
-            ax.text(x, y, label, ha="center", va="center",
-                    fontsize=8, fontweight="normal",
-                    color=tc, zorder=3, fontfamily="monospace")
+        fw = "bold" if tier == "High Alert" else "normal"
+        fs = 9 if tier in ("High Alert", "Elevated") else 8
+        box = dict(boxstyle="round,pad=0.35", facecolor=fc, edgecolor="none")
+        ax.text(x, y, label, ha="center", va="center",
+                fontsize=fs, fontweight=fw,
+                color=tc, bbox=box, zorder=3, fontfamily="monospace")
 
     # ── X-axis: day labels ─────────────────────────────────────────────────
     ax.set_xticks(range(n_days))
     ax.set_xticklabels(
-        [d.strftime("%a %b %-d") for d in dates],
+        [d.strftime("%a %b %-d") for d in all_days],
         color=TEXT_DIM, fontsize=10, fontfamily="monospace",
     )
     ax.tick_params(axis="x", colors=TEXT_DIM, length=0, pad=10)
@@ -129,7 +127,7 @@ def generate_weekly_earnings_chart(
         spine.set_visible(False)
 
     # ── Title ──────────────────────────────────────────────────────────────
-    week_label = f"Week of {today.strftime('%B %-d')}"
+    week_label = f"Week of {week_start.strftime('%B %-d')}"
     fig.text(0.5, 0.96, "Earnings Risk", ha="center", va="top",
              color="#e8e4dc", fontsize=16, fontfamily="serif", fontstyle="italic")
     fig.text(0.5, 0.91, week_label, ha="center", va="top",
@@ -138,9 +136,9 @@ def generate_weekly_earnings_chart(
 
     # ── Legend ─────────────────────────────────────────────────────────────
     patches = [
-        mpatches.Patch(color=TIER_COLORS["High Alert"], label="High Alert"),
-        mpatches.Patch(color=TIER_COLORS["Elevated"],   label="Elevated"),
-        mpatches.Patch(color="#3a3835",                 label="Normal"),
+        mpatches.Patch(facecolor=TIER_COLORS["High Alert"], label="High Alert"),
+        mpatches.Patch(facecolor=TIER_COLORS["Elevated"],   label="Elevated"),
+        mpatches.Patch(facecolor=TIER_COLORS["Normal"],     label="Normal"),
     ]
     leg = ax.legend(
         handles=patches, loc="lower right", frameon=False,
