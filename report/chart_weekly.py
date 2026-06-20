@@ -14,12 +14,12 @@ from pathlib import Path
 TIER_COLORS = {
     "High Alert": "#c9a84c",   # gold — loud
     "Elevated":   "#1e1a08",   # dark amber bg
-    "Normal":     "#141820",   # dark navy bg
+    "Normal":     "#ffffff",   # white bg
 }
 TIER_TEXT_COLORS = {
     "High Alert": "#0a0a0a",   # black on gold
     "Elevated":   "#c8a035",   # amber text — clearly visible
-    "Normal":     "#ffffff",   # white
+    "Normal":     "#141820",   # dark navy text on white
 }
 BG       = "#0a0a0a"
 BORDER   = "#2a2a28"
@@ -36,8 +36,8 @@ def generate_weekly_earnings_chart(
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
 
     today      = pd.Timestamp(date.today())
-    week_start = today - timedelta(days=today.weekday())          # Monday
-    week_end   = week_start + timedelta(days=4)                   # Friday
+    week_start = today + timedelta(days=(7 - today.weekday()) % 7)  # next Monday (or today if Monday)
+    week_end   = week_start + timedelta(days=4)                      # Friday
     week = df[(df["earnings_date"] >= week_start) & (df["earnings_date"] <= week_end)].copy()
 
     if week.empty:
@@ -149,7 +149,7 @@ def generate_weekly_earnings_chart(
     fig.text(0.5, 0.02, "harbor-markets.com  ·  Breakwater",
              ha="center", color=TEXT_MUT, fontsize=8, fontfamily="monospace")
 
-    plt.tight_layout(rect=[0, 0.05, 1, 0.90])
+    plt.tight_layout(rect=(0, 0.05, 1, 0.90))
     Path(output_path).parent.mkdir(exist_ok=True)
     fig.savefig(output_path, dpi=150, bbox_inches="tight",
                 facecolor=BG, edgecolor="none")

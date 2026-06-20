@@ -290,6 +290,8 @@ def main():
 
                 view = view.copy()
                 view["earnings_date"] = view["earnings_date"].dt.date
+                if "expected_move_pct" in view.columns:
+                    view["expected_move_pct"] = view["expected_move_pct"] * 100
 
                 st.dataframe(
                     view[display_cols],
