@@ -14,12 +14,12 @@ The main ingestion (`cron_ingest.py`) also runs there.
 ## Cron schedule (droplet)
 
 ```
-0 6 * * *       cd /var/www/Breakwater && .venv/bin/python -m cron.cron_ingest >> /var/log/breakwater_ingest.log 2>&1
-30 20 * * 1-5   cd /var/www/Breakwater && .venv/bin/python -m cron.cron_iv >> /var/log/breakwater_iv.log 2>&1
-0 7 * * 1       cd /var/www/Breakwater && .venv/bin/python -m cron.cron_weekly_digest >> /var/log/breakwater_digest.log 2>&1
+0 6 * * *       cd /var/www/breakwater && .venv/bin/python -m cron.cron_ingest >> /var/log/breakwater_ingest.log 2>&1
+30 20 * * 1-5   cd /var/www/breakwater && .venv/bin/python -m cron.cron_iv >> /var/log/breakwater_iv.log 2>&1
+0 7 * * 1       cd /var/www/breakwater && .venv/bin/python -m cron.cron_weekly_digest >> /var/log/breakwater_digest.log 2>&1
 ```
 
-Breakwater repo lives at `/var/www/Breakwater`. Deploy by pushing locally + `git pull` on droplet.
+Breakwater repo lives at `/var/www/breakwater`. Deploy by pushing locally + `git pull` on droplet.
 
 Website repo (harbor-markets.com): local at `/home/Michael/projects/harbor_webpage`, server at `/var/www/harbor_webpage`, GitHub: `Savin97/harbor_webpage` (renamed from `cv_website` on 2026-06-01).
 

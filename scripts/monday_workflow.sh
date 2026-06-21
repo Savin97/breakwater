@@ -4,7 +4,7 @@
 set -e
 
 REMOTE="root@harbor-markets.com"
-REMOTE_REPO="/var/www/Breakwater"
+REMOTE_REPO="/var/www/breakwater"
 LOCAL_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$LOCAL_REPO/.venv/bin/python"
 
@@ -30,4 +30,7 @@ echo "=== Last week's results ==="
 "$VENV" scripts/results_check.py
 
 echo ""
-echo "=== Done. weekly_chart.png is at output/weekly_chart.png ==="
+echo "=== weekly_chart.png is at output/weekly_chart.png ==="
+
+echo ""
+echo "=== Done. ==="

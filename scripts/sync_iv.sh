@@ -7,7 +7,7 @@
 set -e
 
 REMOTE="root@harbor-markets.com"
-REMOTE_REPO="/var/www/Breakwater"
+REMOTE_REPO="/var/www/breakwater"
 LOCAL_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "--- Syncing DuckDB from droplet ---"

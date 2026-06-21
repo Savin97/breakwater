@@ -1,12 +1,10 @@
-#!/usr/bin/env bash
+# scripts/sync_pipeline.sh
 # Pull DuckDB from droplet, run full pipeline, push output parquets back.
-#
-# Usage: bash scripts/sync_pipeline.sh
 
 set -e
 
 REMOTE="root@harbor-markets.com"
-REMOTE_REPO="/var/www/Breakwater"
+REMOTE_REPO="/var/www/breakwater"
 LOCAL_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$LOCAL_REPO/.venv/bin/python"
 
