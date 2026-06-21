@@ -43,6 +43,30 @@ def to_float_or_none(x):
 # Merging utilities 
 # ------------------------------------------------------------
 
+def dedup_earnings(earnings_df, window_days=30):
+    df = earnings_df.sort_values(["stock", "earnings_date"]).reset_index(drop=True).copy()
+    df["_prev_date"] = df.groupby("stock")["earnings_date"].shift(1)
+    df["_gap"] = (df["earnings_date"] - df["_prev_date"]).dt.days
+    df["_has_eps"] = df["reported_eps"].notna()
+
+    drop_idx = set()
+    for i in df.index[df["_gap"] <= window_days]:
+        prev_i = i - 1
+        if prev_i in drop_idx:
+            continue
+        if df.at[i, "_has_eps"] and not df.at[prev_i, "_has_eps"]:
+            drop_idx.add(prev_i)
+        elif not df.at[i, "_has_eps"] and df.at[prev_i, "_has_eps"]:
+            drop_idx.add(i)
+        else:
+            drop_idx.add(prev_i)  # equal quality — keep later date
+
+    if drop_idx:
+        print(f"  dedup_earnings: removed {len(drop_idx)} duplicate rows (window={window_days}d)")
+
+    return df.drop(index=drop_idx).drop(columns=["_prev_date", "_gap", "_has_eps"]).reset_index(drop=True)
+
+
 def merge_prices_earnings_dates(stock_prices, earnings_dates):
     merged_df = pd.merge_asof(
         stock_prices, earnings_dates, left_on='date',

@@ -163,7 +163,7 @@ def engineer_earnings_explosiveness_score(input_df):
     df = input_df
     p75 = df["abs_reaction_p75_rolling"].fillna(df["abs_reaction_p75"])
     e3 = (p75 / 0.12).clip(0, 1)           # raw magnitude: 12% ceiling
-    e4 = np.clip(df["reaction_entropy"], 0, 1)
+    e4 = np.clip(df["reaction_entropy"].ffill().fillna(0), 0, 1)
     df["earnings_explosiveness_score"] = 100 * np.clip(0.85 * e3 + 0.15 * e4, 0, 1)
 
     # Fixed thresholds from OOS decile calibration (testing/testing.py).

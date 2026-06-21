@@ -102,7 +102,7 @@ def engineer_reaction_entropy(df) -> pd.DataFrame:
                 higher -> more chaotic
 
             Entropy needs a probability distribution, we'll use a stable default of 
-            5 bins and compute a histogram.
+            8 bins and compute a histogram.
 
             p_i = count in bin i / total past earnings
         """ 
@@ -117,15 +117,16 @@ def engineer_reaction_entropy(df) -> pd.DataFrame:
 
         return -np.sum(probs * np.log(probs) )
     
-    earnings_df = build_earnings_df(df)
+    best_reaction = df["reaction_3d"].fillna(df["reaction_1d"])
+    earnings_mask = best_reaction.notna()
+    earnings_df = df.loc[earnings_mask].copy()
+    earnings_df["_best_reaction"] = best_reaction[earnings_mask].values
 
     earnings_df["reaction_entropy"] = (
-        earnings_df.groupby("stock")[DEFAULT_REACTION_WINDOW]
-            .transform( lambda x: x.abs().shift(1).expanding().apply(reaction_entropy))
+        earnings_df.groupby("stock")["_best_reaction"]
+            .transform(lambda x: x.abs().shift(1).expanding().apply(reaction_entropy))
     )
-    earnings_mask = df[DEFAULT_REACTION_WINDOW].notna()
-    df.loc[earnings_mask, "reaction_entropy"] = earnings_df["reaction_entropy"]
-    assert earnings_mask.sum() == len(earnings_df), "Mismatch: earnings rows vs earnings_df"
+    df.loc[earnings_mask, "reaction_entropy"] = earnings_df["reaction_entropy"].values
     return df
 
 def engineer_directional_bias(df):

@@ -9,6 +9,7 @@ from config import (
 from data_ingestion.data_utilities import (
     parse_date, parse_numeric,
     change_column_name,
+    dedup_earnings,
     merge_prices_earnings_dates,
     map_sector_data_to_main_df)
 
@@ -64,6 +65,7 @@ def stage2(lookback_days=None):
 
     prices_df["date"] = parse_date(prices_df["date"])
     earnings_df["earnings_date"] = parse_date(earnings_df["earnings_date"])
+    earnings_df = dedup_earnings(earnings_df)
     prices_df = prices_df.sort_values("date")
     earnings_df = earnings_df.sort_values("earnings_date")
 
