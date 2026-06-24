@@ -27,15 +27,15 @@ rsync -avz \
   "$LOCAL_REPO/output/upcoming_df.parquet" \
   "$REMOTE:$REMOTE_REPO/output/"
 
-echo "=== [4/5] Pushing recent_calls.json to harbor_webpage ==="
+echo "=== [5/5] Pushing recent_calls.json to harbor_webpage ==="
 rsync -avz "$LOCAL_REPO/output/recent_calls.json" "$REMOTE:$HARBOR_WEBPAGE/recent_calls.json"
 
 echo ""
-echo "=== [5/5] Last week's results ==="
-"$VENV" scripts/results_check.py
+echo "=== [5/5] Last week's results + chart ==="
+"$VENV" scripts/last_week_results.py
 
 echo ""
-echo "=== weekly_chart.png is at output/weekly_chart.png ==="
+echo "=== Charts at output/weekly_chart.png and output/results_chart.png ==="
 
 echo ""
 echo "=== Done. ==="

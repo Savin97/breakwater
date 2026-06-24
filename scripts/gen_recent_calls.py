@@ -1,7 +1,7 @@
 """
 Generate output/recent_calls.json from full_df.parquet.
-Includes High Conviction, High Alert, and Elevated stocks with completed
-reaction_3d, going back 6 weeks. JS on the landing page filters to last 14 days.
+Includes all scored stocks (High Conviction, High Alert, Elevated, Normal)
+with completed reaction data, going back 6 weeks.
 """
 import json
 import sys
@@ -18,6 +18,8 @@ def tier_for(row):
         return "high", "HIGH ALERT"
     if row["earnings_explosiveness_bucket"] == "Elevated":
         return "mid", "ELEVATED"
+    if row["earnings_explosiveness_bucket"] == "Normal":
+        return "low", "NORMAL"
     return None, None
 
 def main():
@@ -42,7 +44,7 @@ def main():
     earnings["best_reaction"] = earnings["reaction_3d"].fillna(earnings["reaction_1d"])
     earnings = earnings.dropna(subset=["best_reaction"])
 
-    include = HA_BUCKETS | {"Elevated"}
+    include = HA_BUCKETS | {"Elevated", "Normal"}
     earnings = earnings[earnings["earnings_explosiveness_bucket"].isin(include)]
 
     earnings["week_start"] = (

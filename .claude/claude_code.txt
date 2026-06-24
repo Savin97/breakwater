@@ -1,3 +1,9 @@
 Laptop
 Resume this session with:
 claude --resume e591e61b-8678-4c18-a03c-b623516dd160
+
+webpage session:
+claude --resume 488a015e-732e-4d2d-9e5b-af05998f8e63
+
+marketing session:
+claude --resume ec54d9e8-62e5-4618-87de-ae2ef7725186
