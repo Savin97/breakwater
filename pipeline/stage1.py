@@ -1,15 +1,16 @@
 # pipeline/stage1.py
 import duckdb, warnings
-from data_ingestion.db_functions import (
-    create_prices_table_if_not_exists, 
+from utilities.db_utilities import (
+    create_prices_table_if_not_exists,
     create_earnings_table_if_not_exists,
-    create_sectors_data_table_if_not_exists, 
+    create_sectors_data_table_if_not_exists,
     create_iv_table_if_not_exists,
+    create_eps_estimates_table_if_not_exists,
     merge_tables)
-from data_ingestion.fetch_prices import ingest_all_stocks, ingest_all_stocks_yf
-from data_ingestion.fetch_earnings_dates import ingest_all_earnings_dates, ingest_all_earnings_dates_yf, get_next_earnings_dates
-from data_ingestion.fetch_sp500_sectors import ingest_all_sector_data
-from data_ingestion.data_utilities import directory_checks
+from ingestion.fetch_prices import ingest_all_stocks, ingest_all_stocks_yf
+from ingestion.fetch_earnings_dates import ingest_all_earnings_dates, ingest_all_earnings_dates_yf, get_next_earnings_dates
+from ingestion.fetch_sp500_sectors import ingest_all_sector_data
+from utilities.data_utilities import directory_checks
 from config import DB_PATH
 def stage1(update:bool):
     """
@@ -26,6 +27,7 @@ def stage1(update:bool):
     create_earnings_table_if_not_exists(con)
     create_sectors_data_table_if_not_exists(con)
     create_iv_table_if_not_exists(con)
+    create_eps_estimates_table_if_not_exists(con)
     if update == True:
         ingest_all_stocks_yf(con)
         ingest_all_earnings_dates_yf(con)

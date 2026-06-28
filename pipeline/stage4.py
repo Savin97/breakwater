@@ -1,5 +1,5 @@
 # pipeline/stage4.py
-from feature_engineering.scoring_features import (
+from scoring.scoring_features import (
     engineer_large_reaction,
     engineer_extreme_reaction,
     engineer_vol_stress,

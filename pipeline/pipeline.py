@@ -6,7 +6,6 @@ from pipeline.stage3 import stage3
 from pipeline.stage4 import stage4
 from pipeline.stage5 import stage5
 
-
 def run_pipeline():
     stage1(update=False)
     df = stage2()

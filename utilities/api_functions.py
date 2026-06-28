@@ -1,11 +1,11 @@
-# data_ingestion/api_functions.py
+# utilities/api_functions.py
 import requests
 import time
 import pandas as pd
 import yfinance as yf
 
 from config import (ALPHAVANTAGE_BASE_URL,BACKOFF_SECONDS)
-from data_ingestion.data_utilities import get_alpha_vantage_api_key
+from utilities.data_utilities import get_alpha_vantage_api_key
 
 def fetch_daily_adjusted_prices(stock: str, outputsize = "full", max_attempts=5):
     API_KEY = get_alpha_vantage_api_key()

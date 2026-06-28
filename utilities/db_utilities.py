@@ -1,4 +1,4 @@
-# db/auxilary_functions.py
+# utilities/db_utilities.py
 def create_prices_table_if_not_exists(con):
     # ensure table exists (match your schema)
     con.execute("""
@@ -197,25 +197,105 @@ def test_db(con):
     print("Number of rows in merged_stock_data: ", con.execute("SELECT COUNT(*) FROM merged_stock_data").fetchone())
 
 
+def join_iv(df, con):
+    """Join latest IV snapshot per stock onto df. Left join — NaN if not collected."""
+    import pandas as pd
+    iv_df = con.execute("""
+        SELECT DISTINCT ON (stock) stock, expected_move_pct, atm_iv,
+               snapshot_date AS iv_snapshot_date
+        FROM iv_snapshots
+        ORDER BY stock, snapshot_date DESC
+    """).fetch_df()
+    if not iv_df.empty:
+        return df.merge(iv_df, on="stock", how="left")
+    df["expected_move_pct"] = float("nan")
+    df["atm_iv"]            = float("nan")
+    df["iv_snapshot_date"]  = None
+    return df
+
+
+def join_eps_estimates(df, con):
+    """Join latest EPS estimate snapshot per stock onto df. Left join — NaN if not collected."""
+    eps_cols = [
+        "eps_avg", "eps_high", "eps_low", "eps_num_analysts",
+        "eps_dispersion", "eps_revision_momentum",
+        "eps_trend_7d", "eps_trend_30d", "eps_trend_60d", "eps_trend_90d",
+        "eps_revisions_up_7d", "eps_revisions_down_7d",
+        "eps_revisions_up_30d", "eps_revisions_down_30d",
+        "revenue_avg", "revenue_high", "revenue_low", "eps_snapshot_date",
+    ]
+    eps_df = con.execute("""
+        SELECT DISTINCT ON (stock)
+            stock, eps_avg, eps_high, eps_low, eps_num_analysts,
+            eps_dispersion, eps_revision_momentum,
+            eps_trend_7d, eps_trend_30d, eps_trend_60d, eps_trend_90d,
+            eps_revisions_up_7d, eps_revisions_down_7d,
+            eps_revisions_up_30d, eps_revisions_down_30d,
+            revenue_avg, revenue_high, revenue_low,
+            snapshot_date AS eps_snapshot_date
+        FROM eps_estimates
+        ORDER BY stock, snapshot_date DESC
+    """).fetch_df()
+    if not eps_df.empty:
+        return df.merge(eps_df, on="stock", how="left")
+    for col in eps_cols:
+        df[col] = float("nan")
+    return df
+
+
+def create_eps_estimates_table_if_not_exists(con):
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS eps_estimates (
+            stock                   TEXT,
+            snapshot_date           DATE,
+            earnings_date           DATE,
+            eps_avg                 DOUBLE,
+            eps_high                DOUBLE,
+            eps_low                 DOUBLE,
+            eps_num_analysts        INTEGER,
+            eps_dispersion          DOUBLE,
+            eps_trend_7d            DOUBLE,
+            eps_trend_30d           DOUBLE,
+            eps_trend_60d           DOUBLE,
+            eps_trend_90d           DOUBLE,
+            eps_revision_momentum   DOUBLE,
+            eps_revisions_up_7d     INTEGER,
+            eps_revisions_down_7d   INTEGER,
+            eps_revisions_up_30d    INTEGER,
+            eps_revisions_down_30d  INTEGER,
+            revenue_avg             DOUBLE,
+            revenue_high            DOUBLE,
+            revenue_low             DOUBLE,
+            ingested_at             TIMESTAMP
+        )
+    """)
+    con.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS eps_estimates_uq
+        ON eps_estimates(stock, snapshot_date)
+    """)
+    print("EPS estimates table ready.")
+
+
 def create_iv_table_if_not_exists(con):
     con.execute("""
         CREATE TABLE IF NOT EXISTS iv_snapshots (
-            stock            TEXT,
-            snapshot_date    DATE,
-            earnings_date    DATE,
-            days_to_earnings INTEGER,
-            current_price    DOUBLE,
-            expiry_used      DATE,
-            atm_strike       DOUBLE,
-            atm_call_iv      DOUBLE,
-            atm_put_iv       DOUBLE,
-            atm_iv           DOUBLE,
+            stock             TEXT,
+            snapshot_date     DATE,
+            snapshot_hour     INTEGER,
+            earnings_date     DATE,
+            days_to_earnings  INTEGER,
+            current_price     DOUBLE,
+            expiry_used       DATE,
+            atm_strike        DOUBLE,
+            atm_call_iv       DOUBLE,
+            atm_put_iv        DOUBLE,
+            atm_iv            DOUBLE,
             expected_move_pct DOUBLE,
-            ingested_at      TIMESTAMP
+            ingested_at       TIMESTAMP
         )
     """)
     con.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS iv_snapshots_uq
-        ON iv_snapshots(stock, snapshot_date)
+        ON iv_snapshots(stock, snapshot_date, snapshot_hour)
     """)
     print("IV snapshots table ready.")

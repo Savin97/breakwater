@@ -17,8 +17,8 @@ cd "$LOCAL_REPO"
 "$VENV" main.py
 
 echo "=== [3/5] Generating weekly chart + recent calls JSON ==="
-"$VENV" -c "from report.chart_weekly import generate_weekly_earnings_chart; generate_weekly_earnings_chart()"
-"$VENV" scripts/gen_recent_calls.py
+"$VENV" -c "from analysis.chart_weekly import generate_weekly_earnings_chart; generate_weekly_earnings_chart()"
+"$VENV" analysis/gen_recent_calls.py
 
 echo "=== [4/5] Pushing output parquets to droplet ==="
 rsync -avz \
@@ -32,7 +32,7 @@ rsync -avz "$LOCAL_REPO/output/recent_calls.json" "$REMOTE:$HARBOR_WEBPAGE/recen
 
 echo ""
 echo "=== [5/5] Last week's results + chart ==="
-"$VENV" scripts/last_week_results.py
+"$VENV" analysis/last_week_results.py
 
 echo ""
 echo "=== Charts at output/weekly_chart.png and output/results_chart.png ==="

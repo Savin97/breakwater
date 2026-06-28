@@ -1,10 +1,10 @@
-# data_ingestion/fetch_earnings_dates.py
+# ingestion/fetch_earnings_dates.py
 import duckdb, time, pandas as pd,yfinance as yf
 from datetime import datetime
 
-from data_ingestion.db_functions import get_max_dates_by_stock
-from data_ingestion.api_functions import (get_earnings_data_from_api)
-from data_ingestion.data_utilities import to_float_or_none, get_alpha_vantage_api_key, read_stocks_to_fetch
+from utilities.db_utilities import get_max_dates_by_stock
+from utilities.api_functions import (get_earnings_data_from_api)
+from utilities.data_utilities import to_float_or_none, get_alpha_vantage_api_key, read_stocks_to_fetch
 from config import STOCKS_START_DATE,ALPHAVANTAGE_CALLS_PER_MINUTE
 def ingest_all_earnings_dates(con):
     already, inserted, failed = 0,0,0
@@ -175,6 +175,16 @@ def ingest_all_earnings_dates_yf(con):
             if ed.empty:
                 already += 1
                 continue
+
+            # For each new upcoming date, remove any unconfirmed row within ±60 days
+            # (yfinance sometimes shifts an estimate by a few weeks — treat as same event)
+            for new_date in ed[ed["earnings_date"] >= today]["earnings_date"]:
+                con.execute("""
+                    DELETE FROM earnings
+                    WHERE stock = ?
+                      AND reported_eps IS NULL
+                      AND ABS(DATEDIFF('day', earnings_date, ?)) <= 60
+                """, [stock, new_date])
 
             count_before = con.execute(
                 "SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]

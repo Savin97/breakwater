@@ -1,5 +1,5 @@
-# data_ingestion/fetch_sp500_sectors.py
-from data_ingestion.data_utilities import read_stocks_to_fetch
+# ingestion/fetch_sp500_sectors.py
+from utilities.data_utilities import read_stocks_to_fetch
 import pandas as pd, requests
 from datetime import datetime
 from io import StringIO

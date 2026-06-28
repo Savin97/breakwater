@@ -1,11 +1,11 @@
-# data_ingestion/fetch_prices.py
+# ingestion/fetch_prices.py
 import time
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, date, timedelta
-from data_ingestion.db_functions import (stock_already_in_prices_db,get_max_dates_by_stock)
-from data_ingestion.api_functions import (fetch_daily_adjusted_prices)
-from data_ingestion.data_utilities import get_alpha_vantage_api_key, read_stocks_to_fetch
+from utilities.db_utilities import (stock_already_in_prices_db,get_max_dates_by_stock)
+from utilities.api_functions import (fetch_daily_adjusted_prices)
+from utilities.data_utilities import get_alpha_vantage_api_key, read_stocks_to_fetch
 from config import (
     STOCKS_START_DATE,
     ALPHAVANTAGE_CALLS_PER_MINUTE)

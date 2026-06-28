@@ -1,4 +1,4 @@
-# data_ingestion/fetch_iv.py
+# ingestion/fetch_iv.py
 """
 IV snapshot tracker — collects implied volatility for stocks with upcoming earnings.
 
@@ -9,7 +9,7 @@ for the nearest expiry AFTER the earnings date and records:
   - expiry_used     : which expiry the chain was pulled from
 
 Data is stored in iv_snapshots (one row per stock per day, idempotent).
-Not wired into stage1 — run separately via data_ingestion/cron_iv.py.
+Not wired into stage1 — run separately via cron/cron_iv.py.
 """
 import time
 import warnings
@@ -36,10 +36,12 @@ def _get_upcoming_earnings(con, days_ahead: int) -> pd.DataFrame:
     """, [today_str, cutoff_str]).fetchdf()
 
 
-def _already_fetched_today(con) -> set:
+def _already_fetched_this_hour(con) -> set:
     today_str = date.today().isoformat()
+    hour = datetime.now().hour
     rows = con.execute(
-        "SELECT stock FROM iv_snapshots WHERE snapshot_date = ?", [today_str]
+        "SELECT stock FROM iv_snapshots WHERE snapshot_date = ? AND snapshot_hour = ?",
+        [today_str, hour]
     ).fetchdf()
     return set(rows["stock"].tolist())
 
@@ -62,8 +64,9 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
     """
     today   = date.today()
     now     = datetime.now()
+    hour    = now.hour
 
-    done    = _already_fetched_today(con)
+    done    = _already_fetched_this_hour(con)
     upcoming = _get_upcoming_earnings(con, days_ahead)
 
     if upcoming.empty:
@@ -159,6 +162,7 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
             rows.append({
                 "stock":             stock,
                 "snapshot_date":     today,
+                "snapshot_hour":     hour,
                 "earnings_date":     earnings_date,
                 "days_to_earnings":  days_to_earn,
                 "current_price":     round(price, 4),

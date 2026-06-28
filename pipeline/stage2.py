@@ -6,12 +6,13 @@ from config import (
     LIST_OF_POSSIBLE_STOCK_COL_NAMES,
     PRICES_PROVIDER,
     DB_PATH)
-from data_ingestion.data_utilities import (
+from utilities.data_utilities import (
     parse_date, parse_numeric,
     change_column_name,
     dedup_earnings,
     merge_prices_earnings_dates,
     map_sector_data_to_main_df)
+from utilities.db_utilities import join_iv, join_eps_estimates
 
 
 def stage2(lookback_days=None):
@@ -56,13 +57,6 @@ def stage2(lookback_days=None):
 
     stock_data_df = con.execute("SELECT * FROM stock_data ORDER BY stock").fetch_df()
 
-    # Latest IV snapshot per stock (left join — NaN if not yet collected)
-    iv_df = con.execute("""
-        SELECT DISTINCT ON (stock) stock, expected_move_pct, atm_iv, snapshot_date AS iv_snapshot_date
-        FROM iv_snapshots
-        ORDER BY stock, snapshot_date DESC
-    """).fetch_df()
-
     prices_df["date"] = parse_date(prices_df["date"])
     earnings_df["earnings_date"] = parse_date(earnings_df["earnings_date"])
     earnings_df = dedup_earnings(earnings_df)
@@ -76,12 +70,8 @@ def stage2(lookback_days=None):
     df["earnings_date"] = parse_date(df["earnings_date"])
     df["price"] = parse_numeric(df["price"])
 
-    if not iv_df.empty:
-        df = df.merge(iv_df, on="stock", how="left")
-    else:
-        df["expected_move_pct"] = float("nan")
-        df["atm_iv"]            = float("nan")
-        df["iv_snapshot_date"]  = None
+    df = join_iv(df, con)
+    df = join_eps_estimates(df, con)
 
     con.close()
     print("Stage 2 DONE")

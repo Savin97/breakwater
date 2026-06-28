@@ -17,7 +17,7 @@ import pandas as pd
 import numpy as np
 
 from config import REACTION_THRESHOLD, DEFAULT_REACTION_WINDOW
-from data_ingestion.data_utilities import build_earnings_df
+from utilities.data_utilities import build_earnings_df
 
 def engineer_earnings_reactions(df):
     """

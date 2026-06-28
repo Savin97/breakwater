@@ -102,6 +102,9 @@ def export_upcoming_df(df: pd.DataFrame, output_path: str = "output/upcoming_df.
         "earnings_explosiveness_bucket", "earnings_explosiveness_score",
         "peer_percentile", "pre_earnings_drift_flag", "surprise_momentum_flag",
         "is_high_conviction", "expected_move_pct", "iv_vs_hist_ratio",
+        "eps_avg", "eps_high", "eps_low", "eps_num_analysts",
+        "eps_dispersion", "eps_revision_momentum",
+        "revenue_avg", "revenue_high", "revenue_low", "eps_snapshot_date",
     ]
     out = upcoming[[c for c in cols if c in upcoming.columns]].copy()
     out = out.sort_values("earnings_date")

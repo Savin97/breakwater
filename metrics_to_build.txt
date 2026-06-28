@@ -1,0 +1,33 @@
+Metrics worth calculating and surfacing (from social media Q&A, Jun 26 2026)
+===========================================================================
+
+Inspired by: "How much does MU need to beat for the stock not to drop?"
+
+BEAT/MISS OUTCOME SPLIT
+- P(stock up | beat EPS)
+- P(stock down | beat EPS)
+- Avg reaction_3d conditional on beat vs. miss
+- Same split for reaction_1d
+
+SURPRISE MAGNITUDE VS. DIRECTION
+- Bucket EPS surprise (e.g. <10%, 10-20%, 20-50%, >50%) → P(up), avg reaction_3d
+- Does a larger beat predict a larger/more positive move? (correlation: surprise_pct vs reaction_3d)
+- Threshold question: is there a surprise% above which P(up) meaningfully increases?
+
+GUIDE-PROXY SIGNALS (no guide data directly, but proxies)
+- Reaction_3d conditional on surprise_pct AND prior quarter's reaction direction
+  (e.g. beat + prior quarter went down → what happens?)
+- Reaction_3d vs. vol_ratio_10_to_30 going in (high pre-earnings compression → bigger move?)
+
+DIRECTION PREDICTABILITY SCORE
+- For each stock: how often does beat → up? (some stocks have strong correlation, most don't)
+- Flag stocks where beat→up rate is significantly above 50% (worth knowing for comments)
+- MU specifically: beat→up = 49% (basically a coin flip despite 64% beat rate)
+
+REACTION CONDITIONAL ON STREAK
+- Extended beat streak + this quarter also beats → avg reaction_3d vs. no streak
+- Hypothesis: market prices in the beat for consistent beaters, so the reaction is flat/negative
+
+FORMAT IDEA
+- Per-stock comment data card: beat_rate, beat_up_rate, avg_reaction_after_beat,
+  large_beat_up_rate (>20% surprise), with last 4 quarter surprise→reaction table

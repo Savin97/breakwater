@@ -1,6 +1,6 @@
 """
 Last week's earnings results chart for social sharing.
-Called by scripts/last_week_results.py; can also run standalone.
+Called by analysis/last_week_results.py; can also run standalone.
 """
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -142,5 +142,5 @@ def generate_results_chart(
 if __name__ == "__main__":
     import sys, os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from scripts.last_week_results import run
-    run()
+    from analysis.last_week_results import print_last_week_results
+    print_last_week_results()

@@ -1,5 +1,3 @@
-Laptop
-Resume this session with:
 claude --resume e591e61b-8678-4c18-a03c-b623516dd160
 
 webpage session:

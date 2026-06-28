@@ -2,8 +2,8 @@
 Last week's earnings results: prints table + saves results_chart.png.
 
 Usage:
-    python scripts/last_week_results.py
-    python scripts/last_week_results.py --lookback 2   # go back 2 weeks
+    python analysis/last_week_results.py
+    python analysis/last_week_results.py --lookback 2   # go back 2 weeks
 """
 import sys
 import os
@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from datetime import date, timedelta
 
-from report.chart_results import generate_results_chart
+from analysis.chart_results import generate_results_chart
 
 PARQUET          = os.path.join(os.path.dirname(__file__), "..", "output", "full_df.parquet")
 MOVED_THRESHOLD  = 0.05
@@ -57,7 +57,7 @@ def _cumulative(daily_rets_post):
     return cum
 
 
-def run(lookback_weeks: int = 1):
+def print_last_week_results(lookback_weeks: int = 1):
     df = pd.read_parquet(PARQUET)
     df["date"]          = pd.to_datetime(df["date"])
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
@@ -166,4 +166,4 @@ if __name__ == "__main__":
     parser.add_argument("--lookback", type=int, default=1,
                         help="How many weeks back (default: 1 = last week)")
     args = parser.parse_args()
-    run(lookback_weeks=args.lookback)
+    print_last_week_results(lookback_weeks=args.lookback)
