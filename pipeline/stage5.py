@@ -20,7 +20,7 @@ def stage5(df):
     #     print("Warning: data/report_stocks.csv not found. No reports generated.")
 
     today = pd.Timestamp.today().normalize()
-    cutoff = today + pd.Timedelta(days=14)
+    cutoff = today + pd.Timedelta(days=7)
     latest_per_stock = (
         df.sort_values("date")
         .groupby("stock")
@@ -28,17 +28,18 @@ def stage5(df):
         .reset_index()
     )
     mask = (
-        latest_per_stock["earnings_explosiveness_bucket"].isin(["High Alert", "Elevated"]) &
         (latest_per_stock["earnings_date"] >= today) &
         (latest_per_stock["earnings_date"] <= cutoff)
     )
     stocks_to_report_for = (
         latest_per_stock[mask]
-        .sort_values("risk_score", ascending=False)
-        .head(30)["stock"]
+        .sort_values("risk_score", ascending=False)["stock"]
         .tolist()
     )
-    print(f"  Auto-selected {len(stocks_to_report_for)} stocks for reports (High Alert / Elevated, earnings within 14 days).")
+    hc       = latest_per_stock[mask & latest_per_stock["is_high_conviction"]].sort_values("risk_score", ascending=False)["stock"].tolist()
+    ha       = latest_per_stock[mask & (latest_per_stock["earnings_explosiveness_bucket"] == "High Alert") & ~latest_per_stock["is_high_conviction"]].sort_values("risk_score", ascending=False)["stock"].tolist()
+    elevated = latest_per_stock[mask & (latest_per_stock["earnings_explosiveness_bucket"] == "Elevated")].sort_values("risk_score", ascending=False)["stock"].tolist()
+    print(f"  {len(stocks_to_report_for)} stocks this week — *** HC: {hc or 'none'}  ** HA: {ha or 'none'}  * Elevated: {elevated or 'none'}")
 
     # Indexed for per-stock upcoming-date lookup; scores for universe-wide percentile (matches digest)
     latest_per_stock_idx = latest_per_stock.set_index("stock")

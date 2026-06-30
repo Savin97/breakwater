@@ -8,6 +8,14 @@ At the start of every conversation, read `.claude/memory/MEMORY.md` to restore c
 
 **Memory location:** All session memory lives in `.claude/memory/` inside this repo. It syncs via git across machines and is the single source of truth. Do NOT write to the Claude harness auto-memory location (`~/.claude/projects/*/memory/`) — that path is not used for this project and will diverge.
 
+## External Brain
+
+Durable cross-project knowledge lives at `/home/Michael/projects/brain`.
+
+Use the external brain for source-backed research notes, durable decisions, project maps, and concepts that should persist across Breakwater, Polymarket, and musicology work. Keep `.claude/memory/` for Breakwater session continuity and immediate handoff notes.
+
+Before doing architecture work, research synthesis, model-evaluation planning, or durable documentation, check `/home/Michael/projects/brain/projects/breakwater.md` and relevant notes under `/home/Michael/projects/brain/wiki/`.
+
 ## What This Is
 
 Breakwater is an earnings tail-risk model for S&P 500 stocks. It ingests price/earnings/sector data, engineers features, scores each stock's upcoming earnings event on a risk scale, and produces reports and a Streamlit dashboard.

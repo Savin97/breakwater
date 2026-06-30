@@ -74,5 +74,8 @@ def stage2(lookback_days=None):
     df = join_eps_estimates(df, con)
 
     con.close()
+    df = df.sort_values("date",ascending=False)
+    df.head(5000).to_csv("merged_df.csv",index=False)
+    exit()
     print("Stage 2 DONE")
     return df

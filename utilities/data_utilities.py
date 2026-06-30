@@ -62,7 +62,7 @@ def dedup_earnings(earnings_df, window_days=30):
             drop_idx.add(prev_i)  # equal quality — keep later date
 
     if drop_idx:
-        print(f"  dedup_earnings: removed {len(drop_idx)} duplicate rows (window={window_days}d)")
+        print(f"  dedup_earnings: removed {len(drop_idx)} duplicate rows (window={window_days}d) — re-run stage1 with update=True to clean DB")
 
     return df.drop(index=drop_idx).drop(columns=["_prev_date", "_gap", "_has_eps"]).reset_index(drop=True)
 
