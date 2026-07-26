@@ -299,3 +299,32 @@ def create_iv_table_if_not_exists(con):
         ON iv_snapshots(stock, snapshot_date, snapshot_hour)
     """)
     print("IV snapshots table ready.")
+
+
+def verify_tables_existence(con):
+    create_prices_table_if_not_exists(con)
+    create_earnings_table_if_not_exists(con)
+    create_sectors_data_table_if_not_exists(con)
+    create_iv_table_if_not_exists(con)
+    create_eps_estimates_table_if_not_exists(con)
+
+if __name__ == "__main__":
+    import duckdb
+
+    con = duckdb.connect("data/breakwater.duckdb")
+    # print( con.execute("""
+    #     SHOW TABLES;
+    # """).fetch_df());
+    tables = con.execute("""
+                    SELECT
+                    table_name
+                       FROM
+                       information_schema.tables;                
+        """).fetchall();
+
+    for table in tables:
+        table_name = table[0]
+        columns = con.execute(f"DESCRIBE {table_name}").fetch_df()
+        print("Table: ", table_name)
+        print(columns["column_name"])
+        print("---------------------------------")

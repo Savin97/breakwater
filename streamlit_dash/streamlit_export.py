@@ -87,6 +87,9 @@ def export_upcoming_df(df: pd.DataFrame, output_path: str = "output/upcoming_df.
     )
 
     upcoming["days_to_earnings"] = (upcoming["earnings_date"] - today).dt.days
+    suspicious = upcoming[upcoming["days_to_earnings"] > 90]["stock"].tolist()
+    if suspicious:
+        print(f"WARNING: {len(suspicious)} stocks have earnings_date >90 days out (possible bad data): {suspicious}")
 
     # IV vs historical p75 ratio — only valid for upcoming events (current IV snapshot)
     p75_for_ratio = upcoming["abs_reaction_p75_rolling"].fillna(upcoming["abs_reaction_p75"])

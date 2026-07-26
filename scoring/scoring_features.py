@@ -263,6 +263,16 @@ def engineer_total_risk_score(input_df):
     df["risk_score"] = df["earnings_explosiveness_score"]
     return df
 
+
+def engineer_high_conviction(input_df):
+    df = input_df
+    df["is_high_conviction"] = (
+        (df["earnings_explosiveness_bucket"] == "High Alert") &
+        df["pre_earnings_drift_flag"].notna() &
+        (df["pre_earnings_drift_flag"] != "")
+    )
+    return df
+
 def classify_large_relative_earnings_move_bucket(input_df):
     """
         large_earnings_move = 1 if abs_reaction_3d ≥ abs_reaction_p75_rolling

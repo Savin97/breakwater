@@ -72,10 +72,13 @@ def generate_results_chart(
         y     = float(row["earnings_explosiveness_score"])
         tier  = row["earnings_explosiveness_bucket"]
         hc    = bool(row.get("is_high_conviction", False))
-        move  = float(row["move"])
+        move  = row["move"]
 
-        sign     = "+" if move >= 0 else "−"
-        move_str = f"{sign}{abs(move) * 100:.1f}%"
+        if move is not None and not (isinstance(move, float) and pd.isna(move)):
+            sign     = "+" if move >= 0 else "−"
+            move_str = f"{sign}{abs(move) * 100:.1f}%"
+        else:
+            move_str = "pending"
         prefix   = "★ " if hc else ""
         label    = f"{prefix}{row['stock']}\n{move_str}"
 

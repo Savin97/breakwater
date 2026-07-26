@@ -220,6 +220,93 @@ def ingest_all_earnings_dates_yf(con):
     print(f"skipped/up-to-date: {already}, inserted: {inserted}, failed: {failed}")
 
 
+def validate_upcoming_earnings_dates(con, max_delta_days=30):
+    """Cross-check upcoming unconfirmed earnings dates against ticker.calendar (company IR data).
+    Corrects any date that differs by more than 1 day from the confirmed calendar date.
+    max_delta_days: skip corrections where the calendar date is more than this many days out
+    from the DB date — prevents next-quarter rollover false corrections.
+    Called from pipeline/stage1.py after ingest_all_earnings_dates_yf.
+    """
+    today = datetime.now().date()
+
+    rows = con.execute("""
+        SELECT DISTINCT stock, earnings_date
+        FROM earnings
+        WHERE earnings_date >= CURRENT_DATE
+          AND reported_eps IS NULL
+        ORDER BY stock, earnings_date
+    """).fetchall()
+
+    if not rows:
+        print("validate_upcoming_earnings_dates: no upcoming unconfirmed dates to check.")
+        return {"corrected": [], "warnings": []}
+
+    print(f"\nValidating {len(rows)} upcoming earnings dates via ticker.calendar...")
+    corrected = []
+    warnings_list = []
+
+    for stock, db_date in rows:
+        if isinstance(db_date, pd.Timestamp):
+            db_date = db_date.date()
+        try:
+            cal = yf.Ticker(stock).calendar
+            if cal is None:
+                warnings_list.append(stock)
+                time.sleep(0.3)
+                continue
+
+            # calendar returns a dict {field: value_or_list} in yfinance 1.x
+            if isinstance(cal, dict):
+                ed_raw = cal.get("Earnings Date", [])
+                if not isinstance(ed_raw, (list, tuple)):
+                    ed_raw = [ed_raw] if ed_raw is not None else []
+            elif isinstance(cal, pd.DataFrame):
+                if "Earnings Date" in cal.columns:
+                    ed_raw = cal["Earnings Date"].dropna().tolist()
+                else:
+                    ed_raw = []
+            else:
+                ed_raw = []
+
+            cal_dates = []
+            for d in ed_raw:
+                try:
+                    cal_dates.append(pd.Timestamp(d).date())
+                except Exception:
+                    pass
+
+            future_dates = [d for d in cal_dates if d >= today]
+            if not future_dates:
+                warnings_list.append(stock)
+                time.sleep(0.3)
+                continue
+
+            cal_date = min(future_dates)
+            diff = abs((cal_date - db_date).days)
+
+            if diff > 0:
+                if diff > max_delta_days:
+                    warnings_list.append(stock)
+                    print(f"  SKIPPED {stock}: {db_date} → {cal_date} ({diff:+d} days, exceeds max_delta={max_delta_days} — possible quarter rollover)")
+                else:
+                    con.execute("""
+                        UPDATE earnings
+                        SET earnings_date = ?
+                        WHERE stock = ? AND earnings_date = ? AND reported_eps IS NULL
+                    """, [cal_date, stock, db_date])
+                    print(f"  CORRECTED {stock}: {db_date} → {cal_date} ({diff:+d} days)")
+                    corrected.append((stock, db_date, cal_date))
+
+        except Exception as e:
+            warnings_list.append(stock)
+            print(f"  WARNING {stock}: {type(e).__name__}: {e}")
+
+        time.sleep(0.3)
+
+    print(f"Validation done: {len(corrected)} corrected, {len(warnings_list)} no-calendar warnings.")
+    return {"corrected": corrected, "warnings": warnings_list}
+
+
 def get_next_earnings_dates():
     # TODO: Change to actually today (datetime.now())
     stocks = read_stocks_to_fetch()

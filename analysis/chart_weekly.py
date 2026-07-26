@@ -1,12 +1,17 @@
 """
 Weekly earnings risk chart for social sharing.
 Reads output/upcoming_df.parquet, generates a Twitter-ready PNG.
+
+Usage (CLI):
+    python -m analysis.chart_weekly              # this week (Mon–Fri containing today)
+    python -m analysis.chart_weekly 20/07/2026   # week starting DD/MM/YYYY
 """
+import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import FancyBboxPatch
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import numpy as np
 from pathlib import Path
 
@@ -31,13 +36,20 @@ ACCENT   = "#c9a84c"
 def generate_weekly_earnings_chart(
     output_path: str = "output/weekly_chart.png",
     parquet_path: str = "output/upcoming_df.parquet",
+    start_date: str | None = None,
 ) -> str:
+    """
+    start_date: optional DD/MM/YYYY string; defaults to Monday of the current week.
+    """
     df = pd.read_parquet(parquet_path)
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
 
-    today      = pd.Timestamp(date.today())
-    week_start = today + timedelta(days=(7 - today.weekday()) % 7)  # next Monday (or today if Monday)
-    week_end   = week_start + timedelta(days=4)                      # Friday
+    if start_date is not None:
+        week_start = pd.Timestamp(datetime.strptime(start_date, "%d/%m/%Y"))
+    else:
+        today      = pd.Timestamp(date.today())
+        week_start = today - timedelta(days=today.weekday())  # Monday of current week
+    week_end = week_start + timedelta(days=4)  # Friday
     week = df[(df["earnings_date"] >= week_start) & (df["earnings_date"] <= week_end)].copy()
 
     if week.empty:
@@ -159,4 +171,5 @@ def generate_weekly_earnings_chart(
 
 
 if __name__ == "__main__":
-    generate_weekly_earnings_chart()
+    sd = sys.argv[1] if len(sys.argv) > 1 else None
+    generate_weekly_earnings_chart(start_date=sd)

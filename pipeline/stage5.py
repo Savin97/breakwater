@@ -7,9 +7,12 @@ from report.calendar_builder import generate_calendar
 from report.recommendations_builder import build_recommendation
 from report.chart_builder import generate_reactions_chart
 from streamlit_dash.streamlit_export import export_streamlit_df
+from analysis.chart_weekly import generate_weekly_earnings_chart
+from marketing.generate_public_track_record import generate_public_track_record
+from analysis.last_week_results import print_last_week_results
 
 def stage5(df):
-    print("--------------------\nStage 5 - Generating Report...")
+    print("--------------------\nStage 5 - Outputs...")
 
     # Manual override: populate data/report_stocks.csv to generate reports for specific stocks
     # report_stocks_path = "data/report_stocks.csv"
@@ -107,7 +110,7 @@ def stage5(df):
         company_name = company_names.get(stock, "")
         surprise_flag = str(latest_row.get("surprise_momentum_flag", "") or "")
         drift_flag    = str(latest_row.get("pre_earnings_drift_flag",  "") or "")
-        high_conviction = (current_bucket == "High Alert") and bool(drift_flag)
+        high_conviction = bool(latest_per_stock_idx.loc[stock, "is_high_conviction"])
         n_events = len(earnings_df)
 
         _rank_key = latest_per_stock_idx["abs_reaction_p75_rolling"].fillna(
@@ -201,6 +204,9 @@ def stage5(df):
 
     print("--------------------")
     generate_calendar(df)
+    generate_weekly_earnings_chart()
+    generate_public_track_record()
+    print_last_week_results()
     export_streamlit_df(df)
     print("Stage 5 DONE")
     return df

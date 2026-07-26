@@ -21,8 +21,11 @@ MOVED_THRESHOLD  = 0.05
 
 
 def _week_bounds(lookback_weeks: int = 1) -> tuple[pd.Timestamp, pd.Timestamp]:
-    today   = pd.Timestamp(date.today())
-    monday  = today - timedelta(days=today.weekday() + 7 * lookback_weeks)
+    today = pd.Timestamp(date.today())
+    # On Sat/Sun snap forward to Monday so the formula sees the just-completed trading week
+    if today.weekday() >= 5:
+        today = today + timedelta(days=7 - today.weekday())
+    monday = today - timedelta(days=today.weekday() + 7 * lookback_weeks)
     return monday, monday + timedelta(days=4)
 
 
@@ -134,14 +137,14 @@ def print_last_week_results(lookback_weeks: int = 1):
         print(f"  {stock:<6}  {date_str:<7}  {tier_short:<12}  {pre_fmt}  {post_fmt}")
 
         move = row["reaction_3d"] if pd.notna(row.get("reaction_3d")) else row.get("reaction_1d")
-        if pd.notna(move):
-            chart_rows.append({
-                "stock":                      stock,
-                "earnings_date":              edate,
-                "earnings_explosiveness_bucket": bucket,
-                "earnings_explosiveness_score": row["earnings_explosiveness_score"],
-                "is_high_conviction":         row.get("is_high_conviction", False),
-                "move":                       float(move),
+        move_val = float(move) if pd.notna(move) else None
+        chart_rows.append({
+            "stock":                      stock,
+            "earnings_date":              edate,
+            "earnings_explosiveness_bucket": bucket,
+            "earnings_explosiveness_score": row["earnings_explosiveness_score"],
+            "is_high_conviction":         row.get("is_high_conviction", False),
+            "move":                       move_val,
             })
 
     print("  " + "─" * 68)

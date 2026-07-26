@@ -13,7 +13,8 @@ from scoring.scoring_features import (
     classify_large_relative_earnings_move_bucket,
     engineer_surprise_momentum_flag,
     engineer_pre_earnings_drift_flag,
-    engineer_total_risk_score)
+    engineer_total_risk_score,
+    engineer_high_conviction)
 
 
 def stage4(stage3_df, incremental=False):
@@ -42,6 +43,7 @@ def stage4(stage3_df, incremental=False):
             engineer_surprise_momentum_flag,
             engineer_pre_earnings_drift_flag,
             engineer_total_risk_score,
+            engineer_high_conviction,
         ]
     else:
         features = [
@@ -59,6 +61,7 @@ def stage4(stage3_df, incremental=False):
             engineer_surprise_momentum_flag,
             engineer_pre_earnings_drift_flag,
             engineer_total_risk_score,
+            engineer_high_conviction,
         ]
 
     for f in features:

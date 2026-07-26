@@ -183,8 +183,13 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> 
 <body style="font-family:Helvetica,Arial,sans-serif;font-size:14px;color:#1a1a1a;max-width:820px;margin:0 auto;padding:24px;">
 
   <div style="border-bottom:2px solid #1a1a1a;padding-bottom:12px;margin-bottom:20px;">
-    <div style="font-size:20px;font-weight:700;">Breakwater <span style="font-size:13px;font-weight:400;color:#555;">Earnings Risk Digest</span></div>
+    <div style="font-size:20px;font-weight:700;">Breakwater <span style="font-size:13px;font-weight:400;color:#555;">Monday Earnings Risk Radar</span></div>
     <div style="font-size:12px;color:#888;margin-top:3px;">{date_line}</div>
+  </div>
+
+  <div style="font-size:13px;line-height:1.7;color:#444;margin-bottom:18px;">
+    Breakwater flags S&amp;P 500 earnings events with elevated risk of a large post-earnings move
+    using information available before the announcement. The signal is about move risk, not direction.
   </div>
 
   <div style="background:#f5f5f5;border-radius:4px;padding:12px 16px;margin-bottom:24px;font-size:13px;">
@@ -222,6 +227,16 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> 
     based only on information available before the announcement.
     A 97th-percentile event ranks as riskier than approximately 97% of comparable historical events.<br>
     <strong>High Conviction &#9733;:</strong> High Alert with an active pre-earnings drift signal.
+  </div>
+
+  <div style="margin-top:20px;background:#f8f8f8;border:1px solid #e5e5e5;border-radius:4px;padding:14px 16px;font-size:12px;line-height:1.7;color:#555;">
+    <strong>Using Breakwater this week?</strong>
+    Reply with one word: options, stock risk, portfolio, or research. It helps shape the dashboard.
+    <div style="margin-top:10px;">
+      <a href="https://harbor-markets.com/breakwater" style="display:inline-block;background:#1a1a1a;color:#fff;text-decoration:none;padding:8px 12px;border-radius:3px;font-size:11px;font-weight:700;">
+        Open dashboard
+      </a>
+    </div>
   </div>
 
   <div style="margin-top:20px;padding-top:12px;border-top:1px solid #ddd;font-size:11px;color:#999;text-align:center;">
@@ -294,7 +309,7 @@ def run_weekly_digest():
     cutoff_dt     = today_dt + pd.Timedelta(days=7).to_pytimedelta()
     week_of       = today_dt.strftime("%B %d, %Y")
     date_range    = f"{today_dt.strftime('%b %d')} – {cutoff_dt.strftime('%b %d, %Y')}"
-    subject       = f"Breakwater — Earnings Risk Digest — {date_range}"
+    subject       = f"Breakwater Monday Earnings Risk Radar — {date_range}"
     html          = _build_html(stocks_df, week_of, date_range=date_range)
     recipients    = _load_subscribers()
 
