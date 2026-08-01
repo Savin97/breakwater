@@ -13,9 +13,10 @@ data/
 **/data/
 backtesting/artifacts/
 
-# OS stuff
+# misc stuff
 .DS_Store
 .env
 *.env
 .ipynb_checkpoints/
 *.csv
+temp.py

@@ -1,4 +1,14 @@
 # utilities/db_utilities.py
+"""
+    Function definitions:
+    create_prices_table_if_not_exists
+    create_earnings_table_if_not_exists
+    create_sectors_data_table_if_not_exists
+    create_iv_table_if_not_exists
+    create_eps_estimates_table_if_not_exists
+"""
+
+
 def create_prices_table_if_not_exists(con):
     # ensure table exists (match your schema)
     con.execute("""
@@ -40,6 +50,65 @@ def create_sectors_data_table_if_not_exists(con):
         ingested_at TIMESTAMP
     ); """)
     print("Stock Data table ready.")
+
+
+def create_eps_estimates_table_if_not_exists(con):
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS eps_estimates (
+            stock                   TEXT,
+            snapshot_date           DATE,
+            earnings_date           DATE,
+            eps_avg                 DOUBLE,
+            eps_high                DOUBLE,
+            eps_low                 DOUBLE,
+            eps_num_analysts        INTEGER,
+            eps_dispersion          DOUBLE,
+            eps_trend_7d            DOUBLE,
+            eps_trend_30d           DOUBLE,
+            eps_trend_60d           DOUBLE,
+            eps_trend_90d           DOUBLE,
+            eps_revision_momentum   DOUBLE,
+            eps_revisions_up_7d     INTEGER,
+            eps_revisions_down_7d   INTEGER,
+            eps_revisions_up_30d    INTEGER,
+            eps_revisions_down_30d  INTEGER,
+            revenue_avg             DOUBLE,
+            revenue_high            DOUBLE,
+            revenue_low             DOUBLE,
+            ingested_at             TIMESTAMP
+        )
+    """)
+    con.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS eps_estimates_uq
+        ON eps_estimates(stock, snapshot_date)
+    """)
+    print("EPS estimates table ready.")
+
+
+def create_iv_table_if_not_exists(con):
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS iv_snapshots (
+            stock             TEXT,
+            snapshot_date     DATE,
+            snapshot_hour     INTEGER,
+            earnings_date     DATE,
+            days_to_earnings  INTEGER,
+            current_price     DOUBLE,
+            expiry_used       DATE,
+            atm_strike        DOUBLE,
+            atm_call_iv       DOUBLE,
+            atm_put_iv        DOUBLE,
+            atm_iv            DOUBLE,
+            expected_move_pct DOUBLE,
+            ingested_at       TIMESTAMP
+        )
+    """)
+    con.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS iv_snapshots_uq
+        ON iv_snapshots(stock, snapshot_date, snapshot_hour)
+    """)
+    print("IV snapshots table ready.")
+
 
 def merge_tables(con):
     """
@@ -243,63 +312,6 @@ def join_eps_estimates(df, con):
     return df
 
 
-def create_eps_estimates_table_if_not_exists(con):
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS eps_estimates (
-            stock                   TEXT,
-            snapshot_date           DATE,
-            earnings_date           DATE,
-            eps_avg                 DOUBLE,
-            eps_high                DOUBLE,
-            eps_low                 DOUBLE,
-            eps_num_analysts        INTEGER,
-            eps_dispersion          DOUBLE,
-            eps_trend_7d            DOUBLE,
-            eps_trend_30d           DOUBLE,
-            eps_trend_60d           DOUBLE,
-            eps_trend_90d           DOUBLE,
-            eps_revision_momentum   DOUBLE,
-            eps_revisions_up_7d     INTEGER,
-            eps_revisions_down_7d   INTEGER,
-            eps_revisions_up_30d    INTEGER,
-            eps_revisions_down_30d  INTEGER,
-            revenue_avg             DOUBLE,
-            revenue_high            DOUBLE,
-            revenue_low             DOUBLE,
-            ingested_at             TIMESTAMP
-        )
-    """)
-    con.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS eps_estimates_uq
-        ON eps_estimates(stock, snapshot_date)
-    """)
-    print("EPS estimates table ready.")
-
-
-def create_iv_table_if_not_exists(con):
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS iv_snapshots (
-            stock             TEXT,
-            snapshot_date     DATE,
-            snapshot_hour     INTEGER,
-            earnings_date     DATE,
-            days_to_earnings  INTEGER,
-            current_price     DOUBLE,
-            expiry_used       DATE,
-            atm_strike        DOUBLE,
-            atm_call_iv       DOUBLE,
-            atm_put_iv        DOUBLE,
-            atm_iv            DOUBLE,
-            expected_move_pct DOUBLE,
-            ingested_at       TIMESTAMP
-        )
-    """)
-    con.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS iv_snapshots_uq
-        ON iv_snapshots(stock, snapshot_date, snapshot_hour)
-    """)
-    print("IV snapshots table ready.")
-
 
 def verify_tables_existence(con):
     create_prices_table_if_not_exists(con)
@@ -307,24 +319,3 @@ def verify_tables_existence(con):
     create_sectors_data_table_if_not_exists(con)
     create_iv_table_if_not_exists(con)
     create_eps_estimates_table_if_not_exists(con)
-
-if __name__ == "__main__":
-    import duckdb
-
-    con = duckdb.connect("data/breakwater.duckdb")
-    # print( con.execute("""
-    #     SHOW TABLES;
-    # """).fetch_df());
-    tables = con.execute("""
-                    SELECT
-                    table_name
-                       FROM
-                       information_schema.tables;                
-        """).fetchall();
-
-    for table in tables:
-        table_name = table[0]
-        columns = con.execute(f"DESCRIBE {table_name}").fetch_df()
-        print("Table: ", table_name)
-        print(columns["column_name"])
-        print("---------------------------------")

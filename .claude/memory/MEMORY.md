@@ -8,6 +8,23 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## 2026-07-27 — Monday workflow log audit: fixed price-fetch date bug, logged 6 open issues
+
+User pasted the full `scripts/monday_workflow.sh` output log (~1200 lines) and flagged it as "insanity" — mostly a single bug's blast radius. Diagnosed the whole log; fixed the worst offender, rest are open.
+
+**Fixed:**
+- `ingestion/fetch_prices.py` `incremental_ingest_all_stocks_yf()`: `end = date.today()` was passed straight to `yf.download(..., end=...)`, whose `end` is *exclusive*. On any run where the DB's last price date was Friday (i.e. every Monday run), `start`=Saturday, `end`=Monday(excluded) → the fetch window contained zero trading days, so **all 503 tickers** logged "possibly delisted; no price data found" and `Total inserted: 0` — pure noise, nothing actually delisted. Changed to `end = date.today() + timedelta(days=1)` so today is included. `timedelta` was already imported.
+
+**Open issues found in the same log, not yet fixed (in rough priority order):**
+1. **`BK` and `CTRA` are genuinely dead on yfinance** — HTTP 404 "Quote not found for symbol." Need remapping (ticker changes?) or pruning from `data/stock_list.csv`.
+2. **`data/stock_list.csv` is stale** — 12 tickers appear in earnings/calendar data but aren't in the stock list file: BK, CAG, CPB, CTRA, DAY, EPAM, HOLX, LW, MOH, MTCH, PAYC, POOL. Logs `PROBLEM! X not in my stock_list file` for each, every run, during the GICS sector merge in stage1.
+3. **Earnings-date source is unreliable ~20% of the time.** The `ticker.calendar` validation pass in stage1 corrected 97 of 501 tickers' dates this run (several by exactly +7 days — looks like a systematic weekly-offset pattern worth investigating on its own), skipped 4 as bad quarter-rollovers (>78 day jumps), and *separately*, the end-of-stage5 sanity check still flagged 10 stocks with `earnings_date >90 days out` (GOOG, GOOGL, NOW, RJF, DHI, EW, KMI, OTIS, TEL, AMP) — meaning the validation pass isn't catching everything.
+4. **`dedup_earnings` removes ~555 duplicate rows every single run** (stage2) instead of once. The print message (`re-run stage1 with update=True to clean DB`) says how to fix it at the source, but `monday_workflow.sh` always runs with `update=False`, so the same duplicates get stripped in-memory every week instead of being deleted from the DB.
+5. **`report/calendar_builder.py`'s HTML calendar output looks dead.** `generate_calendar(df)` (called from `stage5.py` with the historical `full_df`) filters on `is_earnings_day == 1`, which is essentially never true for *future* earnings dates — so it prints `Weekly calendar: no scored earnings events in window.` and skips writing `output/weekly_calendar.html`, even though the very next step (`analysis/chart_weekly.py`, reading `output/upcoming_df.parquet` instead) finds the same 114 upcoming events fine and prints/charts them. Worth checking whether anything (dashboard, website) still depends on `weekly_calendar.html` — if so it's been silently stale.
+6. **Ordinal-suffix bug in the uncommitted `_print_weekly_table` addition to `analysis/chart_weekly.py`** (this was the file showing as modified in `git status` at session start): `pct = f"{row['peer_percentile']:.0f}th"` always appends "th" regardless of the number, so the console table prints "91th", "61th", "71th", "41th", "2th", "3th", "1th" instead of 91st/61st/71st/41st/2nd/3rd/1st. Trivial fix, same pattern as the ordinal fix already done elsewhere (2026-05-30 digest work) — reuse that logic instead of reimplementing.
+
+**Also noted, not necessarily a bug:** `dedup_earnings` window/behavior and the earnings-date +7-day correction pattern in #3 might share a root cause (weekly-cadence data source lag) — worth checking together if revisiting earnings ingestion.
+
 ## 2026-06-22 — Landing page overhaul + pipeline data quality fixes
 
 **Landing page (harbor_webpage):**
@@ -170,8 +187,8 @@ This validates the core product claim: "Breakwater reduces the earnings calendar
 
 **yfinance migration (partially done, NOT yet tested):**
 - AlphaVantage subscription cancelled — need yfinance replacement
-- Added `ingest_all_stocks_yf(con)` to `data_ingestion/fetch_prices.py` — batch download, incremental from global max date, chunks of 100
-- Added `ingest_all_earnings_dates_yf(con)` to `data_ingestion/fetch_earnings_dates.py` — uses `yf.Ticker().earnings_dates`, skips stocks with future dates already in DB, manual dedup since fiscal_end_date=None bypasses unique index
+- Added `incremental_ingest_all_stocks_yf(con)` to `data_ingestion/fetch_prices.py` — batch download, incremental from global max date, chunks of 100
+- Added `incremental_ingest_all_earnings_dates_yf(con)` to `data_ingestion/fetch_earnings_dates.py` — uses `yf.Ticker().earnings_dates`, skips stocks with future dates already in DB, manual dedup since fiscal_end_date=None bypasses unique index
 - `pipeline/stage1.py`: old AlphaVantage calls commented out (19/5/26), new yf functions active
 - `config.py`: `STOCKS_END_DATE` now uses `date.today().isoformat()` dynamically; added `from datetime import date` at top
 - **NOT yet tested** — killed before smoke test could complete. Test first thing next session.

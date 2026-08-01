@@ -1,5 +1,4 @@
 # pipeline/pipeline.py
-import pandas as pd
 from pipeline.stage1 import stage1
 from pipeline.stage2 import stage2
 from pipeline.stage3 import stage3

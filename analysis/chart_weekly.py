@@ -167,7 +167,41 @@ def generate_weekly_earnings_chart(
                 facecolor=BG, edgecolor="none")
     plt.close(fig)
     print(f"Saved chart → {output_path}")
+
+    _print_weekly_table(week, week_start)
     return output_path
+
+
+def _print_weekly_table(week: pd.DataFrame, week_start: pd.Timestamp) -> None:
+    week_label = f"Week of {week_start.strftime('%B %-d')}"
+    print(f"\n  Earnings Risk — {week_label}\n")
+
+    col_w = {"date": 11, "ticker": 8, "tier": 12, "pct": 6, "hc": 4}
+    header = (
+        f"  {'DATE':<{col_w['date']}}"
+        f"{'TICKER':<{col_w['ticker']}}"
+        f"{'TIER':<{col_w['tier']}}"
+        f"{'PCT':>{col_w['pct']}}"
+        f"  {'HC':<{col_w['hc']}}"
+    )
+    divider = "  " + "-" * (sum(col_w.values()) + 4)
+    print(header)
+    print(divider)
+
+    for _, row in week.iterrows():
+        date_str = row["earnings_date"].strftime("%a %b %-d")
+        ticker   = row["stock"]
+        tier     = row["earnings_explosiveness_bucket"]
+        pct      = f"{row['peer_percentile']:.0f}th"
+        hc       = "★" if row.get("is_high_conviction", False) else ""
+        print(
+            f"  {date_str:<{col_w['date']}}"
+            f"{ticker:<{col_w['ticker']}}"
+            f"{tier:<{col_w['tier']}}"
+            f"{pct:>{col_w['pct']}}"
+            f"  {hc:<{col_w['hc']}}"
+        )
+    print()
 
 
 if __name__ == "__main__":

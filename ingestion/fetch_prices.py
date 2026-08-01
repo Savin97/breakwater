@@ -9,6 +9,7 @@ from utilities.data_utilities import get_alpha_vantage_api_key, read_stocks_to_f
 from config import (
     STOCKS_START_DATE,
     ALPHAVANTAGE_CALLS_PER_MINUTE)
+
 def ingest_all_stocks(con):
     """
         This function updates the 'prices' table in the duckDB.
@@ -126,11 +127,9 @@ def ingest_all_stocks(con):
     print("failures saved to:", FAILED_LOG_PATH)
     return
 
+BATCH_SIZE = 100
 
-_BATCH_SIZE = 100
-
-
-def ingest_all_stocks_yf(con):
+def incremental_ingest_all_stocks_yf(con):
     """Incremental price update using yfinance (no API key required)."""
     stocks = read_stocks_to_fetch()
     if not stocks:
@@ -138,7 +137,7 @@ def ingest_all_stocks_yf(con):
 
     global_max = con.execute("SELECT MAX(date) FROM prices").fetchone()[0]
     start = (global_max + timedelta(days=1)) if global_max else pd.to_datetime(STOCKS_START_DATE).date()
-    end = date.today()
+    end = date.today() + timedelta(days=1)  # yfinance's end is exclusive; include today
 
     if start >= end:
         print("Prices already up to date.")
@@ -148,8 +147,8 @@ def ingest_all_stocks_yf(con):
     total_inserted = 0
     now = datetime.now()
 
-    for batch_start in range(0, len(stocks), _BATCH_SIZE):
-        batch = stocks[batch_start: batch_start + _BATCH_SIZE]
+    for batch_start in range(0, len(stocks), BATCH_SIZE):
+        batch = stocks[batch_start: batch_start + BATCH_SIZE]
         try:
             raw = yf.download(
                 batch, start=str(start), end=str(end),
@@ -159,6 +158,8 @@ def ingest_all_stocks_yf(con):
             print(f"  Batch [{batch_start+1}–{batch_start+len(batch)}] failed: {e}")
             continue
 
+        if raw is None:
+            raise ValueError("incremental_ingest_all_stocks_yf function returned None")
         if raw.empty:
             continue
 

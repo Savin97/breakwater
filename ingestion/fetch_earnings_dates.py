@@ -6,6 +6,7 @@ from utilities.db_utilities import get_max_dates_by_stock
 from utilities.api_functions import (get_earnings_data_from_api)
 from utilities.data_utilities import to_float_or_none, get_alpha_vantage_api_key, read_stocks_to_fetch
 from config import STOCKS_START_DATE,ALPHAVANTAGE_CALLS_PER_MINUTE
+
 def ingest_all_earnings_dates(con):
     already, inserted, failed = 0,0,0
     FAILED_EARNINGS_LOG_PATH = "output/debug_failed_earnings_ingestion.txt"    
@@ -110,10 +111,11 @@ def ingest_all_earnings_dates(con):
     print("Failures saved to:", FAILED_EARNINGS_LOG_PATH)
 
 
-def ingest_all_earnings_dates_yf(con):
-    """Incremental earnings update using yfinance (no API key required).
-    Fetches ~12 recent quarters + upcoming dates per stock.
-    Skips stocks that already have a future earnings date in the DB.
+def incremental_ingest_all_earnings_dates_yf(con):
+    """
+        Incremental earnings update using yfinance (no API key required).
+        Fetches ~12 recent quarters + upcoming dates per stock.
+        Skips stocks that already have a future earnings date in the DB.
     """
     stocks = read_stocks_to_fetch()
     today = datetime.now().date()
@@ -123,11 +125,14 @@ def ingest_all_earnings_dates_yf(con):
     with open(FAILED_LOG_PATH, "w") as f:
         f.write("stock\terror\n")
 
-    # Skip stocks that already have an upcoming (future) earnings date
+    # Skip stocks whose stored upcoming date is still comfortably far out.
+    # Stocks due soon (or whose stored date just passed) are always rechecked,
+    # since a stale placeholder estimate can otherwise never self-correct
+    # before its own (wrong) date arrives.
     future_dates = set(
         row[0] for row in
         con.execute(
-            "SELECT DISTINCT stock FROM earnings WHERE earnings_date > current_date"
+            "SELECT DISTINCT stock FROM earnings WHERE earnings_date > current_date + INTERVAL 7 DAY"
         ).fetchall()
     )
 
@@ -176,9 +181,12 @@ def ingest_all_earnings_dates_yf(con):
                 already += 1
                 continue
 
-            # For each new upcoming date, remove any unconfirmed row within ±60 days
-            # (yfinance sometimes shifts an estimate by a few weeks — treat as same event)
-            for new_date in ed[ed["earnings_date"] >= today]["earnings_date"]:
+            # For each freshly-fetched date (past or future), remove any unconfirmed
+            # placeholder row within ±60 days — this is what clears a stale estimate
+            # once the real (confirmed or corrected) date is known. Not restricted to
+            # >= today: a just-reported date is exactly the anchor needed to clear an
+            # old placeholder that was estimated too late.
+            for new_date in ed["earnings_date"]:
                 con.execute("""
                     DELETE FROM earnings
                     WHERE stock = ?
@@ -221,11 +229,12 @@ def ingest_all_earnings_dates_yf(con):
 
 
 def validate_upcoming_earnings_dates(con, max_delta_days=30):
-    """Cross-check upcoming unconfirmed earnings dates against ticker.calendar (company IR data).
-    Corrects any date that differs by more than 1 day from the confirmed calendar date.
-    max_delta_days: skip corrections where the calendar date is more than this many days out
-    from the DB date — prevents next-quarter rollover false corrections.
-    Called from pipeline/stage1.py after ingest_all_earnings_dates_yf.
+    """
+        Cross-check upcoming unconfirmed earnings dates against ticker.calendar (company IR data).
+        Corrects any date that differs by more than 1 day from the confirmed calendar date.
+        max_delta_days: skip corrections where the calendar date is more than this many days out
+        from the DB date — prevents next-quarter rollover false corrections.
+        Called from pipeline/stage1.py after incremental_ingest_all_earnings_dates_yf.
     """
     today = datetime.now().date()
 
