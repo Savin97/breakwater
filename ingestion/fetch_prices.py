@@ -129,7 +129,7 @@ def ingest_all_stocks(con):
 
 BATCH_SIZE = 100
 
-def incremental_ingest_all_stocks_yf(con):
+def incremental_ingest_all_prices_yf(con):
     """Incremental price update using yfinance (no API key required)."""
     stocks = read_stocks_to_fetch()
     if not stocks:
@@ -159,7 +159,7 @@ def incremental_ingest_all_stocks_yf(con):
             continue
 
         if raw is None:
-            raise ValueError("incremental_ingest_all_stocks_yf function returned None")
+            raise ValueError("incremental_ingest_all_prices_yf function returned None")
         if raw.empty:
             continue
 

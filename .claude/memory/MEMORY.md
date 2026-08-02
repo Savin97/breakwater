@@ -13,7 +13,7 @@ Entries are updated at the end of each session. Most recent first.
 User pasted the full `scripts/monday_workflow.sh` output log (~1200 lines) and flagged it as "insanity" — mostly a single bug's blast radius. Diagnosed the whole log; fixed the worst offender, rest are open.
 
 **Fixed:**
-- `ingestion/fetch_prices.py` `incremental_ingest_all_stocks_yf()`: `end = date.today()` was passed straight to `yf.download(..., end=...)`, whose `end` is *exclusive*. On any run where the DB's last price date was Friday (i.e. every Monday run), `start`=Saturday, `end`=Monday(excluded) → the fetch window contained zero trading days, so **all 503 tickers** logged "possibly delisted; no price data found" and `Total inserted: 0` — pure noise, nothing actually delisted. Changed to `end = date.today() + timedelta(days=1)` so today is included. `timedelta` was already imported.
+- `ingestion/fetch_prices.py` `incremental_ingest_all_prices_yf()`: `end = date.today()` was passed straight to `yf.download(..., end=...)`, whose `end` is *exclusive*. On any run where the DB's last price date was Friday (i.e. every Monday run), `start`=Saturday, `end`=Monday(excluded) → the fetch window contained zero trading days, so **all 503 tickers** logged "possibly delisted; no price data found" and `Total inserted: 0` — pure noise, nothing actually delisted. Changed to `end = date.today() + timedelta(days=1)` so today is included. `timedelta` was already imported.
 
 **Open issues found in the same log, not yet fixed (in rough priority order):**
 1. **`BK` and `CTRA` are genuinely dead on yfinance** — HTTP 404 "Quote not found for symbol." Need remapping (ticker changes?) or pruning from `data/stock_list.csv`.
@@ -187,7 +187,7 @@ This validates the core product claim: "Breakwater reduces the earnings calendar
 
 **yfinance migration (partially done, NOT yet tested):**
 - AlphaVantage subscription cancelled — need yfinance replacement
-- Added `incremental_ingest_all_stocks_yf(con)` to `data_ingestion/fetch_prices.py` — batch download, incremental from global max date, chunks of 100
+- Added `incremental_ingest_all_prices_yf(con)` to `data_ingestion/fetch_prices.py` — batch download, incremental from global max date, chunks of 100
 - Added `incremental_ingest_all_earnings_dates_yf(con)` to `data_ingestion/fetch_earnings_dates.py` — uses `yf.Ticker().earnings_dates`, skips stocks with future dates already in DB, manual dedup since fiscal_end_date=None bypasses unique index
 - `pipeline/stage1.py`: old AlphaVantage calls commented out (19/5/26), new yf functions active
 - `config.py`: `STOCKS_END_DATE` now uses `date.today().isoformat()` dynamically; added `from datetime import date` at top

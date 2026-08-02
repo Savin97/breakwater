@@ -11,7 +11,7 @@ Live at **harbor-markets.com/breakwater** (Streamlit dashboard). Weekly email di
 ```bash
 source .venv/bin/activate
 
-python main.py                          # Full pipeline (stages 1–5)
+python main.py                         # Full pipeline (stages 1–5)
 python -m testing.backtesting          # Backtesting suite (reads output/full_df.parquet)
 streamlit run streamlit_dash/app.py    # Launch dashboard locally
 python -m testing.calibration          # Calibration tables → testing/testing_results/
