@@ -21,7 +21,6 @@ def create_prices_table_if_not_exists(con):
     """)
     # uniqueness constraint - only one row per (stock, date) pair, no duplicates allowed
     con.execute("CREATE UNIQUE INDEX IF NOT EXISTS prices_stock_date_uq ON prices(stock, date)")
-    print("Prices table ready.")
 
 def create_earnings_table_if_not_exists(con):
     con.execute("""
@@ -38,7 +37,6 @@ def create_earnings_table_if_not_exists(con):
         CREATE UNIQUE INDEX IF NOT EXISTS earnings_unique
         ON earnings(stock, earnings_date, fiscal_end_date);
     """)
-    print("Earnings table ready.")
 
 def create_sectors_data_table_if_not_exists(con):
     con.execute("""
@@ -49,8 +47,6 @@ def create_sectors_data_table_if_not_exists(con):
         sub_sector TEXT,
         ingested_at TIMESTAMP
     ); """)
-    print("Stock Data table ready.")
-
 
 def create_eps_estimates_table_if_not_exists(con):
     con.execute("""
@@ -82,8 +78,6 @@ def create_eps_estimates_table_if_not_exists(con):
         CREATE UNIQUE INDEX IF NOT EXISTS eps_estimates_uq
         ON eps_estimates(stock, snapshot_date)
     """)
-    print("EPS estimates table ready.")
-
 
 def create_iv_table_if_not_exists(con):
     con.execute("""
@@ -107,7 +101,6 @@ def create_iv_table_if_not_exists(con):
         CREATE UNIQUE INDEX IF NOT EXISTS iv_snapshots_uq
         ON iv_snapshots(stock, snapshot_date, snapshot_hour)
     """)
-    print("IV snapshots table ready.")
 
 
 def merge_tables(con):
@@ -147,7 +140,6 @@ def merge_tables(con):
         LEFT JOIN earnings e ON p.stock = e.stock AND p.date = e.earnings_date
         LEFT JOIN stock_data sd ON p.stock = sd.stock;
         """)
-    print("Merged Stock Data Table ready.") 
 
 def stock_already_in_prices_db(con, stock: str) -> bool:
     n = con.execute("SELECT COUNT(*) FROM prices WHERE stock = ?;", [stock]).fetchone()[0]
@@ -319,3 +311,4 @@ def verify_tables_existence(con):
     create_sectors_data_table_if_not_exists(con)
     create_iv_table_if_not_exists(con)
     create_eps_estimates_table_if_not_exists(con)
+    print("DB Tables Set Up")

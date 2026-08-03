@@ -42,7 +42,7 @@ def stage5(df):
     hc       = latest_per_stock[mask & latest_per_stock["is_high_conviction"]].sort_values("risk_score", ascending=False)["stock"].tolist()
     ha       = latest_per_stock[mask & (latest_per_stock["earnings_explosiveness_bucket"] == "High Alert") & ~latest_per_stock["is_high_conviction"]].sort_values("risk_score", ascending=False)["stock"].tolist()
     elevated = latest_per_stock[mask & (latest_per_stock["earnings_explosiveness_bucket"] == "Elevated")].sort_values("risk_score", ascending=False)["stock"].tolist()
-    print(f"  {len(stocks_to_report_for)} stocks this week — *** HC: {hc or 'none'}  ** HA: {ha or 'none'}  * Elevated: {elevated or 'none'}")
+    print(f"{len(stocks_to_report_for)} stocks this week:\n*** HC: {hc or 'none'}\n** HA: {ha or 'none'}\n* Elevated: {elevated or 'none'}")
 
     # Indexed for per-stock upcoming-date lookup; scores for universe-wide percentile (matches digest)
     latest_per_stock_idx = latest_per_stock.set_index("stock")

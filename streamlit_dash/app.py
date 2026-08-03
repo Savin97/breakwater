@@ -444,9 +444,12 @@ def main():
                 if st.button("Export calendar HTML"):
                     sys.path.insert(0, str(ROOT))
                     from report.calendar_builder import generate_calendar
-                    generate_calendar(earn, reference_date=start_date,
+                    written_path = generate_calendar(earn, reference_date=start_date,
                                       window_days=(end_date - start_date).days)
-                    st.success("Written to output/weekly_calendar.html")
+                    if written_path:
+                        st.success(f"Written to {written_path}")
+                    else:
+                        st.warning("No scored earnings events in window — nothing written.")
 
 if __name__ == "__main__":
     main()

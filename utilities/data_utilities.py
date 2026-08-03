@@ -85,7 +85,6 @@ def map_sector_data_to_main_df(main_df: pd.DataFrame,sector_df:pd.DataFrame):
 def directory_checks():
     Path("data").mkdir(exist_ok=True)
     Path("output").mkdir(exist_ok=True)
-    Path("output/reports/").mkdir(exist_ok=True)
 
 def get_alpha_vantage_api_key() -> str:
     load_dotenv() 
@@ -113,7 +112,6 @@ def read_stocks_to_fetch() -> list[str]:
     """
     path = Path(STOCK_LIST_PATH)
     if path.suffix.lower() == ".csv":
-        print(f"Reading stocks from {STOCK_LIST_PATH} file")
         stock_prices_df = pd.read_csv(path)
         col = None
         for c in ("stock", "symbol", "ticker","Stock", "Symbol", "Ticker"):
@@ -123,11 +121,10 @@ def read_stocks_to_fetch() -> list[str]:
         if col is None:
             raise ValueError(f"CSV must contain a symbol/ticker/stock column. Found: {list(stock_prices_df.columns)}")
         stocks = stock_prices_df[col].astype(str).str.strip().tolist()
-        print(f"{len(stocks)} imported from .csv file")
+        print(f"{len(stocks)} Stock Names Imported from {STOCK_LIST_PATH} File")
     else:
-        print("Reading stocks from .txt file")
         stocks = [ln.strip() for ln in path.read_text().splitlines() if ln.strip()]
-        print(f"{len(stocks)} imported from .txt file")
+        print(f"{len(stocks)} Stocks Imported from .txt File")
 
     # Basic cleanup
     stocks = [t.replace(" ", "").upper() for t in stocks if t]

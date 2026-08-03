@@ -41,6 +41,7 @@ def generate_weekly_earnings_chart(
     """
     start_date: optional DD/MM/YYYY string; defaults to Monday of the current week.
     """
+    print("--------------------\nGenerating Weekly Chart...")
     df = pd.read_parquet(parquet_path)
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
 

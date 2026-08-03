@@ -3,6 +3,8 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from weasyprint import HTML
 from pathlib import Path
 
+from utilities.output_utilities import get_run_output_dir
+
 def generate_report(stock, data):
     project_root = Path(__file__).resolve().parents[1]
     env = Environment(
@@ -38,6 +40,8 @@ def generate_report(stock, data):
         iv_vs_hist_ratio     = data.get("iv_vs_hist_ratio"),
     )
 
-    REPORT_OUTPUT_PATH = f"output/reports/{stock}_report.pdf"
+    reports_dir = Path(get_run_output_dir()) / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    REPORT_OUTPUT_PATH = reports_dir / f"{stock}_report.pdf"
     HTML(string=html_out, base_url=project_root).write_pdf(REPORT_OUTPUT_PATH)
     print(f"{stock} Report created in {REPORT_OUTPUT_PATH}")

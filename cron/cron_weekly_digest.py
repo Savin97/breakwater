@@ -20,12 +20,14 @@ from email.mime.text import MIMEText
 from email import encoders
 from dotenv import load_dotenv
 
+from utilities.output_utilities import latest_run_output_dir
+
 load_dotenv()
 
 PARQUET_PATH   = "output/full_df.parquet"
 COMPANY_NAMES  = "data/sp500_full_info.csv"
 SUBSCRIBERS    = "data/subscribers.txt"
-REPORTS_DIR    = "output/reports"
+REPORTS_DIR    = os.path.join(latest_run_output_dir(), "reports")
 SMTP_HOST      = os.getenv("DIGEST_SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT      = int(os.getenv("DIGEST_SMTP_PORT", "587"))
 SMTP_USER      = os.getenv("DIGEST_SMTP_USER", "")

@@ -5,11 +5,13 @@ from datetime import datetime
 from utilities.db_utilities import get_max_dates_by_stock
 from utilities.api_functions import (get_earnings_data_from_api)
 from utilities.data_utilities import to_float_or_none, get_alpha_vantage_api_key, read_stocks_to_fetch
+from utilities.output_utilities import get_run_output_dir
 from config import STOCKS_START_DATE,ALPHAVANTAGE_CALLS_PER_MINUTE,EARNINGS_DATE_VALIDATION_WINDOW_DAYS
+import os
 
 def ingest_all_earnings_dates(con):
     already, inserted, failed = 0,0,0
-    FAILED_EARNINGS_LOG_PATH = "output/debug_failed_earnings_ingestion.txt"    
+    FAILED_EARNINGS_LOG_PATH = os.path.join(get_run_output_dir(), "debug_failed_earnings_ingestion.txt")
     API_KEY = get_alpha_vantage_api_key()
     min_sleep = 60.0 / float(ALPHAVANTAGE_CALLS_PER_MINUTE)
     stocks = read_stocks_to_fetch()
@@ -120,7 +122,7 @@ def incremental_ingest_all_earnings_dates_yf(con):
     stocks = read_stocks_to_fetch()
     today = datetime.now().date()
     already, inserted, failed = 0, 0, 0
-    FAILED_LOG_PATH = "output/debug_failed_earnings_ingestion.txt"
+    FAILED_LOG_PATH = os.path.join(get_run_output_dir(), "debug_failed_earnings_ingestion.txt")
 
     with open(FAILED_LOG_PATH, "w") as f:
         f.write("stock\terror\n")

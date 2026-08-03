@@ -1,7 +1,8 @@
 # report/calendar_builder.py
 #
 # Generates the weekly earnings risk calendar — the primary recurring deliverable.
-# Two outputs: HTML file (output/weekly_calendar.html) and structured data for Streamlit.
+# Two outputs: HTML file (output/output_<timestamp>/weekly_calendar.html) and structured
+# data for Streamlit.
 #
 # Architecture:
 #   earnings_explosiveness_score  → primary risk ranking (structural, changes slowly)
@@ -10,8 +11,11 @@
 
 from itertools import groupby
 from pathlib import Path
+import os
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+from utilities.output_utilities import get_run_output_dir
 
 # Fixed percentile thresholds calibrated on full earnings history.
 # Using fixed thresholds (not within-week percentiles) means the flag
@@ -167,14 +171,16 @@ def build_calendar_data(df, reference_date=None, window_days=14):
 
 def generate_calendar(df, reference_date=None, window_days=14):
     """
-    Renders the weekly calendar HTML and writes to output/weekly_calendar.html.
+    Renders the weekly calendar HTML and writes it into this run's timestamped
+    output subfolder (output/output_<timestamp>/weekly_calendar.html).
     Called automatically by stage5 at the end of every pipeline run.
     Can also be called directly (e.g. from Streamlit sidebar export button).
+    Returns the path written to, or None if there was nothing to render.
     """
     events, summary, grouped = build_calendar_data(df, reference_date, window_days)
     if not events:
         print("Weekly calendar: no scored earnings events in window.")
-        return
+        return None
 
     env = Environment(
         loader=FileSystemLoader("report/templates"),
@@ -184,7 +190,8 @@ def generate_calendar(df, reference_date=None, window_days=14):
     template  = env.get_template("weekly_calendar.html")
     html_out  = template.render(summary=summary, grouped=grouped)
 
-    output_path = "output/weekly_calendar.html"
+    output_path = os.path.join(get_run_output_dir(), "weekly_calendar.html")
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_out)
     print(f"Weekly calendar -> {output_path}\n--------------------")
+    return output_path
