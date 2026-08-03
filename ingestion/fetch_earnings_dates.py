@@ -5,7 +5,7 @@ from datetime import datetime
 from utilities.db_utilities import get_max_dates_by_stock
 from utilities.api_functions import (get_earnings_data_from_api)
 from utilities.data_utilities import to_float_or_none, get_alpha_vantage_api_key, read_stocks_to_fetch
-from config import STOCKS_START_DATE,ALPHAVANTAGE_CALLS_PER_MINUTE
+from config import STOCKS_START_DATE,ALPHAVANTAGE_CALLS_PER_MINUTE,EARNINGS_DATE_VALIDATION_WINDOW_DAYS
 
 def ingest_all_earnings_dates(con):
     already, inserted, failed = 0,0,0
@@ -228,10 +228,12 @@ def incremental_ingest_all_earnings_dates_yf(con):
     print(f"skipped/up-to-date: {already}, inserted: {inserted}, failed: {failed}")
 
 
-def validate_upcoming_earnings_dates(con, max_delta_days=30):
+def validate_upcoming_earnings_dates(con, days_ahead=EARNINGS_DATE_VALIDATION_WINDOW_DAYS, max_delta_days=30):
     """
         Cross-check upcoming unconfirmed earnings dates against ticker.calendar (company IR data).
         Corrects any date that differs by more than 1 day from the confirmed calendar date.
+        days_ahead: only check dates within this many days out — dates further out get
+        re-checked on a later run as they approach, so nothing is permanently skipped.
         max_delta_days: skip corrections where the calendar date is more than this many days out
         from the DB date — prevents next-quarter rollover false corrections.
         Called from pipeline/stage1.py after incremental_ingest_all_earnings_dates_yf.
@@ -242,15 +244,16 @@ def validate_upcoming_earnings_dates(con, max_delta_days=30):
         SELECT DISTINCT stock, earnings_date
         FROM earnings
         WHERE earnings_date >= CURRENT_DATE
+          AND earnings_date <= CURRENT_DATE + CAST(? AS INTEGER)
           AND reported_eps IS NULL
         ORDER BY stock, earnings_date
-    """).fetchall()
+    """, [days_ahead]).fetchall()
 
     if not rows:
         print("validate_upcoming_earnings_dates: no upcoming unconfirmed dates to check.")
         return {"corrected": [], "warnings": []}
 
-    print(f"\nValidating {len(rows)} upcoming earnings dates via ticker.calendar...")
+    print(f"\nValidating {len(rows)} upcoming earnings dates (within {days_ahead} days) via ticker.calendar...")
     corrected = []
     warnings_list = []
 

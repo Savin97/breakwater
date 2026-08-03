@@ -17,6 +17,7 @@ SHORT_TERM_MOMENTUM = 5 # 5 past days
 LONG_TERM_MOMENTUM = 20 # 20 past days
 LARGE_EARNINGS_REACTION_THRESHOLD = 0.05 # Based on 75th percentile of abs_reaction_3d
 EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08 # Based on 90th percentile of abs_reaction_3d
+EARNINGS_DATE_VALIDATION_WINDOW_DAYS = 20 # How far ahead to cross-check unconfirmed earnings dates against ticker.calendar
 
 # API Parameters
 ALPHAVANTAGE_BASE_URL = "https://www.alphavantage.co/query"
