@@ -7,7 +7,7 @@ from datetime import datetime, date, timedelta
 from utilities.db_utilities import (stock_already_in_prices_db,get_max_dates_by_stock)
 from utilities.api_functions import (fetch_daily_adjusted_prices)
 from utilities.data_utilities import get_alpha_vantage_api_key, read_stocks_to_fetch
-from utilities.output_utilities import get_run_output_dir
+from utilities.output_utilities import get_run_logs_dir
 from config import (
     STOCKS_START_DATE,
     ALPHAVANTAGE_CALLS_PER_MINUTE)
@@ -17,7 +17,7 @@ def ingest_all_stocks(con):
         This function updates the 'prices' table in the duckDB.
     """
     already, inserted, failed = 0,0,0
-    FAILED_LOG_PATH = os.path.join(get_run_output_dir(), "debug_failed_price_ingestion.txt")
+    FAILED_LOG_PATH = os.path.join(get_run_logs_dir(), "debug_failed_price_ingestion.txt")
     API_KEY = get_alpha_vantage_api_key()
     min_sleep = 60.0 / float(ALPHAVANTAGE_CALLS_PER_MINUTE)
     stocks = read_stocks_to_fetch()

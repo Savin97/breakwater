@@ -1,6 +1,6 @@
 # ingestion/fetch_sp500_sectors.py
 from utilities.data_utilities import read_stocks_to_fetch
-from utilities.output_utilities import get_run_output_dir
+from utilities.output_utilities import get_run_logs_dir
 import os
 import pandas as pd, requests
 from datetime import datetime
@@ -51,7 +51,7 @@ def get_sp500_sectors():
     return sp500_df
 
 def ingest_all_sector_data(con):
-    FAILED_SECTOR_LOG_PATH = os.path.join(get_run_output_dir(), "debug_failed_sector_data_ingestion.txt")
+    FAILED_SECTOR_LOG_PATH = os.path.join(get_run_logs_dir(), "debug_failed_sector_data_ingestion.txt")
     stocks = read_stocks_to_fetch()
     if not stocks:
         raise ValueError("No stocks found.")

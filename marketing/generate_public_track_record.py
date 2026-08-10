@@ -17,9 +17,10 @@ from typing import Any
 
 import pandas as pd
 
+from utilities.output_utilities import get_run_output_dir
+
 
 DEFAULT_PARQUET = Path("output/full_df.parquet")
-DEFAULT_OUTPUT = Path("output/recent_calls.json")
 PUBLIC_BUCKETS = {"High Alert", "Elevated", "Normal"}
 HIGH_ALERT_BUCKETS = {"High Alert"}
 EXTREME_MOVE_PCT = 8.0
@@ -136,12 +137,15 @@ def build_public_track_record(
 
 def generate_public_track_record(
     parquet_path: Path = DEFAULT_PARQUET,
-    output_path: Path = DEFAULT_OUTPUT,
+    output_path: Path | None = None,
     *,
     weeks: int = 6,
 ) -> Path:
+    """output_path defaults to this run's timestamped output subfolder."""
     if not parquet_path.exists():
         raise FileNotFoundError(f"{parquet_path} not found")
+    if output_path is None:
+        output_path = Path(get_run_output_dir()) / "recent_calls.json"
 
     df = pd.read_parquet(parquet_path)
     data = build_public_track_record(df, weeks=weeks)
@@ -154,7 +158,7 @@ def generate_public_track_record(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--parquet", type=Path, default=DEFAULT_PARQUET)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--weeks", type=int, default=6)
     args = parser.parse_args(argv)
 

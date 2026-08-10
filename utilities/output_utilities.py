@@ -26,6 +26,13 @@ def get_run_output_dir(base="output"):
     return _run_output_dir
 
 
+def get_run_logs_dir(base="output"):
+    """logs/ subfolder inside today's run output dir, e.g. output/output_2026_08_03/logs."""
+    logs_dir = os.path.join(get_run_output_dir(base), "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    return logs_dir
+
+
 def latest_run_output_dir(base="output"):
     """
     Most recently created output_<date> subfolder under base, for readers in a

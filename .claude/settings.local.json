@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(.venv/Scripts/python.exe *)"
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(cp data/breakwater.duckdb /tmp/claude-1000/-home-Michael-projects-breakwater/32f971bb-f93f-47f0-912b-155d370c959f/scratchpad/scratch_iv_test2.duckdb)",
+      "Bash(.venv/bin/python -c ' *)"
     ]
   }
 }

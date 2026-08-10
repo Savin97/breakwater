@@ -66,143 +66,145 @@ def stage5(df):
     # Pre-group by stock so the loop doesn't scan 2.8M rows per iteration
     df_by_stock = {s: grp for s, grp in df.groupby("stock")}
 
-    for stock in stocks_to_report_for:
-        stock_df = df_by_stock.get(stock)
-        if stock_df is None or stock_df.empty:
-            print(f"  No data found for {stock}, skipping.")
-            continue
-        earnings_df = stock_df[stock_df["is_earnings_day"] == 1]
-        if earnings_df.empty:
-            print(f"  No earnings events found for {stock}, skipping.")
-            continue
-
-        latest_row = earnings_df.iloc[-1]
-        prior_strength = 20
-
-        earnings_explosiveness_buckets = (
-            earnings_df.groupby("earnings_explosiveness_bucket")["is_extreme_reaction"]
-            .agg(extreme_count="sum", event_count="count")
-        )
-        earnings_explosiveness_buckets["shrunk_prob"] = (
-            earnings_explosiveness_buckets["extreme_count"] +
-            prior_strength * P_extreme_global
-        ) / (
-            earnings_explosiveness_buckets["event_count"] + prior_strength
-        )
-        earnings_explosiveness_buckets["global_hist_prob"] = bucket_stats.loc[earnings_explosiveness_buckets.index, "global_hist_prob"]
-        earnings_explosiveness_buckets["lift_vs_baseline"] = (
-            earnings_explosiveness_buckets["shrunk_prob"] / P_extreme_global
-        )
-        earnings_explosiveness_buckets["lift_vs_same_bucket_global"] = (
-            earnings_explosiveness_buckets["shrunk_prob"] / earnings_explosiveness_buckets["global_hist_prob"]
-        )
-
-        current_bucket = latest_row["earnings_explosiveness_bucket"]
-        if not isinstance(current_bucket, str):
-            latest_row = earnings_df.iloc[-2]
+    def generate_reports_for_stocks(stocks_to_report_for):
+        for stock in stocks_to_report_for:
+            stock_df = df_by_stock.get(stock)
+            if stock_df is None or stock_df.empty:
+                print(f"  No data found for {stock}, skipping.")
+                continue
+            earnings_df = stock_df[stock_df["is_earnings_day"] == 1]
+            if earnings_df.empty:
+                print(f"  No earnings events found for {stock}, skipping.")
+                continue
+    
+            latest_row = earnings_df.iloc[-1]
+            prior_strength = 20
+    
+            earnings_explosiveness_buckets = (
+                earnings_df.groupby("earnings_explosiveness_bucket")["is_extreme_reaction"]
+                .agg(extreme_count="sum", event_count="count")
+            )
+            earnings_explosiveness_buckets["shrunk_prob"] = (
+                earnings_explosiveness_buckets["extreme_count"] +
+                prior_strength * P_extreme_global
+            ) / (
+                earnings_explosiveness_buckets["event_count"] + prior_strength
+            )
+            earnings_explosiveness_buckets["global_hist_prob"] = bucket_stats.loc[earnings_explosiveness_buckets.index, "global_hist_prob"]
+            earnings_explosiveness_buckets["lift_vs_baseline"] = (
+                earnings_explosiveness_buckets["shrunk_prob"] / P_extreme_global
+            )
+            earnings_explosiveness_buckets["lift_vs_same_bucket_global"] = (
+                earnings_explosiveness_buckets["shrunk_prob"] / earnings_explosiveness_buckets["global_hist_prob"]
+            )
+    
             current_bucket = latest_row["earnings_explosiveness_bucket"]
+            if not isinstance(current_bucket, str):
+                latest_row = earnings_df.iloc[-2]
+                current_bucket = latest_row["earnings_explosiveness_bucket"]
+    
+            risk_score = f"{latest_row['risk_score']:.0f}"
+            upcoming_date = pd.Timestamp(latest_per_stock_idx.loc[stock, "earnings_date"])
+            current_earnings_date = upcoming_date.strftime("%B %d, %Y")
+            sector = latest_row.get("sector", "")
+            sub_sector = latest_row.get("sub_sector", "")
+            company_name = company_names.get(stock, "")
+            surprise_flag = str(latest_row.get("surprise_momentum_flag", "") or "")
+            drift_flag    = str(latest_row.get("pre_earnings_drift_flag",  "") or "")
+            high_conviction = bool(latest_per_stock_idx.loc[stock, "is_high_conviction"])
+            n_events = len(earnings_df)
+    
+            _rank_key = latest_per_stock_idx["abs_reaction_p75_rolling"].fillna(
+                latest_per_stock_idx["abs_reaction_p75"]
+            )
+            peer_percentile = int(_rank_key.rank(pct=True).fillna(0).loc[stock] * 100)
+    
+            days_to_earnings = (upcoming_date.date() - date.today()).days
+    
+            # IV data (may be NaN if cron hasn't run yet for this stock)
+            _exp_move = latest_row.get("expected_move_pct")
+            _atm_iv   = latest_row.get("atm_iv")
+            _p75      = latest_row.get("abs_reaction_p75_rolling")
+            iv_implied_move_pct = float(_exp_move) if pd.notna(_exp_move) else None
+            atm_iv_pct          = float(_atm_iv)   if pd.notna(_atm_iv)   else None
+            iv_vs_hist_ratio    = (
+                round(float(_exp_move) / float(_p75), 2)
+                if pd.notna(_exp_move) and pd.notna(_p75) and float(_p75) > 0
+                else None
+            )
+    
+            reactions_chart_svg = generate_reactions_chart(earnings_df)
+            P_extreme_global_rounded = round(P_extreme_global, 3)
+            current_bucket_prob = f"{earnings_explosiveness_buckets.loc[current_bucket, 'shrunk_prob']:.3f}"
+            current_lift_vs_baseline = f"{earnings_explosiveness_buckets.loc[current_bucket, 'lift_vs_baseline']:.3f}"
+            current_lift_vs_same_bucket_global = f"{earnings_explosiveness_buckets.loc[current_bucket, 'lift_vs_same_bucket_global']:.3f}"
+            earnings_explosiveness_buckets = earnings_explosiveness_buckets.reset_index()
+    
+            # Bayesian override: if the stock's actual extreme-move rate materially exceeds
+            # what its model bucket implies, bump the reported risk level up.
+            lift_for_report = float(current_bucket_prob) / float(P_extreme_global)
+            if current_bucket == "Normal" and lift_for_report >= 1.5:
+                effective_risk_level = "Elevated"
+            elif current_bucket in ("Normal", "Elevated") and lift_for_report >= 3.0:
+                effective_risk_level = "High Alert"
+            else:
+                effective_risk_level = current_bucket
+    
+            bucket_table_html = (
+                earnings_explosiveness_buckets
+                .drop(columns=["extreme_count"])
+                .rename(columns={
+                    "earnings_explosiveness_bucket": "Risk Bucket",
+                    "event_count":                   "Events",
+                    "shrunk_prob":                   "Hist. Prob.",
+                    "global_hist_prob":              "Global Prob.",
+                    "lift_vs_baseline":              "Lift vs Baseline",
+                    "lift_vs_same_bucket_global":    "Lift vs Peers",
+                })
+                .to_html(index=False, classes="bucket-table", float_format=lambda x: f"{x:.3f}")
+            )
+    
+            recommendation = build_recommendation(
+                risk_level        = effective_risk_level,
+                hist_extreme_prob = current_bucket_prob,
+                base_extreme_prob = P_extreme_global_rounded,
+                lift              = current_lift_vs_baseline,
+                surprise_flag     = surprise_flag,
+                drift_flag        = drift_flag,
+                high_conviction   = high_conviction,
+                stock             = stock,
+                earnings_date     = current_earnings_date,
+            )
+    
+            data_for_report = {
+                "earnings_date":    current_earnings_date,
+                "company_name":     company_name,
+                "generated_date":   generated_date,
+                "risk_level": effective_risk_level,
+                "risk_score": risk_score,
+                "sector": sector,
+                "sub_sector": sub_sector,
+                "n_events": n_events,
+                "base_extreme_prob": P_extreme_global_rounded,
+                "hist_extreme_prob": current_bucket_prob,
+                "current_lift_vs_baseline": current_lift_vs_baseline,
+                "current_lift_vs_same_bucket_global": current_lift_vs_same_bucket_global,
+                "bucket_table": bucket_table_html,
+                "surprise_flag":       surprise_flag,
+                "drift_flag":          drift_flag,
+                "high_conviction":     high_conviction,
+                "recommendation":      recommendation,
+                "peer_percentile":     peer_percentile,
+                "days_to_earnings":    days_to_earnings,
+                "reactions_chart_svg":   reactions_chart_svg,
+                "iv_implied_move_pct":   iv_implied_move_pct,
+                "atm_iv_pct":            atm_iv_pct,
+                "iv_vs_hist_ratio":      iv_vs_hist_ratio,
+            }
+            generate_report(stock, data_for_report)
 
-        risk_score = f"{latest_row['risk_score']:.0f}"
-        upcoming_date = pd.Timestamp(latest_per_stock_idx.loc[stock, "earnings_date"])
-        current_earnings_date = upcoming_date.strftime("%B %d, %Y")
-        sector = latest_row.get("sector", "")
-        sub_sector = latest_row.get("sub_sector", "")
-        company_name = company_names.get(stock, "")
-        surprise_flag = str(latest_row.get("surprise_momentum_flag", "") or "")
-        drift_flag    = str(latest_row.get("pre_earnings_drift_flag",  "") or "")
-        high_conviction = bool(latest_per_stock_idx.loc[stock, "is_high_conviction"])
-        n_events = len(earnings_df)
+    generate_reports_for_stocks(stocks_to_report_for)
 
-        _rank_key = latest_per_stock_idx["abs_reaction_p75_rolling"].fillna(
-            latest_per_stock_idx["abs_reaction_p75"]
-        )
-        peer_percentile = int(_rank_key.rank(pct=True).fillna(0).loc[stock] * 100)
-
-        days_to_earnings = (upcoming_date.date() - date.today()).days
-
-        # IV data (may be NaN if cron hasn't run yet for this stock)
-        _exp_move = latest_row.get("expected_move_pct")
-        _atm_iv   = latest_row.get("atm_iv")
-        _p75      = latest_row.get("abs_reaction_p75_rolling")
-        iv_implied_move_pct = float(_exp_move) if pd.notna(_exp_move) else None
-        atm_iv_pct          = float(_atm_iv)   if pd.notna(_atm_iv)   else None
-        iv_vs_hist_ratio    = (
-            round(float(_exp_move) / float(_p75), 2)
-            if pd.notna(_exp_move) and pd.notna(_p75) and float(_p75) > 0
-            else None
-        )
-
-        reactions_chart_svg = generate_reactions_chart(earnings_df)
-        P_extreme_global_rounded = round(P_extreme_global, 3)
-        current_bucket_prob = f"{earnings_explosiveness_buckets.loc[current_bucket, 'shrunk_prob']:.3f}"
-        current_lift_vs_baseline = f"{earnings_explosiveness_buckets.loc[current_bucket, 'lift_vs_baseline']:.3f}"
-        current_lift_vs_same_bucket_global = f"{earnings_explosiveness_buckets.loc[current_bucket, 'lift_vs_same_bucket_global']:.3f}"
-        earnings_explosiveness_buckets = earnings_explosiveness_buckets.reset_index()
-
-        # Bayesian override: if the stock's actual extreme-move rate materially exceeds
-        # what its model bucket implies, bump the reported risk level up.
-        lift_for_report = float(current_bucket_prob) / float(P_extreme_global)
-        if current_bucket == "Normal" and lift_for_report >= 1.5:
-            effective_risk_level = "Elevated"
-        elif current_bucket in ("Normal", "Elevated") and lift_for_report >= 3.0:
-            effective_risk_level = "High Alert"
-        else:
-            effective_risk_level = current_bucket
-
-        bucket_table_html = (
-            earnings_explosiveness_buckets
-            .drop(columns=["extreme_count"])
-            .rename(columns={
-                "earnings_explosiveness_bucket": "Risk Bucket",
-                "event_count":                   "Events",
-                "shrunk_prob":                   "Hist. Prob.",
-                "global_hist_prob":              "Global Prob.",
-                "lift_vs_baseline":              "Lift vs Baseline",
-                "lift_vs_same_bucket_global":    "Lift vs Peers",
-            })
-            .to_html(index=False, classes="bucket-table", float_format=lambda x: f"{x:.3f}")
-        )
-
-        recommendation = build_recommendation(
-            risk_level        = effective_risk_level,
-            hist_extreme_prob = current_bucket_prob,
-            base_extreme_prob = P_extreme_global_rounded,
-            lift              = current_lift_vs_baseline,
-            surprise_flag     = surprise_flag,
-            drift_flag        = drift_flag,
-            high_conviction   = high_conviction,
-            stock             = stock,
-            earnings_date     = current_earnings_date,
-        )
-
-        data_for_report = {
-            "earnings_date":    current_earnings_date,
-            "company_name":     company_name,
-            "generated_date":   generated_date,
-            "risk_level": effective_risk_level,
-            "risk_score": risk_score,
-            "sector": sector,
-            "sub_sector": sub_sector,
-            "n_events": n_events,
-            "base_extreme_prob": P_extreme_global_rounded,
-            "hist_extreme_prob": current_bucket_prob,
-            "current_lift_vs_baseline": current_lift_vs_baseline,
-            "current_lift_vs_same_bucket_global": current_lift_vs_same_bucket_global,
-            "bucket_table": bucket_table_html,
-            "surprise_flag":       surprise_flag,
-            "drift_flag":          drift_flag,
-            "high_conviction":     high_conviction,
-            "recommendation":      recommendation,
-            "peer_percentile":     peer_percentile,
-            "days_to_earnings":    days_to_earnings,
-            "reactions_chart_svg":   reactions_chart_svg,
-            "iv_implied_move_pct":   iv_implied_move_pct,
-            "atm_iv_pct":            atm_iv_pct,
-            "iv_vs_hist_ratio":      iv_vs_hist_ratio,
-        }
-        generate_report(stock, data_for_report)
-
-    print("--------------------")
     generate_calendar(df)
     generate_weekly_earnings_chart()
     generate_public_track_record()

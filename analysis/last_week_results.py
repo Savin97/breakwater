@@ -1,5 +1,5 @@
 """
-Last week's earnings results: prints table + saves results_chart.png.
+Last week's earnings results: writes last_week_results.txt + saves results_chart.png.
 
 Usage:
     python analysis/last_week_results.py
@@ -15,6 +15,7 @@ import pandas as pd
 from datetime import date, timedelta
 
 from analysis.chart_results import generate_results_chart
+from utilities.output_utilities import get_run_output_dir
 
 PARQUET          = os.path.join(os.path.dirname(__file__), "..", "output", "full_df.parquet")
 MOVED_THRESHOLD  = 0.05
@@ -88,13 +89,12 @@ def print_last_week_results(lookback_weeks: int = 1):
     }
 
     week_range = f"{week_start.strftime('%b %-d')} – {week_end.strftime('%b %-d')}"
-    print(f"\nLAST WEEK'S RESULTS  ({week_range})")
-    print("═" * 70)
+    lines = [f"LAST WEEK'S RESULTS  ({week_range})", "═" * 70]
     header = (f"  {'':6}  {'DATE':7}  {'TIER':12}  "
               f"{'–2d':>6} {'–1d':>6} {'ERN':>6}  "
               f"{'  +1d':>6} {'  +2d':>6} {'  +3d':>6} {'  +4d':>6} {'  +5d':>6}")
-    print(header)
-    print("  " + "─" * 68)
+    lines.append(header)
+    lines.append("  " + "─" * 68)
 
     chart_rows = []
     flagged_moved = flagged_total = ha_moved = ha_total = 0
@@ -134,7 +134,7 @@ def print_last_week_results(lookback_weeks: int = 1):
         date_str  = edate.strftime("%b %-d")
         pre_fmt   = " ".join(_fmt(pre.get(o)) for o in [-2, -1, 0])
         post_fmt  = " ".join(_fmt(post_cum.get(k)) for k in [1, 2, 3, 4, 5])
-        print(f"  {stock:<6}  {date_str:<7}  {tier_short:<12}  {pre_fmt}  {post_fmt}")
+        lines.append(f"  {stock:<6}  {date_str:<7}  {tier_short:<12}  {pre_fmt}  {post_fmt}")
 
         move = row["reaction_3d"] if pd.notna(row.get("reaction_3d")) else row.get("reaction_1d")
         move_val = float(move) if pd.notna(move) else None
@@ -147,17 +147,22 @@ def print_last_week_results(lookback_weeks: int = 1):
             "move":                       move_val,
             })
 
-    print("  " + "─" * 68)
-    print(f"  Columns: pre-earnings (–2d –1d 0d) | cumulative post-earnings (+1d thru +5d)")
-    print()
+    lines.append("  " + "─" * 68)
+    lines.append("  Columns: pre-earnings (–2d –1d 0d) | cumulative post-earnings (+1d thru +5d)")
+    lines.append("")
 
     if flagged_total > 0:
-        print(f"  Hit rate >5% move (flagged):  {flagged_moved}/{flagged_total}  "
-              f"({flagged_moved / flagged_total * 100:.0f}%)")
+        lines.append(f"  Hit rate >5% move (flagged):  {flagged_moved}/{flagged_total}  "
+                      f"({flagged_moved / flagged_total * 100:.0f}%)")
     if ha_total > 0:
-        print(f"  High Alert hit rate:          {ha_moved}/{ha_total}  "
-              f"({ha_moved / ha_total * 100:.0f}%)")
-    print()
+        lines.append(f"  High Alert hit rate:          {ha_moved}/{ha_total}  "
+                      f"({ha_moved / ha_total * 100:.0f}%)")
+    lines.append("")
+
+    results_path = os.path.join(get_run_output_dir(), "last_week_results.txt")
+    with open(results_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    print(f"Saved last week's results → {results_path}")
 
     if chart_rows:
         chart_df = pd.DataFrame(chart_rows)

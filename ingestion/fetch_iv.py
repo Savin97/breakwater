@@ -185,10 +185,16 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
         time.sleep(sleep_secs)
 
     # ── Bulk insert ───────────────────────────────────────────────────────────
+    # Column list is explicit (not `SELECT *`) because the live table's physical
+    # column order can drift from this list via ALTER TABLE (e.g. snapshot_hour
+    # was appended at the end on existing tables) — a positional SELECT * would
+    # silently misalign values into the wrong columns.
     if rows:
         df = pd.DataFrame(rows)
+        cols = list(df.columns)
+        col_list = ", ".join(cols)
         con.register("tmp_iv", df)
-        con.execute("INSERT INTO iv_snapshots SELECT * FROM tmp_iv ON CONFLICT DO NOTHING")
+        con.execute(f"INSERT INTO iv_snapshots ({col_list}) SELECT {col_list} FROM tmp_iv ON CONFLICT DO NOTHING")
         con.unregister("tmp_iv")
 
     print(f"\nIV snapshots done.  inserted={inserted}  skipped={skipped}  failed={failed}")

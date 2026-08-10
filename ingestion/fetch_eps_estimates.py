@@ -166,10 +166,15 @@ def ingest_eps_estimates(con, days_ahead: int = 45, sleep_secs: float = 0.5):
 
         time.sleep(sleep_secs)
 
+    # Column list is explicit (not `SELECT *`) — see fetch_iv.py's ingest_iv_snapshots
+    # for why: a positional insert silently misaligns values if the live table's
+    # column order ever drifts from this list via ALTER TABLE.
     if rows:
         df = pd.DataFrame(rows)
+        cols = list(df.columns)
+        col_list = ", ".join(cols)
         con.register("tmp_eps", df)
-        con.execute("INSERT INTO eps_estimates SELECT * FROM tmp_eps ON CONFLICT DO NOTHING")
+        con.execute(f"INSERT INTO eps_estimates ({col_list}) SELECT {col_list} FROM tmp_eps ON CONFLICT DO NOTHING")
         con.unregister("tmp_eps")
 
     print(f"\nEPS estimates done.  inserted={inserted}  skipped={skipped}  failed={failed}")
