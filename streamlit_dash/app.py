@@ -1,5 +1,5 @@
 # streamlit_dash/app.py
-import streamlit as st, sys, pandas as pd, warnings
+import streamlit as st, sys, pandas as pd, warnings, duckdb
 from datetime import timedelta, date
 # Streamlit page configuration
 st.set_page_config(
@@ -16,6 +16,21 @@ sys.path.insert(0, str(ROOT))
 DF_PATH = ROOT / "output/streamlit_df.parquet"
 UPCOMING_PATH = ROOT / "output/upcoming_df.parquet"
 from pipeline.pipeline import run_pipeline
+from config import DB_PATH
+
+@st.cache_data(show_spinner=False)
+def get_inactive_stocks() -> set:
+    """Tickers marked status='inactive' in stock_data (delisted/merged/renamed)."""
+    try:
+        con = duckdb.connect(str(ROOT / DB_PATH), read_only=True)
+        rows = con.execute("SELECT stock FROM stock_data WHERE status = 'inactive'").fetchall()
+        con.close()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+def label_stock(stock: str, inactive: set) -> str:
+    return f"{stock} — inactive" if stock in inactive else stock
 
 @st.cache_data(show_spinner="Loading parquet…")
 def get_full_df() -> pd.DataFrame:
@@ -89,8 +104,12 @@ def sidebar_filters(df: pd.DataFrame, upcoming: pd.DataFrame) -> tuple:
 
     stock_choice = "(All)"
     if "stock" in df.columns:
+        inactive = get_inactive_stocks()
         stocks = sorted(df["stock"].dropna().unique())
-        stock_choice = st.sidebar.selectbox("Stock", options=["(All)"] + stocks)
+        stock_choice = st.sidebar.selectbox(
+            "Stock", options=["(All)"] + stocks,
+            format_func=lambda s: s if s == "(All)" else label_stock(s, inactive),
+        )
         if stock_choice != "(All)":
             df = df[df["stock"] == stock_choice]
 
@@ -319,8 +338,12 @@ def main():
             st.info("stock column not found.")
             return
 
+        inactive = get_inactive_stocks()
         stocks = sorted(df["stock"].dropna().unique())
-        selected_stock = st.selectbox("Choose stock", options=stocks)
+        selected_stock = st.selectbox(
+            "Choose stock", options=stocks,
+            format_func=lambda s: label_stock(s, inactive),
+        )
 
         stock_df = df[df["stock"] == selected_stock].copy()
 
