@@ -133,7 +133,7 @@ BATCH_SIZE = 100
 
 def incremental_ingest_all_prices_yf(con):
     """Incremental price update using yfinance (no API key required)."""
-    stocks = read_stocks_to_fetch()
+    stocks = read_stocks_to_fetch(con, active_only=True)
     if not stocks:
         raise ValueError("No stocks found.")
 

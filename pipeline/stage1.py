@@ -15,10 +15,10 @@ def stage1(update:bool):
     verify_tables_existence(con)
     
     if update == True:
+        ingest_all_sector_data(con)
         incremental_ingest_all_prices_yf(con)
         incremental_ingest_all_earnings_dates_yf(con)
         validate_upcoming_earnings_dates(con)
-        ingest_all_sector_data(con)
         merge_tables(con)
 
     con.close()

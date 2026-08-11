@@ -119,7 +119,7 @@ def incremental_ingest_all_earnings_dates_yf(con):
         Fetches ~12 recent quarters + upcoming dates per stock.
         Skips stocks that already have a future earnings date in the DB.
     """
-    stocks = read_stocks_to_fetch()
+    stocks = read_stocks_to_fetch(con, active_only=True)
     today = datetime.now().date()
     already, inserted, failed = 0, 0, 0
     FAILED_LOG_PATH = os.path.join(get_run_logs_dir(), "debug_failed_earnings_ingestion.txt")

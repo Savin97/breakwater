@@ -75,7 +75,7 @@ def merge_prices_earnings_dates(stock_prices, earnings_dates):
     return merged_df
 
 def map_sector_data_to_main_df(main_df: pd.DataFrame,sector_df:pd.DataFrame):
-    sector_df = sector_df.drop(columns=["company_name","ingested_at"])
+    sector_df = sector_df.drop(columns=["company_name","ingested_at","status","reason"])
     merged_df = main_df.merge(sector_df, on="stock", validate="m:1")
     return merged_df
 
@@ -103,12 +103,17 @@ def build_earnings_df(df):
     earnings_df = earnings_df.sort_values(["stock", "earnings_date"])
     return earnings_df
 
-def read_stocks_to_fetch() -> list[str]:
+def read_stocks_to_fetch(con=None, active_only: bool = False) -> list[str]:
     """
         Reads stocks from a file. Supports:
         - .txt: one stock per line
-        - .csv: column named symbol/ticker/stock 
+        - .csv: column named symbol/ticker/stock
         Returns a list of all unique stocks (uppercase, no spaces)
+
+        If active_only=True (requires con), tickers marked status='inactive'
+        in stock_data (delisted/merged/renamed, reconciled against the live
+        S&P 500 list in ingestion/fetch_sp500_sectors.py) are excluded.
+        A ticker not yet in stock_data at all is treated as active.
     """
     path = Path(STOCK_LIST_PATH)
     if path.suffix.lower() == ".csv":
@@ -135,4 +140,14 @@ def read_stocks_to_fetch() -> list[str]:
         if stock and stock != "NAN" and stock not in seen:
             out.append(stock)
             seen.add(stock)
+
+    if active_only:
+        if con is None:
+            raise ValueError("active_only=True requires a con")
+        inactive = {
+            row[0] for row in
+            con.execute("SELECT stock FROM stock_data WHERE status = 'inactive'").fetchall()
+        }
+        out = [s for s in out if s not in inactive]
+
     return out

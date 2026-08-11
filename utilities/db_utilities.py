@@ -45,6 +45,8 @@ def create_sectors_data_table_if_not_exists(con):
         company_name TEXT,
         sector TEXT,
         sub_sector TEXT,
+        status TEXT DEFAULT 'active',
+        reason TEXT,
         ingested_at TIMESTAMP
     ); """)
 
