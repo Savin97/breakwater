@@ -9,14 +9,16 @@ __pycache__/
 # Data / outputs (tweak if needed)
 output/
 **/output/
-data/   
-**/data/
+db/
+**/db/
 backtesting/artifacts/
+
+# Contains real subscriber emails - never track
+data/subscribers.txt
 
 # misc stuff
 .DS_Store
 .env
 *.env
 .ipynb_checkpoints/
-*.csv
 temp.py

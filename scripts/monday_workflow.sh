@@ -10,7 +10,7 @@ LOCAL_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$LOCAL_REPO/.venv/bin/python"
 
 echo "=== [1/4] Pulling DuckDB from droplet ==="
-rsync -avz "$REMOTE:$REMOTE_REPO/data/breakwater.duckdb" "$LOCAL_REPO/data/breakwater.duckdb"
+rsync -avz "$REMOTE:$REMOTE_REPO/db/breakwater.duckdb" "$LOCAL_REPO/db/breakwater.duckdb"
 
 echo "=== [2/4] Running full pipeline ==="
 cd "$LOCAL_REPO"

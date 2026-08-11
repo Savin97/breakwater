@@ -11,6 +11,6 @@ REMOTE_REPO="/var/www/breakwater"
 LOCAL_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "--- Syncing DuckDB from droplet ---"
-rsync -avz "$REMOTE:$REMOTE_REPO/data/breakwater.duckdb" "$LOCAL_REPO/data/breakwater.duckdb"
+rsync -avz "$REMOTE:$REMOTE_REPO/db/breakwater.duckdb" "$LOCAL_REPO/db/breakwater.duckdb"
 
 echo "--- Done. Run python main.py to regenerate output. ---"

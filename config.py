@@ -1,7 +1,7 @@
 # config.py
 from datetime import date
 STOCK_LIST_PATH = "data/stock_list.csv"
-DB_PATH = "data/breakwater.duckdb"
+DB_PATH = "db/breakwater.duckdb"
 OUTPUT_PATH = "output/"
 
 # Global Parameters
