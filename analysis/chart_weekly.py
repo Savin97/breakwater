@@ -46,7 +46,7 @@ def generate_weekly_earnings_chart(
     start_date: optional DD/MM/YYYY string; defaults to Monday of the current week.
     output_path: defaults to this run's timestamped output subfolder.
     """
-    print("--------------------\nGenerating Weekly Chart...")
+    print("Generating Weekly Chart...")
     if output_path is None:
         output_path = os.path.join(get_run_output_dir(), "weekly_chart.png")
     df = pd.read_parquet(parquet_path)

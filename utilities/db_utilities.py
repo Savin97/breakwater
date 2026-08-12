@@ -143,6 +143,46 @@ def merge_tables(con):
         LEFT JOIN stock_data sd ON p.stock = sd.stock;
         """)
 
+def clean_duplicate_earnings_from_db(con, window_days=30):
+    """Delete duplicate earnings rows from the DB where two dates for the same stock
+    fall within window_days of each other and at least one has reported_eps (confirmed
+    past event). Keeps the higher-quality row: prefers reported_eps not null, then
+    later date. Pairs where both are NULL are left alone — those are upcoming/unconfirmed
+    events handled by validate_upcoming_earnings_dates.
+    """
+    pairs = con.execute("""
+        SELECT e1.stock,
+               e1.earnings_date AS date1, e1.reported_eps AS eps1,
+               e2.earnings_date AS date2, e2.reported_eps AS eps2
+        FROM earnings e1
+        JOIN earnings e2
+          ON e1.stock = e2.stock
+         AND e1.earnings_date < e2.earnings_date
+         AND (e2.earnings_date - e1.earnings_date) <= ?
+        WHERE e1.reported_eps IS NOT NULL OR e2.reported_eps IS NOT NULL
+    """, [window_days]).fetchall()
+
+    if not pairs:
+        return
+
+    to_delete = []
+    for stock, date1, eps1, date2, eps2 in pairs:
+        has1, has2 = eps1 is not None, eps2 is not None
+        if has1 and not has2:
+            to_delete.append((stock, date2))
+        elif has2 and not has1:
+            to_delete.append((stock, date1))
+        else:
+            to_delete.append((stock, date1))  # both confirmed — keep later date
+
+    for stock, drop_date in to_delete:
+        con.execute(
+            "DELETE FROM earnings WHERE stock = ? AND earnings_date = ?",
+            [stock, drop_date]
+        )
+    print(f"  clean_duplicate_earnings: removed {len(to_delete)} duplicate rows from DB.")
+
+
 def stock_already_in_prices_db(con, stock: str) -> bool:
     n = con.execute("SELECT COUNT(*) FROM prices WHERE stock = ?;", [stock]).fetchone()[0]
     return n > 0

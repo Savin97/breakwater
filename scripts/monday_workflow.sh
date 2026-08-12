@@ -18,6 +18,7 @@ cd "$LOCAL_REPO"
 
 RUN_DIR="$LOCAL_REPO/output/output_$(date +%Y_%m_%d)"
 
+echo ""
 echo "=== [3/4] Pushing output parquets to droplet ==="
 rsync -avz \
   "$LOCAL_REPO/output/full_df.parquet" \
@@ -25,12 +26,9 @@ rsync -avz \
   "$LOCAL_REPO/output/upcoming_df.parquet" \
   "$REMOTE:$REMOTE_REPO/output/"
 
+echo ""
 echo "=== [4/4] Pushing recent_calls.json to harbor_webpage ==="
 rsync -avz "$RUN_DIR/recent_calls.json" "$REMOTE:$HARBOR_WEBPAGE/recent_calls.json"
-
-
-echo ""
-echo "=== Charts at $RUN_DIR/weekly_chart.png and $RUN_DIR/results_chart.png ==="
 
 echo ""
 echo "=== Done. ==="

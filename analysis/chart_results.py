@@ -178,5 +178,5 @@ def generate_results_chart(
 if __name__ == "__main__":
     import sys, os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from analysis.last_week_results import print_last_week_results
-    print_last_week_results()
+    from analysis.last_week_results import generate_last_week_results
+    generate_last_week_results()

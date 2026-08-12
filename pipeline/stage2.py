@@ -11,7 +11,8 @@ from utilities.data_utilities import (
     change_column_name,
     dedup_earnings,
     merge_prices_earnings_dates,
-    map_sector_data_to_main_df)
+    map_sector_data_to_main_df,
+    assert_df_fresh)
 from utilities.db_utilities import join_iv, join_eps_estimates
 
 
@@ -74,5 +75,6 @@ def stage2(lookback_days=None):
     df = join_eps_estimates(df, con)
 
     con.close()
+    assert_df_fresh(df)
     print("Stage 2 DONE")
     return df

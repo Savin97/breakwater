@@ -9,8 +9,7 @@ from report.chart_builder import generate_reactions_chart
 from streamlit_dash.streamlit_export import export_streamlit_df
 from analysis.chart_weekly import generate_weekly_earnings_chart
 from marketing.generate_public_track_record import generate_public_track_record
-from analysis.last_week_results import print_last_week_results
-
+from analysis.last_week_results import generate_last_week_results
 def stage5(df):
     print("--------------------\nStage 5 - Outputs...")
 
@@ -67,6 +66,12 @@ def stage5(df):
     df_by_stock = {s: grp for s, grp in df.groupby("stock")}
 
     def generate_reports_for_stocks(stocks_to_report_for):
+        print("Generating reports for the following stocks:")
+        for i, stock in enumerate(stocks_to_report_for):
+            if i == len(stocks_to_report_for) - 1:
+                print(stock)
+            else:
+                print(stock, end=", ")
         for stock in stocks_to_report_for:
             stock_df = df_by_stock.get(stock)
             if stock_df is None or stock_df.empty:
@@ -202,13 +207,14 @@ def stage5(df):
                 "iv_vs_hist_ratio":      iv_vs_hist_ratio,
             }
             generate_report(stock, data_for_report)
+        print("Reports DONE")
 
     generate_reports_for_stocks(stocks_to_report_for)
-
+    print("--------------------\n")
     generate_calendar(df)
     generate_weekly_earnings_chart()
+    generate_last_week_results()
     generate_public_track_record()
-    print_last_week_results()
     export_streamlit_df(df)
     print("Stage 5 DONE")
     return df

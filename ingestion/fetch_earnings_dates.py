@@ -142,7 +142,7 @@ def incremental_ingest_all_earnings_dates_yf(con):
         if stock in future_dates:
             already += 1
             if i % 100 == 0:
-                print(f"[{i}/{len(stocks)}] skipped: {already}, inserted: {inserted}, failed: {failed}")
+                print(f"  [{i}/{len(stocks)}] skipped: {already}, inserted: {inserted}, failed: {failed}")
             continue
 
         try:
@@ -228,6 +228,7 @@ def incremental_ingest_all_earnings_dates_yf(con):
 
     print(f"\nIngesting Earnings Done (yfinance).")
     print(f"skipped/up-to-date: {already}, inserted: {inserted}, failed: {failed}")
+
 
 
 def validate_upcoming_earnings_dates(con, days_ahead=EARNINGS_DATE_VALIDATION_WINDOW_DAYS, max_delta_days=30):

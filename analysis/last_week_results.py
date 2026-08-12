@@ -61,7 +61,7 @@ def _cumulative(daily_rets_post):
     return cum
 
 
-def print_last_week_results(lookback_weeks: int = 1):
+def generate_last_week_results(lookback_weeks: int = 1):
     df = pd.read_parquet(PARQUET)
     df["date"]          = pd.to_datetime(df["date"])
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
@@ -174,4 +174,4 @@ if __name__ == "__main__":
     parser.add_argument("--lookback", type=int, default=1,
                         help="How many weeks back (default: 1 = last week)")
     args = parser.parse_args()
-    print_last_week_results(lookback_weeks=args.lookback)
+    generate_last_week_results(lookback_weeks=args.lookback)

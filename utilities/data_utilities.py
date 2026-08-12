@@ -1,4 +1,5 @@
 import os
+from datetime import date, timedelta
 import pandas as pd
 from dotenv import load_dotenv
 from pathlib import Path
@@ -62,7 +63,7 @@ def dedup_earnings(earnings_df, window_days=30):
             drop_idx.add(prev_i)  # equal quality — keep later date
 
     if drop_idx:
-        print(f"  dedup_earnings: removed {len(drop_idx)} duplicate rows (window={window_days}d) — re-run stage1 with update=True to clean DB")
+        print(f"  dedup_earnings: removed {len(drop_idx)} duplicate rows (window={window_days}d)")
 
     return df.drop(index=drop_idx).drop(columns=["_prev_date", "_gap", "_has_eps"]).reset_index(drop=True)
 
@@ -82,6 +83,15 @@ def map_sector_data_to_main_df(main_df: pd.DataFrame,sector_df:pd.DataFrame):
 # ------------------------------------------------------------
 # Misc utilities 
 # ------------------------------------------------------------
+def assert_df_fresh(df, max_stale_days=10):
+    max_date = pd.to_datetime(df["date"]).max().date()
+    cutoff = date.today() - timedelta(days=max_stale_days)
+    if max_date < cutoff:
+        raise RuntimeError(
+            f"Pipeline output looks stale — max price date is {max_date}, "
+            f"expected >= {cutoff}. Check that all stages ran to completion."
+        )
+
 def directory_checks():
     Path("data").mkdir(exist_ok=True)
     Path("db").mkdir(exist_ok=True)
@@ -127,7 +137,7 @@ def read_stocks_to_fetch(con=None, active_only: bool = False) -> list[str]:
         if col is None:
             raise ValueError(f"CSV must contain a symbol/ticker/stock column. Found: {list(stock_prices_df.columns)}")
         stocks = stock_prices_df[col].astype(str).str.strip().tolist()
-        print(f"{len(stocks)} Stock Names Imported from {STOCK_LIST_PATH} File")
+        # print(f"{len(stocks)} Stock Names Imported from {STOCK_LIST_PATH} File")
     else:
         stocks = [ln.strip() for ln in path.read_text().splitlines() if ln.strip()]
         print(f"{len(stocks)} Stocks Imported from .txt File")

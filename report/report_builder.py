@@ -44,4 +44,3 @@ def generate_report(stock, data):
     reports_dir.mkdir(parents=True, exist_ok=True)
     REPORT_OUTPUT_PATH = reports_dir / f"{stock}_report.pdf"
     HTML(string=html_out, base_url=project_root).write_pdf(REPORT_OUTPUT_PATH)
-    print(f"{stock} Report created in {REPORT_OUTPUT_PATH}")

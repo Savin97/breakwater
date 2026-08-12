@@ -1,12 +1,10 @@
 # config.py
-from datetime import date
 STOCK_LIST_PATH = "data/stock_list.csv"
 DB_PATH = "db/breakwater.duckdb"
 OUTPUT_PATH = "output/"
 
 # Global Parameters
 STOCKS_START_DATE = "2000-01-01"
-STOCKS_END_DATE = date.today().isoformat()
 DEFAULT_REACTION_WINDOW = "reaction_3d" # Model will use 3 days after earnings
 REACTION_THRESHOLD = 0.007
 SHORT_TERM_DRIFT = 30 # 30 past days
