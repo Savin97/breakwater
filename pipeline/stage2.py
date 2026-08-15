@@ -1,21 +1,14 @@
 # pipeline/stage2.py
 import duckdb
 from datetime import date, timedelta
-from config import (
-    CORRECT_STOCK_COL_NAME,
-    LIST_OF_POSSIBLE_STOCK_COL_NAMES,
-    PRICES_PROVIDER,
-    DB_PATH)
+from config import DB_PATH
 from utilities.data_utilities import (
     parse_date, parse_numeric,
-    change_column_name,
     dedup_earnings,
     merge_prices_earnings_dates,
     map_sector_data_to_main_df,
     assert_df_fresh)
 from utilities.db_utilities import join_iv, join_eps_estimates
-
-
 def stage2(lookback_days=None):
     """
     Stage 2 — Data Ingestion.

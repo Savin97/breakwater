@@ -9,7 +9,7 @@ from pathlib import Path
 
 RENAME_MAP_PATH = "data/ticker_renames.csv"
 
-def get_sp500_sectors():
+def get_current_sp500():
     """
         Fetches company/sector/sub-sector data for all current S&P 500 stocks
         from Wikipedia (GICS data).
@@ -67,7 +67,7 @@ def reconcile_stock_status(universe: set[str], sp500_df: pd.DataFrame, rename_ma
 
     return pd.DataFrame(rows, columns=["stock", "company_name", "sector", "sub_sector", "status", "reason"])
 
-def ingest_all_sector_data(con):
+def ingest_all_sp500_data(con):
     FAILED_SECTOR_LOG_PATH = os.path.join(get_run_logs_dir(), "debug_failed_sector_data_ingestion.txt")
     stocks = read_stocks_to_fetch()
     if not stocks:
@@ -76,7 +76,7 @@ def ingest_all_sector_data(con):
         f.write("error\n")
     print("Fetching GICS Sector Data...")
     try:
-        sp500_df = get_sp500_sectors()
+        sp500_df = get_current_sp500()
         existing_tickers = {
             row[0] for row in con.execute("SELECT stock FROM stock_data").fetchall()
         }

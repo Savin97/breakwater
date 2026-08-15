@@ -8,7 +8,6 @@
     create_eps_estimates_table_if_not_exists
 """
 
-
 def create_prices_table_if_not_exists(con):
     # ensure table exists (match your schema)
     con.execute("""
@@ -344,8 +343,6 @@ def join_eps_estimates(df, con):
     for col in eps_cols:
         df[col] = float("nan")
     return df
-
-
 
 def verify_tables_existence(con):
     create_prices_table_if_not_exists(con)
