@@ -61,8 +61,11 @@ def _cumulative(daily_rets_post):
     return cum
 
 
-def generate_last_week_results(lookback_weeks: int = 1):
-    df = pd.read_parquet(PARQUET)
+def generate_last_week_results(lookback_weeks: int = 1, df: pd.DataFrame | None = None):
+    if df is None:
+        df = pd.read_parquet(PARQUET)
+    else:
+        df = df.copy()
     df["date"]          = pd.to_datetime(df["date"])
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
 

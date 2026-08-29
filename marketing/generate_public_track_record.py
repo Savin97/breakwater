@@ -140,14 +140,16 @@ def generate_public_track_record(
     output_path: Path | None = None,
     *,
     weeks: int = 6,
+    df: pd.DataFrame | None = None,
 ) -> Path:
     """output_path defaults to this run's timestamped output subfolder."""
-    if not parquet_path.exists():
-        raise FileNotFoundError(f"{parquet_path} not found")
     if output_path is None:
         output_path = Path(get_run_output_dir()) / "recent_calls.json"
 
-    df = pd.read_parquet(parquet_path)
+    if df is None:
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"{parquet_path} not found")
+        df = pd.read_parquet(parquet_path)
     data = build_public_track_record(df, weeks=weeks)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(data, indent=2))

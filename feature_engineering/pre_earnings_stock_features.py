@@ -35,7 +35,7 @@ def engineer_daily_ret(input_df):
     df = input_df
     # Daily return
     df['daily_ret'] = df.groupby('stock')['price'].pct_change()
-    
+
     return df
 
 def engineer_drift(input_df):
@@ -78,12 +78,12 @@ def engineer_earnings_windows(input_df):
     df = input_df
     df["days_to_earnings"] = (df["earnings_date"] - df["date"]).dt.days
     df["is_earnings_day"] = ( df["days_to_earnings"].notna()  # Avoids errors when days_to_earnings is N/A which leads to False->0
-                               & (df["days_to_earnings"] == 0 ) ).astype("Int64")
+                               & (df["days_to_earnings"] == 0 ) ).astype("int8")
     df["is_earnings_week"] = ( df["days_to_earnings"].notna()  # Avoids errors when days_to_earnings is N/A which leads to False->0
-                               & (df["days_to_earnings"].between(0, 5)) ).astype("Int64")
+                               & (df["days_to_earnings"].between(0, 5)) ).astype("int8")
     df["is_earnings_window"] = ( df["days_to_earnings"].notna()  # Avoids errors when days_to_earnings is N/A which leads to False->0
-                               & (df["days_to_earnings"].between(0, 10)) ).astype("Int64")
-    
+                               & (df["days_to_earnings"].between(0, 10)) ).astype("int8")
+
     return df
 
 def engineer_abs_reaction_median(input_df):

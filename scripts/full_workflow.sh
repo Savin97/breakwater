@@ -1,4 +1,4 @@
-# scripts/monday_workflow.sh
+# scripts/full_workflow.sh
 # Full Monday workflow: sync DB, run pipeline, generate chart, check last week's results.
 
 set -e

@@ -111,14 +111,12 @@ def generate_reports(df):
         drift_flag      = str(latest_row.get("pre_earnings_drift_flag",  "") or "")
         high_conviction = bool(latest_per_stock_idx.loc[stock, "is_high_conviction"])
 
-        lift_for_report = float(eb.loc[current_bucket, "shrunk_prob"]) / float(P_extreme_global)
-        if current_bucket == "Normal" and lift_for_report >= 1.5:
-            effective_risk_level = "Elevated"
-        elif current_bucket in ("Normal", "Elevated") and lift_for_report >= 3.0:
-            effective_risk_level = "High Alert"
-        else:
-            effective_risk_level = current_bucket
-
+        # The lift-based tier promotion that used to live here now runs in stage4
+        # (engineer_lift_adjusted_bucket), so current_bucket already reflects it and
+        # every surface — dashboard, digest, parquet — agrees with this report.
+        # The old local version applied only to PDFs, never moved risk_score, and
+        # computed its lift from the stock's entire history including events after
+        # the row being scored.
         current_bucket_prob                = f"{eb.loc[current_bucket, 'shrunk_prob']:.3f}"
         current_lift_vs_baseline           = f"{eb.loc[current_bucket, 'lift_vs_baseline']:.3f}"
         current_lift_vs_same_bucket_global = f"{eb.loc[current_bucket, 'lift_vs_same_bucket_global']:.3f}"
@@ -145,7 +143,7 @@ def generate_reports(df):
             "earnings_date":                      upcoming_date.strftime("%B %d, %Y"),
             "company_name":                       company_names.get(stock, ""),
             "generated_date":                     generated_date,
-            "risk_level":                         effective_risk_level,
+            "risk_level":                         current_bucket,
             "risk_score":                         f"{latest_row['risk_score']:.0f}",
             "sector":                             latest_row.get("sector", ""),
             "sub_sector":                         latest_row.get("sub_sector", ""),
@@ -159,7 +157,7 @@ def generate_reports(df):
             "drift_flag":                         drift_flag,
             "high_conviction":                    high_conviction,
             "recommendation":                     build_recommendation(
-                risk_level=effective_risk_level,
+                risk_level=current_bucket,
                 hist_extreme_prob=current_bucket_prob,
                 base_extreme_prob=round(P_extreme_global, 3),
                 lift=current_lift_vs_baseline,

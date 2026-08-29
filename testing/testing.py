@@ -8,12 +8,6 @@ earn = df[df['is_earnings_day'] == 1].copy()
 earn['date'] = pd.to_datetime(earn['date'])
 earn['year'] = earn['date'].dt.year
 
-earn = earn.sort_values("date",ascending=False)
-earn[:1000].to_csv("earn.csv",index=False)
-exit()
-
-
-
 prior = 5
 
 # ── OOS Calibration: do predicted bucket probabilities match realized rates? ──
@@ -36,9 +30,8 @@ def oos_calibration():
             train.groupby('earnings_explosiveness_bucket')['is_extreme_reaction']
             .agg(extreme_count='sum', event_count='count')
         )
-        bstats['global_prob'] = train.groupby('earnings_explosiveness_bucket')['is_extreme_reaction'].mean()
         bstats['predicted'] = (
-            (bstats['extreme_count'] + prior * bstats['global_prob'])
+            (bstats['extreme_count'] + prior * p_global)
             / (bstats['event_count'] + prior)
         )
         for bucket in bucket_order:
@@ -117,6 +110,9 @@ def threshold_grid_search():
                 f"{ga.loc['High Alert','pred']*100:>7.1f}  {ga.loc['High Alert','act']*100:>6.1f}")
 
     print(f'\nBest: thresholds={best_thrs}, ECE={best_ece:.2f}pp')
+
+oos_calibration()
+exit()
 
 # ── Correlation decomposition: is 0.456 real or inflated by between-stock persistence? ──
 # The pooled correlation mixes two distinct effects:
@@ -604,12 +600,6 @@ post_2015["bucket"] = pd.cut(
 post_corr = post_2015[["score_oos", "abs_reaction_3d"]].corr().iloc[0,1]
 print("Test corr:", post_corr)
 print(post_2015.groupby("bucket")["abs_reaction_3d"].mean())
-
-
-
-
-
-
 
 def testing_scores(df):
     print("Running Score Testing...\n--------------------")

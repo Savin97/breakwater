@@ -6,7 +6,11 @@
     create_sectors_data_table_if_not_exists
     create_iv_table_if_not_exists
     create_eps_estimates_table_if_not_exists
+    create_predictions_table_if_not_exists
 """
+import logging
+
+logger = logging.getLogger(__name__)
 
 def create_prices_table_if_not_exists(con):
     # ensure table exists (match your schema)
@@ -104,6 +108,32 @@ def create_iv_table_if_not_exists(con):
     """)
 
 
+def create_predictions_table_if_not_exists(con):
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS predictions (
+            prediction_asof_date    DATE,
+            week_start              DATE,
+            stock                   TEXT,
+            earnings_date           DATE,
+            tier                    TEXT,
+            risk_score              DOUBLE,
+            is_high_conviction      BOOLEAN,
+            pre_earnings_drift_flag TEXT,
+            surprise_momentum_flag  TEXT,
+            model_version           TEXT,
+            git_commit              TEXT,
+            ingested_at             TIMESTAMP
+        );
+    """)
+    # One row per (stock, earnings_date) per run day — re-running the pipeline the same
+    # day won't duplicate a snapshot, but each new asof date (e.g. next Monday's run)
+    # records a fresh row so predictions can be tracked as they evolve toward the event.
+    con.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS predictions_uq
+        ON predictions(stock, earnings_date, prediction_asof_date);
+    """)
+
+
 def merge_tables(con):
     """
         Tables:
@@ -179,7 +209,7 @@ def clean_duplicate_earnings_from_db(con, window_days=30):
             "DELETE FROM earnings WHERE stock = ? AND earnings_date = ?",
             [stock, drop_date]
         )
-    print(f"  clean_duplicate_earnings: removed {len(to_delete)} duplicate rows from DB.")
+    logger.info(f"clean_duplicate_earnings: removed {len(to_delete)} duplicate rows from DB.")
 
 
 def stock_already_in_prices_db(con, stock: str) -> bool:
@@ -299,35 +329,78 @@ def test_db(con):
     print("Number of rows in merged_stock_data: ", con.execute("SELECT COUNT(*) FROM merged_stock_data").fetchone())
 
 
-def join_iv(df, con):
-    """Join latest IV snapshot per stock onto df. Left join — NaN if not collected."""
+def join_dfs_by_stock_and_date(df, right_df, right_date_col, value_cols):
+    """Join right_df onto df matching on stock AND date, not stock alone.
+
+    Each row gets the most recent right_df entry dated on or before that row's own
+    date; rows older than the earliest entry get NaN. Matching on stock alone (the
+    previous behaviour) copied the newest values onto every historical row, so a 2008
+    row carried 2026 data — lookahead that silently poisons any backtest on these
+    columns.
+
+    right_date_col is the date column in right_df; value_cols are the columns it
+    contributes. Row order and index of df are preserved.
+    """
     import pandas as pd
+
+    if right_df.empty:
+        for col in value_cols + [right_date_col]:
+            df[col] = float("nan")
+        return df
+
+    right_df = right_df.copy()
+    right_df[right_date_col] = pd.to_datetime(right_df[right_date_col])
+    right_df["right_date"]   = right_df[right_date_col]
+    right_df = right_df.sort_values("right_date", kind="mergesort")
+
+    out = df.copy()
+    out["left_date"] = pd.to_datetime(out["date"])
+    out["row_order"] = range(len(out))
+    out = out.sort_values("left_date", kind="mergesort")
+
+    merged = pd.merge_asof(
+        out, right_df,
+        left_on="left_date", right_on="right_date",
+        by="stock", direction="backward",
+    )
+    merged = merged.sort_values("row_order", kind="mergesort")
+    merged = merged.drop(columns=["left_date", "row_order", "right_date"])
+    merged.index = df.index
+    return merged
+
+
+def join_iv(df, con):
+    """Join implied-volatility readings onto df by stock and date.
+
+    NaN for rows dated before IV collection began.
+    """
     iv_df = con.execute("""
-        SELECT DISTINCT ON (stock) stock, expected_move_pct, atm_iv,
+        SELECT DISTINCT ON (stock, snapshot_date)
+               stock, expected_move_pct, atm_iv,
                snapshot_date AS iv_snapshot_date
         FROM iv_snapshots
-        ORDER BY stock, snapshot_date DESC
+        ORDER BY stock, snapshot_date, snapshot_hour DESC
     """).fetch_df()
-    if not iv_df.empty:
-        return df.merge(iv_df, on="stock", how="left")
-    df["expected_move_pct"] = float("nan")
-    df["atm_iv"]            = float("nan")
-    df["iv_snapshot_date"]  = None
-    return df
+    return join_dfs_by_stock_and_date(
+        df, iv_df, "iv_snapshot_date", ["expected_move_pct", "atm_iv"]
+    )
 
 
 def join_eps_estimates(df, con):
-    """Join latest EPS estimate snapshot per stock onto df. Left join — NaN if not collected."""
+    """Join analyst EPS estimates onto df by stock and date.
+
+    NaN for rows dated before estimate collection began.
+    """
     eps_cols = [
         "eps_avg", "eps_high", "eps_low", "eps_num_analysts",
         "eps_dispersion", "eps_revision_momentum",
         "eps_trend_7d", "eps_trend_30d", "eps_trend_60d", "eps_trend_90d",
         "eps_revisions_up_7d", "eps_revisions_down_7d",
         "eps_revisions_up_30d", "eps_revisions_down_30d",
-        "revenue_avg", "revenue_high", "revenue_low", "eps_snapshot_date",
+        "revenue_avg", "revenue_high", "revenue_low",
     ]
     eps_df = con.execute("""
-        SELECT DISTINCT ON (stock)
+        SELECT DISTINCT ON (stock, snapshot_date)
             stock, eps_avg, eps_high, eps_low, eps_num_analysts,
             eps_dispersion, eps_revision_momentum,
             eps_trend_7d, eps_trend_30d, eps_trend_60d, eps_trend_90d,
@@ -336,13 +409,9 @@ def join_eps_estimates(df, con):
             revenue_avg, revenue_high, revenue_low,
             snapshot_date AS eps_snapshot_date
         FROM eps_estimates
-        ORDER BY stock, snapshot_date DESC
+        ORDER BY stock, snapshot_date
     """).fetch_df()
-    if not eps_df.empty:
-        return df.merge(eps_df, on="stock", how="left")
-    for col in eps_cols:
-        df[col] = float("nan")
-    return df
+    return join_dfs_by_stock_and_date(df, eps_df, "eps_snapshot_date", eps_cols)
 
 def verify_tables_existence(con):
     create_prices_table_if_not_exists(con)
@@ -350,4 +419,5 @@ def verify_tables_existence(con):
     create_sectors_data_table_if_not_exists(con)
     create_iv_table_if_not_exists(con)
     create_eps_estimates_table_if_not_exists(con)
+    create_predictions_table_if_not_exists(con)
     print("DB Tables Set Up")

@@ -66,7 +66,7 @@ def stage2(lookback_days=None):
 
     df = join_iv(df, con)
     df = join_eps_estimates(df, con)
-
+    
     con.close()
     assert_df_fresh(df)
     print("Stage 2 DONE")

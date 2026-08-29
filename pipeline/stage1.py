@@ -5,10 +5,12 @@ from ingestion.fetch_prices import ingest_all_stocks, incremental_ingest_all_pri
 from ingestion.fetch_earnings_dates import ingest_all_earnings_dates, incremental_ingest_all_earnings_dates_yf, get_next_earnings_dates, validate_upcoming_earnings_dates
 from ingestion.fetch_sp500_sectors import ingest_all_sp500_data
 from utilities.data_utilities import directory_checks
+from utilities.logging_utilities import setup_logging
 from config import DB_PATH
 
 def stage1(incremental:bool):
     print("Stage 1 - Building / Updating DB...")
+    setup_logging()
     warnings.filterwarnings('ignore')
     directory_checks()
     con = duckdb.connect(DB_PATH)

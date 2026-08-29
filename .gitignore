@@ -12,6 +12,8 @@ output/
 db/
 **/db/
 backtesting/artifacts/
+testing/testing_results/
+testing/testing_results/**
 
 # Contains real subscriber emails - never track
 data/subscribers.txt

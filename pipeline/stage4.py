@@ -10,6 +10,8 @@ from scoring.scoring_features import (
     engineer_vol_expansion_score,
     engineer_momentum_fragility_score,
     engineer_earnings_explosiveness_score,
+    engineer_stock_bucket_lift,
+    engineer_lift_adjusted_bucket,
     classify_large_relative_earnings_move_bucket,
     engineer_surprise_momentum_flag,
     engineer_pre_earnings_drift_flag,
@@ -40,6 +42,10 @@ def stage4(stage3_df, incremental=False):
             engineer_momentum_fragility_score,
             # engineer_earnings_explosiveness_score skipped: score and bucket are
             # read from cache in stage3 so the last-complete-event values are preserved.
+            # engineer_stock_bucket_lift / engineer_lift_adjusted_bucket skipped for the
+            # same reason — both need is_extreme_reaction, which needs abs_reaction_3d,
+            # unavailable in the 90-day incremental window. The already-adjusted bucket
+            # comes back from the cache, so no re-derivation is needed here.
             engineer_surprise_momentum_flag,
             engineer_pre_earnings_drift_flag,
             engineer_total_risk_score,
@@ -57,6 +63,8 @@ def stage4(stage3_df, incremental=False):
             engineer_vol_expansion_score,
             engineer_momentum_fragility_score,
             engineer_earnings_explosiveness_score,
+            engineer_stock_bucket_lift,        # needs the structural bucket above
+            engineer_lift_adjusted_bucket,     # overwrites the bucket using that lift
             classify_large_relative_earnings_move_bucket,
             engineer_surprise_momentum_flag,
             engineer_pre_earnings_drift_flag,

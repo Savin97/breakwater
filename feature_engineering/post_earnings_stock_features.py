@@ -67,9 +67,9 @@ def engineer_reaction_class(df):
         Engineer is_up,is_down,is_nochange features:
         if DEFAULT_REACTION_WINDOW > REACTION_THRESHOLD
     """
-    df["is_up"] = (df[DEFAULT_REACTION_WINDOW] > REACTION_THRESHOLD ).astype(int)
-    df["is_down"] = (df[DEFAULT_REACTION_WINDOW] < - REACTION_THRESHOLD ).astype(int)
-    df["is_nochange"] = ( df[DEFAULT_REACTION_WINDOW].abs() <= REACTION_THRESHOLD ).astype(int)
+    df["is_up"] = (df[DEFAULT_REACTION_WINDOW] > REACTION_THRESHOLD ).astype("int8")
+    df["is_down"] = (df[DEFAULT_REACTION_WINDOW] < - REACTION_THRESHOLD ).astype("int8")
+    df["is_nochange"] = ( df[DEFAULT_REACTION_WINDOW].abs() <= REACTION_THRESHOLD ).astype("int8")
     return df
 
 def engineer_reaction_std(df):

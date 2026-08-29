@@ -1,7 +1,7 @@
 """
 Print last week's earnings outcomes vs. model predictions.
 Shows price moves for days -2, -1, 0 (earnings day), +1 through +5.
-Reads output/full_df.parquet — run after monday_workflow.sh (or sync_pipeline.sh).
+Reads output/full_df.parquet — run after full_workflow.sh (or sync_pipeline.sh).
 
 Usage:
     python scripts/results_check.py

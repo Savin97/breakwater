@@ -55,8 +55,13 @@ def generate_weekly_earnings_chart(
     if start_date is not None:
         week_start = pd.Timestamp(datetime.strptime(start_date, "%d/%m/%Y"))
     else:
-        today      = pd.Timestamp(date.today())
-        week_start = today - timedelta(days=today.weekday())  # Monday of current week
+        today = pd.Timestamp(date.today())
+        if today.weekday() >= 5:
+            # Sat/Sun: this calendar week's Mon-Fri has already passed, so show
+            # the upcoming week instead (matches report_builder's forward-looking window).
+            week_start = today + timedelta(days=7 - today.weekday())
+        else:
+            week_start = today - timedelta(days=today.weekday())  # Monday of current week
     week_end = week_start + timedelta(days=4)  # Friday
     week = df[(df["earnings_date"] >= week_start) & (df["earnings_date"] <= week_end)].copy()
 
@@ -201,6 +206,10 @@ def generate_weekly_earnings_chart(
     with open(table_path, "w", encoding="utf-8") as f:
         f.write(_build_weekly_table_text(week, week_start))
     print(f"Saved earnings risk table → {table_path}")
+
+    csv_path = os.path.join(get_run_output_dir(), "weekly_earnings_risk.csv")
+    _build_weekly_table_df(week).to_csv(csv_path, index=False)
+    print(f"Saved earnings risk csv → {csv_path}")
     return output_path
 
 
@@ -245,6 +254,22 @@ def _build_weekly_table_text(week: pd.DataFrame, week_start: pd.Timestamp) -> st
         )
     lines.append("")
     return "\n".join(lines)
+
+
+def _build_weekly_table_df(week: pd.DataFrame) -> pd.DataFrame:
+    week = week.copy()
+    # .astype(str) first: earnings_explosiveness_bucket is an ordered Categorical
+    # (Normal < Elevated < High Alert), and .map() on a Categorical keeps that
+    # category order for the result rather than the numeric order of TIER_ORDER.
+    week["_tier_rank"] = week["earnings_explosiveness_bucket"].astype(str).map(TIER_ORDER).fillna(9)
+    week = week.sort_values(["_tier_rank", "peer_percentile"], ascending=[True, False])
+    return pd.DataFrame({
+        "earnings_date":      week["earnings_date"].dt.strftime("%Y-%m-%d"),
+        "stock":              week["stock"],
+        "tier":               week["earnings_explosiveness_bucket"],
+        "peer_percentile":    week["peer_percentile"],
+        "is_high_conviction": week.get("is_high_conviction", False),
+    })
 
 
 if __name__ == "__main__":

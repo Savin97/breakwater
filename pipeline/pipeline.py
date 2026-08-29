@@ -5,7 +5,7 @@ from pipeline.stage3 import stage3
 from pipeline.stage4 import stage4
 from pipeline.stage5 import stage5
 
-def run_pipeline(incremental=True):
+def run_pipeline(incremental):
     stage1(incremental=incremental)
     df = stage2()
     df = stage3(df)

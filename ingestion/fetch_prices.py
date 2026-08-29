@@ -1,6 +1,7 @@
 # ingestion/fetch_prices.py
 import os
 import time
+import logging
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, date, timedelta
@@ -11,6 +12,8 @@ from utilities.output_utilities import get_run_logs_dir
 from config import (
     STOCKS_START_DATE,
     ALPHAVANTAGE_CALLS_PER_MINUTE)
+
+logger = logging.getLogger(__name__)
 
 def ingest_all_stocks(con):
     """
@@ -142,10 +145,10 @@ def incremental_ingest_all_prices_yf(con):
     end = date.today() + timedelta(days=1)  # yfinance's end is exclusive; include today
 
     if start >= end:
-        print("Prices already up to date.")
+        logger.info("Prices already up to date.")
         return
 
-    print(f"Fetching prices {start} → {end} for {len(stocks)} stocks...")
+    logger.info(f"Fetching prices {start} → {end} for {len(stocks)} stocks...")
     total_inserted = 0
     now = datetime.now()
 
@@ -157,7 +160,7 @@ def incremental_ingest_all_prices_yf(con):
                 auto_adjust=True, progress=False,
             )
         except Exception as e:
-            print(f"  Batch [{batch_start+1}–{batch_start+len(batch)}] failed: {e}")
+            logger.warning(f"Batch [{batch_start+1}–{batch_start+len(batch)}] failed: {e}")
             continue
 
         if raw is None:
@@ -187,6 +190,6 @@ def incremental_ingest_all_prices_yf(con):
         con.unregister("tmp_prices")
         added = con.execute("SELECT COUNT(*) FROM prices").fetchone()[0] - before
         total_inserted += added
-        print(f"  Batch [{batch_start+1}-{batch_start+len(batch)}]: +{added} rows")
+        logger.info(f"Batch [{batch_start+1}-{batch_start+len(batch)}]: +{added} rows")
 
-    print(f"\nIngesting Prices Done (yfinance). Total inserted: {total_inserted}")
+    logger.info(f"Ingesting Prices Done (yfinance). Total inserted: {total_inserted}")

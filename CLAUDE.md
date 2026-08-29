@@ -23,23 +23,28 @@ Breakwater is an earnings tail-risk model for S&P 500 stocks. It ingests price/e
 ## Commands
 
 ```bash
-# Run the full pipeline
+# Run the full pipeline (see the incremental note under Stage 1 before running)
 python main.py
+
+# Re-score WITHOUT re-ingesting — no API calls, uses the existing DuckDB.
+# This is what you want after changing anything in stage3/stage4.
+python -c "from pipeline.stage2 import stage2; from pipeline.stage3 import stage3; \
+from pipeline.stage4 import stage4; from pipeline.stage5 import stage5; stage5(stage4(stage3(stage2())))"
 
 # Run backtesting suite (reads output/full_df.parquet)
 python -m testing.backtesting
 
-# Prepare streamlit_df.csv from output/full_df.parquet
-python prep_for_streamlit.py
+# Historical calibration tables (reads output/full_df.parquet)
+python -m testing.calibration
 
 # Launch the Streamlit dashboard
 streamlit run streamlit_dash/app.py
 
 # Ad-hoc feature/score testing
-python testing.py
+python -m testing.testing
 
 # Run tests
-pytest
+pytest testing/test_pipeline.py
 ```
 
 The project uses a `.venv` (Python 3.14). Activate with `source .venv/bin/activate` or prefix commands with `.venv/bin/python`.
@@ -50,19 +55,19 @@ The project uses a `.venv` (Python 3.14). Activate with `source .venv/bin/activa
 
 | Stage | File | What it does |
 |---|---|---|
-| 1 | `pipeline/stage1.py` | Creates/updates DuckDB at `data/breakwater.duckdb`. Set `update=True` in `pipeline.py` to re-fetch from APIs; defaults to `False` (skip re-ingestion). |
-| 2 | `pipeline/stage2.py` | Reads `prices`, `earnings`, `stock_data` tables from DB; merges into a single DataFrame. |
-| 3 | `pipeline/stage3.py` | Calls ~18 feature-engineering functions in sequence; each appends columns in-place and returns the df. |
-| 4 | `pipeline/stage4.py` | Calls ~12 risk-scoring functions; produces `risk_score` (0–100) and intermediate component scores. |
-| 5 | `pipeline/stage5.py` | Reads `output/full_df.parquet` (note: ignores the passed df), computes Bayesian bucket stats, writes `report_txt.txt`. `stocks_to_report_for` is an empty list — populate it to generate per-stock reports. |
+| 1 | `pipeline/stage1.py` | Creates/updates DuckDB at `db/breakwater.duckdb`. **Both settings ingest — the flag picks the provider.** `incremental=True` uses the free yfinance fetchers (`incremental_ingest_all_prices_yf`, `incremental_ingest_all_earnings_dates_yf`). `incremental=False` uses the legacy AlphaVantage full-history fetchers, which **require a paid AlphaVantage key**. `main.py` currently passes `incremental=False`. To re-score without ingesting at all, skip stage 1 entirely (see Commands). |
+| 2 | `pipeline/stage2.py` | Reads `prices`, `earnings`, `stock_data` tables from DB; merges into a single DataFrame. Also dedups earnings and asserts data freshness. |
+| 3 | `pipeline/stage3.py` | Calls ~20 feature-engineering functions in sequence; each appends columns and returns the df. `incremental=True` recomputes only price-dependent rolling features and reads expanding earnings stats from `config.INCREMENTAL_CACHED_COLS`. |
+| 4 | `pipeline/stage4.py` | Calls the risk-scoring functions; produces `risk_score` (0–100), `earnings_explosiveness_bucket`, and component scores. `incremental=True` skips everything needing `abs_reaction_3d`. |
+| 5 | `pipeline/stage5.py` | Writes `output/full_df.parquet`, then generates PDF reports, the weekly calendar, charts, the public track record, the Streamlit export, and a predictions snapshot. |
 
 The intermediate output between stages is a pandas DataFrame. Stage 3 and 4 functions all follow the same pattern: accept `input_df`, copy it, add columns, return it — never mutate in place.
 
 ## Data Storage
 
-- **DuckDB** (`data/breakwater.duckdb`): three tables — `prices (stock, date, price)`, `earnings (stock, earnings_date, reported_eps, estimated_eps, surprise_percentage)`, `stock_data (stock, sector, sub_sector)`.
-- **Parquet** (`output/full_df.parquet`): the fully engineered + scored DataFrame written after stage 3/4. This is the source of truth for backtesting and reporting.
-- **CSV** (`streamlit_df.csv`): produced by `prep_for_streamlit.py`; consumed by the Streamlit app.
+- **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price)`, `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
+- **Parquet** (`output/full_df.parquet`): the fully engineered + scored DataFrame, written at the top of stage 5. This is the source of truth for backtesting, calibration, and reporting.
+- **Parquet** (`output/streamlit_df.parquet`, `output/upcoming_df.parquet`): produced by `streamlit_dash/streamlit_export.py`; consumed by the Streamlit app.
 - **Stock universe** (`data/stock_list.csv`): the list of stocks to process.
 
 ## Feature Engineering Conventions
@@ -81,25 +86,47 @@ Key engineered columns:
 
 ## Risk Scoring
 
-Stage 4 produces these component scores (all in `feature_engineering/scoring_features.py`):
+Stage 4 produces these component scores (all in `scoring/scoring_features.py`):
 - `proximity_score`: how close the stock is to earnings
 - `vol_expansion_score`: vol expansion relative to baseline
 - `momentum_fragility_score`: momentum divergence signal
-- `earnings_explosiveness_score`: historical tail-risk profile score
-- `earnings_explosiveness_bucket`: categorical bucket (`low / moderate / elevated / high / extreme`)
-- `risk_score`: weighted composite of the above (0–100)
+- `earnings_explosiveness_score`: historical tail-risk profile score (0–100)
+- `stock_bucket_lift`: P(extreme | stock, bucket) / P(extreme | market), computed causally from prior events only and shrunk toward the market baseline
+- `earnings_explosiveness_bucket`: `Normal` / `Elevated` / `High Alert` — cut from the score, then promoted where `stock_bucket_lift` clears its threshold
+- `earnings_explosiveness_bucket_structural`: the pre-promotion bucket, kept for analysis
+- `risk_score`: currently a pass-through of `earnings_explosiveness_score`
+- `is_high_conviction`: `High Alert` **and** a non-empty `pre_earnings_drift_flag`
 
-Thresholds are in `config.py`: `LARGE_EARNINGS_REACTION_THRESHOLD = 0.007`, `EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08`.
+**The tier is the product, not the score.** The bucket is decided by two inputs (structural
+score + lift) while `risk_score` carries only the first, so a lift-promoted event can sit in a
+higher tier than a higher-scoring event. That is deliberate: it means "mild structural profile,
+violent personal history." Do not "fix" it by flooring the score to the tier boundary or by
+multiplying the score by the lift — the latter was measured and drops top-decile lift from
+3.70x to 2.98x, because lift is ~0.79 rank-correlated with the score and corrupts its ordering
+when blended. As a conditional gate the same signal is strongly additive: capture of ≥8% moves
+goes 43.9% → 57.0% with `High Alert` purity unchanged at 0.409.
+
+Thresholds are in `config.py`: `LARGE_EARNINGS_REACTION_THRESHOLD = 0.05`,
+`EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08`, bucket cut points
+`BUCKET_ELEVATED_FLOOR = 73` / `BUCKET_HIGH_ALERT_FLOOR = 79`, and promotion gates
+`LIFT_TO_ELEVATED = 1.5` / `LIFT_TO_HIGH_ALERT = 3.0` with `LIFT_PRIOR_STRENGTH = 20`.
 
 ## Key Configuration (`config.py`)
 
 - `DB_PATH`: path to DuckDB file
 - `STOCKS_START_DATE / STOCKS_END_DATE`: date range for price data
 - `DEFAULT_REACTION_WINDOW`: `"reaction_3d"` — the primary reaction metric
-- `PRICES_PROVIDER`: currently `"ALPHAVANTAGE"`; rate-limit params (`ALPHAVANTAGE_CALLS_PER_MINUTE`, `BACKOFF_SECONDS`) also live here
+- `PRICES_PROVIDER`: `"ALPHAVANTAGE"` — only used by the legacy `incremental=False` ingestion path, which needs a paid key. The yfinance path (`incremental=True`) ignores it and is the one in routine use; its knobs are `YFINANCE_MAX_WORKERS` and the jitter settings.
+- `INCREMENTAL_CACHED_COLS`: expanding earnings stats read from the previous `full_df.parquet` in incremental mode instead of recomputed. Anything needing `abs_reaction_3d` must be listed here, or it will be silently missing on incremental runs.
 
 ## Backtesting
 
-`backtesting/backtesting.py` — standalone module, reads `output/full_df.parquet` directly. The `backtesting_suite()` function runs calibration, lift, hit rates, and year-by-year OOS checks. `backtesting/testing_functions.py` contains all the individual test helpers.
+`testing/backtesting.py` — standalone module, reads `output/full_df.parquet` directly. The `backtesting_suite()` function runs calibration, lift, hit rates, and year-by-year OOS checks. `testing/testing_functions.py` contains all the individual test helpers.
 
-The train/test split convention used in `testing.py`: pre-2015 = train, post-2015 = OOS test.
+`testing/calibration.py` — the acceptance gate for any scoring change. Produces tier hit rates
+with 95% Wilson CIs, capture rate, percentile bands, per-tier year-by-year stability, and a
+score/bucket consistency check. Use it to **compare two variants on equal terms**, not to certify
+an absolute hit rate: the 73/79 cut points were themselves selected on this same window, so
+absolute numbers are optimistically biased.
+
+The train/test split convention used in `testing/testing.py`: pre-2015 = train, post-2015 = OOS test.

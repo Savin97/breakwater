@@ -2,7 +2,12 @@
 import numpy as np, pandas as pd
 from config import (
     LARGE_EARNINGS_REACTION_THRESHOLD,
-    EXTREME_EARNINGS_REACTION_THRESHOLD)
+    EXTREME_EARNINGS_REACTION_THRESHOLD,
+    BUCKET_ELEVATED_FLOOR,
+    BUCKET_HIGH_ALERT_FLOOR,
+    LIFT_PRIOR_STRENGTH,
+    LIFT_TO_ELEVATED,
+    LIFT_TO_HIGH_ALERT)
 
 def engineer_large_reaction(input_df):
     """
@@ -10,7 +15,7 @@ def engineer_large_reaction(input_df):
         Threshold can be set based on historical distribution of abs_reaction_3d or business needs.
     """
     df = input_df
-    df["is_large_reaction"] = (df["abs_reaction_3d"] >= LARGE_EARNINGS_REACTION_THRESHOLD).astype(int)
+    df["is_large_reaction"] = (df["abs_reaction_3d"] >= LARGE_EARNINGS_REACTION_THRESHOLD).astype("int8")
     return df
 
 def engineer_extreme_reaction(input_df):
@@ -19,7 +24,7 @@ def engineer_extreme_reaction(input_df):
         Threshold can be set based on historical distribution of abs_reaction_3d or business needs.
     """
     df = input_df
-    df["is_extreme_reaction"] = (df["abs_reaction_3d"] >= EXTREME_EARNINGS_REACTION_THRESHOLD).astype(int)
+    df["is_extreme_reaction"] = (df["abs_reaction_3d"] >= EXTREME_EARNINGS_REACTION_THRESHOLD).astype("int8")
     return df
 
 def engineer_vol_stress(input_df, ratio_col: str = "vol_ratio_10_to_30"):
@@ -57,7 +62,7 @@ def engineer_vol_stress(input_df, ratio_col: str = "vol_ratio_10_to_30"):
         (df["vol_ratio_cross_sectional_pct"] >= q_high) & (df[ratio_col] >= 1.10)
     ).astype(np.int8)
 
-    df["vol_stress_extreme"] = ( df["vol_ratio_cross_sectional_pct"] >= q_extreme ).astype(int)
+    df["vol_stress_extreme"] = ( df["vol_ratio_cross_sectional_pct"] >= q_extreme ).astype("int8")
     
     return df
 
@@ -131,7 +136,7 @@ def engineer_sector_vol_stress(input_df: pd.DataFrame, q_high = 0.9) -> pd.DataF
         df.groupby(["sector", "date"])["vol_ratio_10_to_30"]
         .rank(pct=True, method="average")
     )
-    df["sector_vol_stress_high"] = (df["sector_vol_ratio_pct"] >= q_high).astype(int)
+    df["sector_vol_stress_high"] = (df["sector_vol_ratio_pct"] >= q_high).astype("int8")
     return df
 
 def engineer_proximity_score(input_df):
@@ -172,8 +177,84 @@ def engineer_earnings_explosiveness_score(input_df):
     # Actual OOS extreme rates: Normal ~6%, Elevated ~24%, High Alert ~38%.
     df["earnings_explosiveness_bucket"] = pd.cut(
         df["earnings_explosiveness_score"],
-        bins=[-np.inf, 73, 79, np.inf],
+        bins=[-np.inf, BUCKET_ELEVATED_FLOOR, BUCKET_HIGH_ALERT_FLOOR, np.inf],
         labels=["Normal", "Elevated", "High Alert"]
+    )
+    return df
+
+
+def engineer_stock_bucket_lift(input_df):
+    """
+    How much more often does THIS stock blow up on earnings than the market baseline,
+    given the bucket it currently sits in?
+
+        lift = P(extreme | stock, bucket) / P(extreme | market)
+
+    Both terms are as-of each event: the numerator uses only that stock's PRIOR
+    earnings in the same bucket, the denominator only prior earnings market-wide.
+    Same shift(1)-before-expanding guard used throughout feature_engineering/ —
+    without it every historical row would be scored using its own future outcomes,
+    which would silently inflate every backtest in the repo.
+
+    The per-stock rate is shrunk toward the market baseline by LIFT_PRIOR_STRENGTH,
+    so a stock with two prior events cannot swing its own tier on noise. A stock's
+    first event in a bucket has no prior data and lands at lift = 1.0 (no opinion).
+
+    Computed on earnings rows only, matching earnings_explosiveness_score; downstream
+    consumers pick it up through groupby().last() the same way.
+    """
+    df = input_df
+    earnings_mask = df["is_earnings_day"] == 1
+
+    ev = (
+        df.loc[earnings_mask, ["stock", "date", "is_extreme_reaction", "earnings_explosiveness_bucket"]]
+          .sort_values("date", kind="mergesort")
+    )
+
+    # Market baseline as of each event — expanding over ALL prior events, every stock.
+    global_prior = ev["is_extreme_reaction"].expanding().mean().shift(1)
+
+    # This stock's prior record within the same bucket.
+    grp        = ev.groupby(["stock", "earnings_explosiveness_bucket"], observed=True)["is_extreme_reaction"]
+    n_prior    = grp.cumcount()
+    sum_prior  = grp.transform(lambda s: s.shift(1).expanding().sum())
+
+    shrunk = (sum_prior + LIFT_PRIOR_STRENGTH * global_prior) / (n_prior + LIFT_PRIOR_STRENGTH)
+    lift   = (shrunk / global_prior).replace([np.inf, -np.inf], np.nan).fillna(1.0)
+
+    df["stock_bucket_lift"] = np.nan
+    df.loc[lift.index, "stock_bucket_lift"] = lift
+    return df
+
+
+def engineer_lift_adjusted_bucket(input_df):
+    """
+    Promote a stock's tier when its own history says it is riskier than its structural
+    score implies. Keeps the pre-adjustment tier as earnings_explosiveness_bucket_structural.
+
+    This is a RECLASSIFICATION, not a rescaling. Multiplying the score by the lift was
+    measured and rejected — it drags top-decile lift from 3.70x to 2.98x because it
+    corrupts the ordering of a score the lift is already 0.79 rank-correlated with.
+    Used as a conditional gate instead, the same signal is strongly additive.
+    """
+    df = input_df
+    bucket = df["earnings_explosiveness_bucket"].astype(object)
+    lift   = df["stock_bucket_lift"]
+
+    df["earnings_explosiveness_bucket_structural"] = bucket
+
+    # Order matters: test the High Alert gate first. Written as separate masks rather
+    # than an if/elif chain because the chained form silently makes Normal -> High Alert
+    # unreachable (a Normal event clearing 3.0 also clears 1.5 and stops at Elevated).
+    to_high_alert = bucket.isin(["Normal", "Elevated"]) & (lift >= LIFT_TO_HIGH_ALERT)
+    to_elevated   = (bucket == "Normal") & (lift >= LIFT_TO_ELEVATED) & ~to_high_alert
+
+    adjusted = bucket.copy()
+    adjusted[to_elevated]   = "Elevated"
+    adjusted[to_high_alert] = "High Alert"
+
+    df["earnings_explosiveness_bucket"] = pd.Categorical(
+        adjusted, categories=["Normal", "Elevated", "High Alert"], ordered=True
     )
     return df
 

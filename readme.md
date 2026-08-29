@@ -20,7 +20,7 @@ python -m testing.calibration          # Calibration tables → testing/testing_
 ## Monday Workflow
 
 ```bash
-bash scripts/monday_workflow.sh
+bash scripts/full_workflow.sh
 ```
 
 This script does everything in one shot:
@@ -39,7 +39,7 @@ This script does everything in one shot:
 
 | Stage | File | What it does |
 |---|---|---|
-| 1 | `pipeline/stage1.py` | Creates/updates DuckDB. Set `update=True` in `pipeline.py` to re-fetch from APIs; default `False` skips ingestion. |
+| 1 | `pipeline/stage1.py` | Creates/updates DuckDB. Set `incremental=True` in `pipeline.py` to re-fetch from APIs; default `False` skips ingestion. |
 | 2 | `pipeline/stage2.py` | Reads `prices`, `earnings`, `stock_data` from DB; merges into a single DataFrame. Calls `dedup_earnings()` to remove yfinance duplicates. |
 | 3 | `pipeline/stage3.py` | ~18 feature-engineering functions in sequence, each appending columns and returning the df. |
 | 4 | `pipeline/stage4.py` | ~12 risk-scoring functions; produces `risk_score` (0–100) and component scores. |
@@ -103,7 +103,7 @@ breakwater/
 │   └── testing_results/            # CSVs: calibration_by_bucket, _by_percentile, _year_by_year
 │
 ├── scripts/
-│   ├── monday_workflow.sh          # Full Monday workflow (see above)
+│   ├── full_workflow.sh          # Full Monday workflow (see above)
 │   ├── gen_recent_calls.py         # Generates output/recent_calls.json for landing page
 │   ├── last_week_results.py        # Prints last week's earnings outcomes
 │   ├── results_check.py            # Full price history around past earnings events

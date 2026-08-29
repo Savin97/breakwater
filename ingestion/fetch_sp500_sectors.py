@@ -2,12 +2,15 @@
 from utilities.data_utilities import read_stocks_to_fetch
 from utilities.output_utilities import get_run_logs_dir
 import os
+import logging
 import pandas as pd, requests
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
 
 RENAME_MAP_PATH = "data/ticker_renames.csv"
+
+logger = logging.getLogger(__name__)
 
 def get_current_sp500():
     """
@@ -74,7 +77,7 @@ def ingest_all_sp500_data(con):
         raise ValueError("No stocks found.")
     with open(FAILED_SECTOR_LOG_PATH, "w", encoding="utf-8") as f:
         f.write("error\n")
-    print("Fetching GICS Sector Data...")
+    logger.info("Fetching GICS Sector Data...")
     try:
         sp500_df = get_current_sp500()
         existing_tickers = {
@@ -103,10 +106,10 @@ def ingest_all_sp500_data(con):
         counts = upsert_df["status"].value_counts()
         n_renamed = upsert_df["reason"].str.startswith("renamed", na=False).sum()
         n_removed = counts.get("inactive", 0) - n_renamed
-        print(f"Sector reconciliation: {counts.get('active', 0)} active, {n_renamed} renamed (inactive), {n_removed} removed/unconfirmed (inactive)")
+        logger.info(f"Sector reconciliation: {counts.get('active', 0)} active, {n_renamed} renamed (inactive), {n_removed} removed/unconfirmed (inactive)")
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
-        print(f"FAILED fetching sector data: {err}")
+        logger.error(f"FAILED fetching sector data: {err}")
         try:
             con.unregister("temp_sectors")
         except Exception:
