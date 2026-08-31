@@ -347,8 +347,15 @@ def engineer_total_risk_score(input_df):
 
 def engineer_high_conviction(input_df):
     df = input_df
+    # earnings_explosiveness_bucket is only populated on earnings-day rows, but HC is
+    # meaningful on pre-earnings rows too — pre_earnings_drift_flag is deliberately
+    # computed there so the upcoming-events view gets a current-state flag. Carry the
+    # last completed event's bucket forward locally (the stored column is left as-is);
+    # without this the bucket is NaN on non-earnings rows and HC silently evaluates
+    # False regardless of the stock's actual tier. Requires df sorted by [stock, date].
+    bucket = df.groupby("stock")["earnings_explosiveness_bucket"].ffill()
     df["is_high_conviction"] = (
-        (df["earnings_explosiveness_bucket"] == "High Alert") &
+        (bucket == "High Alert") &
         df["pre_earnings_drift_flag"].notna() &
         (df["pre_earnings_drift_flag"] != "")
     )

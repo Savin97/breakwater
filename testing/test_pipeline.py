@@ -20,6 +20,7 @@ import pytest
 
 from pipeline.stage3 import stage3
 from pipeline.stage4 import stage4
+from scoring.scoring_features import engineer_high_conviction
 
 
 # ── Fixture ───────────────────────────────────────────────────────────────────
@@ -271,9 +272,17 @@ def test_extreme_subset_of_large(stage4_df):
 
 # ── High conviction logic ─────────────────────────────────────────────────────
 
+def _carried_bucket(df):
+    """The bucket HC is actually defined against. earnings_explosiveness_bucket is only
+    materialised on earnings-day rows, so on the pre-earnings rows — where HC matters most,
+    since that is what the upcoming-events views read — the stored value is NaN and the
+    stock's tier is the last completed event's. Mirrors engineer_high_conviction."""
+    return df.groupby("stock")["earnings_explosiveness_bucket"].ffill()
+
+
 def test_high_conviction_implies_high_alert(stage4_df):
-    hc = stage4_df[stage4_df["is_high_conviction"] == True]
-    assert (hc["earnings_explosiveness_bucket"] == "High Alert").all()
+    hc = stage4_df["is_high_conviction"] == True
+    assert (_carried_bucket(stage4_df)[hc] == "High Alert").all()
 
 
 def test_high_conviction_implies_drift_flag(stage4_df):
@@ -282,5 +291,45 @@ def test_high_conviction_implies_drift_flag(stage4_df):
 
 
 def test_non_high_alert_never_high_conviction(stage4_df):
-    not_ha = stage4_df[stage4_df["earnings_explosiveness_bucket"] != "High Alert"]
-    assert not not_ha["is_high_conviction"].any()
+    not_ha = _carried_bucket(stage4_df) != "High Alert"
+    assert not stage4_df.loc[not_ha, "is_high_conviction"].any()
+
+
+# The stage4_df fixture is synthetic and currently yields no High Alert events, so the
+# three tests above are vacuously true on it. These exercise engineer_high_conviction
+# directly against a hand-built frame, so the carry-forward behaviour is actually asserted.
+
+def test_high_conviction_carries_across_non_earnings_rows():
+    """A High Alert event leaves NaN buckets on the days that follow it. HC must still
+    fire on those rows when a drift flag is present — this is the upcoming-event case."""
+    df = pd.DataFrame({
+        "stock": ["AAA"] * 4,
+        "date": pd.date_range("2024-01-01", periods=4, freq="D"),
+        "earnings_explosiveness_bucket": ["High Alert", np.nan, np.nan, np.nan],
+        "pre_earnings_drift_flag": ["", "", "Extended", ""],
+    })
+    out = engineer_high_conviction(df)
+    assert list(out["is_high_conviction"]) == [False, False, True, False]
+
+
+def test_high_conviction_not_carried_from_lower_tier():
+    """The carry must not promote a stock whose last event was below High Alert."""
+    df = pd.DataFrame({
+        "stock": ["AAA"] * 3,
+        "date": pd.date_range("2024-01-01", periods=3, freq="D"),
+        "earnings_explosiveness_bucket": ["Elevated", np.nan, np.nan],
+        "pre_earnings_drift_flag": ["", "Extended", "Compressed"],
+    })
+    assert not engineer_high_conviction(df)["is_high_conviction"].any()
+
+
+def test_high_conviction_does_not_leak_across_stocks():
+    """ffill runs per stock — BBB must not inherit AAA's High Alert."""
+    df = pd.DataFrame({
+        "stock": ["AAA", "AAA", "BBB", "BBB"],
+        "date": pd.to_datetime(["2024-01-01", "2024-01-02"] * 2),
+        "earnings_explosiveness_bucket": ["High Alert", np.nan, np.nan, np.nan],
+        "pre_earnings_drift_flag": ["", "Extended", "Extended", "Extended"],
+    })
+    out = engineer_high_conviction(df)
+    assert list(out["is_high_conviction"]) == [False, True, False, False]
