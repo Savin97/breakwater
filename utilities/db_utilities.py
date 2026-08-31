@@ -109,9 +109,18 @@ def create_iv_table_if_not_exists(con):
 
 
 def create_predictions_table_if_not_exists(con):
+    """The calls we published, one row per stock per earnings event per run day.
+    Scoped to the run week only (see save_predictions.py) — this table is the product
+    record, not a dump of every scored event. Two week columns, easy to confuse:
+      week_start — Monday of the week the COMPANY REPORTS (derived from earnings_date)
+      run_week   — Monday of the week WE MADE THE CALL (derived from prediction_asof_date)
+    Backtest the product against predictions_week_open (the view below); use this table
+    directly only to study how a call drifted between the Monday call and the event.
+    """
     con.execute("""
         CREATE TABLE IF NOT EXISTS predictions (
             prediction_asof_date    DATE,
+            run_week                DATE,
             week_start              DATE,
             stock                   TEXT,
             earnings_date           DATE,
@@ -125,12 +134,32 @@ def create_predictions_table_if_not_exists(con):
             ingested_at             TIMESTAMP
         );
     """)
-    # One row per (stock, earnings_date) per run day — re-running the pipeline the same
-    # day won't duplicate a snapshot, but each new asof date (e.g. next Monday's run)
-    # records a fresh row so predictions can be tracked as they evolve toward the event.
+    # Self-migration for DBs created before run_week existed. Needed because
+    # scripts/sync_pipeline.sh overwrites the local DB with the droplet's copy, so a
+    # schema change applied on only one side gets silently reverted on the next sync.
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS run_week DATE")
+    con.execute("""
+        UPDATE predictions
+        SET run_week = date_trunc('week', prediction_asof_date)
+        WHERE run_week IS NULL
+    """)
+
+    # One row per (stock, earnings_date) per run DAY. A same-day re-run upserts in place
+    # (see save_predictions.py) so a re-score after a fix corrects the row rather than
+    # being dropped; a run on a new date inserts a fresh row, preserving the trajectory.
     con.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS predictions_uq
         ON predictions(stock, earnings_date, prediction_asof_date);
+    """)
+
+    # The product-of-record: the earliest surviving call per event per run week, i.e. what
+    # we published on Monday. Query this for hit rates — reading the raw table instead
+    # double-counts any event that happened to be scored on several days that week.
+    con.execute("""
+        CREATE OR REPLACE VIEW predictions_week_open AS
+        SELECT DISTINCT ON (stock, earnings_date, run_week) *
+        FROM predictions
+        ORDER BY stock, earnings_date, run_week, prediction_asof_date;
     """)
 
 
@@ -419,5 +448,6 @@ def verify_tables_existence(con):
     create_sectors_data_table_if_not_exists(con)
     create_iv_table_if_not_exists(con)
     create_eps_estimates_table_if_not_exists(con)
-    create_predictions_table_if_not_exists(con)
+    # create_predictions_table_if_not_exists is deliberately NOT called here: predictions
+    # live in PREDICTIONS_DB_PATH, not this DB. save_predictions.py creates it there.
     print("DB Tables Set Up")

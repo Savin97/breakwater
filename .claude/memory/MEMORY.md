@@ -8,6 +8,75 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## 2026-08-31 — Predictions table + is_high_conviction fix (branch `risk_score_proposed_fix`)
+
+**Committed:** `b0db658` (HC fix + tests). Predictions-storage commit staged separately.
+
+**Predictions snapshot shipped** — `pipeline/save_predictions.py::save_predictions_snapshot(df)`,
+called at the end of stage5. Records what we published: `prediction_asof_date`, `run_week`,
+`week_start`, stock, `earnings_date`, `tier`, `risk_score`, `is_high_conviction`, both flags,
+`model_version`, `git_commit`.
+- **Scope is the run week only** (`today..Sunday`), not every future event — the table is the
+  product record. Window starts at *today*, not Monday, so a mid-week re-run can't write a
+  prediction for an event that already reported (would leak hindsight into backtests). Cut at
+  Sunday not Friday because 115 earnings_dates in history land on a weekend (bad source data).
+- **Lives in its own `db/predictions.duckdb`** (`config.PREDICTIONS_DB_PATH`), NOT breakwater.duckdb.
+  Verified on the droplet: it has **no** predictions table and never writes one (its cron runs
+  `run_incremental()`, which skips stage5). `scripts/full_workflow.sh` pulls the droplet's
+  breakwater.duckdb and *overwrites local*, so a table living there is destroyed every weekly run.
+  Pushing our copy back was rejected: the droplet has **six cron writers/day** (ingest 06:00,
+  eps 14:45, IV 15:00/16:30/18:00/19:30 UTC) and rsync over a live DuckDB risks corruption plus
+  loss of IV snapshots, which cannot be refetched.
+- **Un-ignored in .gitignore** — it is the only copy and a lost week is unrecoverable. Needed
+  `db/*` + `**/db/*` instead of `db/`, because git cannot re-include a file whose parent dir is
+  excluded.
+- **Upsert**, keyed `(stock, earnings_date, prediction_asof_date)`. `ON CONFLICT DO NOTHING` was
+  wrong: the first run of a day won, so a broken snapshot survived a same-day re-score (this bit us
+  — required a manual DELETE). New date = new row, preserving drift toward the event.
+- **`predictions_week_open` view** = earliest surviving call per event per run week (the Monday
+  call). **Backtest against the view, not the table** — the raw table double-counts any event
+  scored on several days that week.
+- `utilities/peek_at_db.py` attaches the second DB + sets search_path so `peek_at_db predictions`
+  still works unqualified; `list_tables` needs `SHOW ALL TABLES` (plain `SHOW TABLES` sees only the
+  current catalog).
+
+**`is_high_conviction` was silently False on ~98% of rows** (fixed, `b0db658`).
+`engineer_high_conviction` compared `earnings_explosiveness_bucket` per row, but that column exists
+**only on earnings-day rows** — NaN in between, and `(NaN == "High Alert")` is False. Score/bucket
+survive this because `.groupby().last()` skips NaN and reaches back; a bool has no NaN to skip, so
+the wrong value wins. Fix carries the last completed event's bucket forward *locally inside the
+function*; stored columns untouched, so calibration groupbys and backtesting see identical data.
+Earnings-day rows bit-identical; ~31k rows changed, all False -> True.
+- **Who was affected:** `report_builder`'s weekly High Conviction list and the predictions table
+  (both read the raw column). Dashboard + weekly chart were already correct — they recompute it.
+- **Rejected as too broad:** ffilling the stored score/bucket columns. Only the bool benefits;
+  every other consumer already reaches back via `.last()`.
+
+**The test suite proved nothing here — 68/68 passed before AND after.** The synthetic fixture in
+`testing/test_pipeline.py` yields **zero High Alert rows**, so all three HC tests were vacuous
+(`.all()` on an empty frame is True), and two asserted the *old buggy* invariant and would have
+failed on real data. Now compare against the carried bucket + three direct tests of
+`engineer_high_conviction`, each confirmed to fail against the old implementation. **Lesson: check a
+new test actually fails against the bug before trusting a green suite.** Other fixture-driven tests
+may be vacuous for the same reason — not audited.
+
+**MODEL_VERSION renumbered to `0.3.1`** (pre-1.0 — not a finished product). Old `"1.0"` = **0.1**,
+old `"1.1"` = **0.2**; mapping recorded in config.py. Stored rows also carry `git_commit`, which
+places them unambiguously — needed because the 08-29 rows were labelled "1.0" while actually being
+lift-era `f3dd1e2` output.
+
+**Resolves open item 3 of the 2026-08-29 entry** (mislabeled prediction rows): table was cleared and
+re-saved; now 10 rows, asof 2026-08-31, model_version 0.3.1, HC=2 (ORCL, DECK).
+
+**Open:**
+1. **Not pushed / not deployed.** Branch not merged to master, nothing pushed. Droplet deploys by
+   `git pull`, so pushing master is effectively a deploy.
+2. **`db/predictions.duckdb` has no backup until committed** — un-ignoring only makes git *see* it.
+3. **9 stocks have earnings_date >90 days out** (CRM, CRWD, DG, DLTR, HRL, NDSN, SNPS, ULTA, WDAY) —
+   same class as WDAY's 174-day gap. Ingestion data-quality issue, untouched.
+4. `.claude/memory/MEMORY.md` "UNCOMMITTED" markers on the two 2026-08-29 entries were stale; the
+   lift entry is now marked committed. The logging/parallelization entries were not re-verified.
+
 ## 2026-08-29 — Logging framework + report logo fix (UNCOMMITTED, local only)
 
 Continuation of the same session as the parallelization entry below — both are uncommitted together.
@@ -122,6 +191,55 @@ noted on 2026-08-15 was already fixed by other work — nothing to do.
 
 **Update:** the logging pass (the other half of the original "too verbose / too slow" work) was
 implemented later the same day — see the 2026-08-29 logging entry above. Both are uncommitted together.
+
+## 2026-08-29 — Lift-based tier promotion built on branch `risk_score_proposed_fix` (COMMITTED f3dd1e2)
+
+**Supersedes the 2026-08-19 plan below — that plan's approach was tested and rejected.**
+
+**What shipped into the working tree:** `engineer_stock_bucket_lift` + `engineer_lift_adjusted_bucket`
+in `scoring/scoring_features.py`, wired into `pipeline/stage4.py`. Lift = P(extreme|stock,bucket) /
+P(extreme|market), causal (prior events only, shift(1)-before-expanding), shrunk by
+`LIFT_PRIOR_STRENGTH=20`. Normal events with lift>=1.5 promote to Elevated, >=3.0 to High Alert.
+Structural bucket preserved as `earnings_explosiveness_bucket_structural`. Duplicate logic deleted
+from `report/report_builder.py`. `MODEL_VERSION` -> 1.1.
+
+**Measured OOS 2015-2025:** capture of >=8% moves **43.6% -> 56.8%**, >=15% 66.2% -> 76.1%.
+High Alert unchanged (40.3%, 3.72x), Normal cleaner (7.0% -> 5.8%), Elevated 25.2% -> 23.7%
+(inside both CIs, not distinguishable). Selection 12.7% -> 18.9% (~4.8 -> ~7 names/week).
+High Conviction **bit-for-bit identical** (234 events, 0.534, 4.81x). 68/68 tests pass.
+
+**Rejected by measurement — do not retry:** multiplying risk_score by lift drops top-decile lift
+3.70x -> 2.98x (lift is ~0.79 rank-correlated with the score and corrupts its ordering). Ranking
+drift-first (treating HC as a tier above High Alert) drops P@10 2.25x -> 1.89x — HC is an overlay,
+and that original design is correct. Deleting the report_builder bump outright was also wrong: its
+promoted events realise 0.238 vs 0.058 for the Normal events left behind, i.e. real signal.
+
+**Why score and lift disagree** (the crux): score is p75 of abs reactions (rolling 28, capped at
+12%) = the *typical* move; lift is frequency of >=8% = the *tail*. p75 structurally ignores the top
+25%. EW: typical move 2.4% but 25% of events >=8%. Separately, EBAY scores **72.976** against a 73
+cutoff while exceeding 8% in 75% of its events — so lift is currently patching threshold brittleness
+as well as finding tail-heavy names.
+
+**Open, in priority order:**
+1. **73/79 cutoffs and the lift gate must be tuned together** — lift is doing two jobs (real tail
+   signal + patching the hard 73 boundary). Sequential tuning double-counts.
+2. **Unresolved: what `risk_score` is for.** Tier now uses two signals, score carries one, so they
+   disagree — Elevated currently spans 29.68-78.97 vs Normal 8.71-72.98 (16,698 overlapping pairs,
+   up from 0). Either accept it (score = within-tier sort key) or floor the score to the tier
+   boundary (rejected once as assigning a non-measurement). A measured but NOT-implemented option:
+   gate promotion on structural score >=50 — capture 57.2% -> 57.0% (~free), Elevated quality
+   0.241 -> 0.250, worst ordering violations gone.
+3. ~~**Predictions table has mislabeled rows**~~ — RESOLVED 2026-08-31: table cleared and
+   re-saved, and the insert is now an upsert so a same-day re-run corrects rather than skips.
+   See the 2026-08-31 entry.
+4. **Incremental path untested** — `stock_bucket_lift` and `earnings_explosiveness_bucket_structural`
+   added to `INCREMENTAL_CACHED_COLS` but `run_incremental()` never exercised. Droplet cron uses it.
+
+**Gotcha found:** `main.py` runs `run_pipeline(incremental=False)` = the **paid AlphaVantage** path;
+`incremental=True` is the free yfinance one. CLAUDE.md documented this backwards and has been fixed,
+along with several dead paths (`prep_for_streamlit.py`, root `testing.py`, `backtesting/`,
+`data/breakwater.duckdb`, `streamlit_df.csv`). `scripts/full_workflow.sh` calls `main.py`, so it hits
+the paid path as written. To re-score without ingesting, run stage2->3->4 directly.
 
 ## 2026-08-19 — Diagnosed risk_score/bucket inconsistency; fix planned, deferred to own branch
 

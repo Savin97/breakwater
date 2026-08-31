@@ -9,8 +9,13 @@ __pycache__/
 # Data / outputs (tweak if needed)
 output/
 **/output/
-db/
-**/db/
+# Ignore DB contents, not the directory itself: git cannot re-include a file whose
+# parent directory is excluded, and predictions.duckdb below needs to be tracked.
+db/*
+**/db/*
+# The product record — the calls we published each week. Tracked deliberately: it is the
+# only copy, nothing syncs it, and unlike prices/earnings a lost week cannot be refetched.
+!db/predictions.duckdb
 backtesting/artifacts/
 testing/testing_results/
 testing/testing_results/**

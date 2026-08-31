@@ -1,6 +1,24 @@
 # config.py
+
+# Bump manually on scoring-logic changes; recorded on every predictions snapshot row
+# alongside the git commit, so backtests can tell which model version produced a call.
+#
+# Pre-1.0 on purpose — the model is still being developed and nothing here is a frozen
+# release. History, renumbered 2026-08-31 (earlier snapshot rows carry the OLD labels;
+# use git_commit to place them, it is unambiguous):
+#   0.1   — was labelled "1.0". Structural score + fixed 73/79 bucket cuts.
+#   0.2   — was labelled "1.1". Adds lift-based tier promotion (commit f3dd1e2).
+#   0.3.1 — is_high_conviction now carries the last completed event's bucket forward,
+#           so HC is correct on pre-earnings rows instead of silently False.
+MODEL_VERSION = "0.3.1"
+
 STOCK_LIST_PATH = "data/stock_list.csv"
 DB_PATH = "db/breakwater.duckdb"
+# Predictions live in their OWN database on purpose. scripts/full_workflow.sh pulls the
+# droplet's breakwater.duckdb and overwrites the local copy, so anything stored there is
+# destroyed on the next weekly run; the droplet also has six cron writers a day, making
+# pushing our copy back unsafe. This file is written only by us, and nothing syncs it.
+PREDICTIONS_DB_PATH = "db/predictions.duckdb"
 OUTPUT_PATH = "output/"
 
 # Global Parameters
@@ -34,10 +52,6 @@ LIFT_TO_ELEVATED        = 1.5
 LIFT_TO_HIGH_ALERT      = 3.0
 EARNINGS_DATE_VALIDATION_WINDOW_DAYS = 20 # How far ahead to cross-check unconfirmed earnings dates against ticker.calendar
 EARNINGS_RECHECK_WINDOW_DAYS = 14 # Stocks reporting within this many days are always re-fetched, so a wrong estimated date can still self-correct
-
-# Bump manually on scoring-logic changes; recorded on every predictions snapshot row
-# alongside the git commit, so backtests can tell which model version produced a call.
-MODEL_VERSION = "1.1"  # 1.1: lift-based tier promotion (engineer_lift_adjusted_bucket)
 
 # Logging
 LOG_LEVEL = "INFO"  # "DEBUG" adds per-stock detail; "INFO" shows summaries only
