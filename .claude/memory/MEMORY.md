@@ -13,17 +13,18 @@ Entries are updated at the end of each session. Most recent first.
 **Same GOAL as below:** automatic weekly predictions + digest emails ON THE DROPLET.
 Today removed the blockers around it. **The slice work itself is still NOT started.**
 
-### State of the tree
-- **One branch: `master`.** Local == `origin/master` == `3b1283c`. `risk_score_proposed_fix`
-  and `stock-lifecycle-status` were verified fully contained (0 unique commits each) and
-  **deleted** local + remote. Old tips if ever needed: `2b79144`, `b387d82`.
+### State of the tree — END OF SESSION, all clean
+- **One branch: `master`.** Local == `origin/master` == **`d9567d8`**, working tree clean.
+  `risk_score_proposed_fix` and `stock-lifecycle-status` were verified fully contained
+  (0 unique commits each) and **deleted** local + remote. Old tips: `2b79144`, `b387d82`.
+- **DROPLET IS DEPLOYED** — pulled to `d9567d8`, ingest-only `cron_ingest` in place, tree
+  clean apart from an untracked `next_earnings_df.csv`. Tomorrow's 06:00 run should succeed;
+  **check `/var/log/breakwater_ingest.log` first thing** to confirm it did.
 - **Suite is GREEN**: `72 passed, 1 xfailed`. The parity failure is now
   `xfail(strict=True)`, not a red test. Do not delete the marker by hand — `strict=True`
   makes the test FAIL the moment the bug is fixed, which is the signal to remove it.
-- **Droplet is 5 commits behind** and still runs the OLD `cron_ingest`, so its 06:00 job
-  still dies on `stage1(update=True)` TypeError until someone runs `git pull` there.
-  Droplet tree is clean apart from an untracked `next_earnings_df.csv` — clean fast-forward.
-- Uncommitted at time of writing: the refactor + parity test + this file (user is committing).
+- Commits from this session: `3b1283c` (ingest-only), `e0c8632` (merge), `b19219c`
+  (refactor + parity test), `d9567d8` (memory prune).
 
 ### Done today
 1. **`cron/cron_ingest.py` is now ingest-only** (`3b1283c`) — just `stage1(incremental=True)`.
@@ -47,15 +48,56 @@ Today removed the blockers around it. **The slice work itself is still NOT start
   `run_pipeline(incremental)`; latent `TypeError`, currently unreachable. Fix when rebuilding.
   Also: `streamlit_dash/app.py` imports `run_pipeline` but never calls it — near miss, checked.
 
-### Next, in order
-1. **The slice work** (full design in the entry below — read the non-contiguity constraint,
-   it is the part that silently corrupts data). Not started: `stage2` still takes only
-   `lookback_days`, `stage3` still does the 391 MB `read_parquet`.
-2. `cron_weekly_digest.py` -> read `output/upcoming_df.parquet` (46 KB) not `full_df.parquet`.
-3. Deploy: `git pull` on the droplet, verify `python -m cron.cron_ingest`.
-4. Droplet needs `data/subscribers.txt` + `DIGEST_SMTP_*` in `.env`.
-5. Decide where predictions live once the droplet writes them — `db/predictions.duckdb` is
-   git-tracked and now on the droplet as an inert copy; both sides writing = binary conflicts.
+### Next, in order — START HERE TOMORROW
+
+**0. Confirm the deploy worked.** `ssh root@harbor-markets.com` then
+`tail -30 /var/log/breakwater_ingest.log`. Expect a clean run, no `Killed`, no `TypeError`.
+This is the first 06:00 cron that should ever have succeeded. If it did, the daily OOM is over.
+
+**1. The slice work — the real task.** Full design in the 2026-08-31 entry below.
+**Read the non-contiguity constraint before writing any code** — the slice has ~90-day gaps,
+so `.diff()`/`.pct_change()`/`.rolling()` on it produce plausible-looking garbage (AAPL: 0.262
+vs a true 0.0104). Split: historical earnings rows use STORED per-event values and only
+aggregate across events; the recent 90-day window is contiguous and recomputed normally.
+Nothing exists yet — `stage2` still only takes `lookback_days`, `stage3` still does the
+391 MB `read_parquet`. Success criterion: the xfail parity test flips to XPASS.
+
+**2. `cron_weekly_digest.py` line 307** reads the whole 2.9M-row frame with no column
+selection. Point it at `output/upcoming_df.parquet` (46 KB — already has tier, score,
+percentile, both flags, HC, earnings_date). **Its crontab line is also commented out**, so the
+digest does not run at all today. Do the parquet change BEFORE uncommenting, or it just OOMs.
+
+### Decisions taken 2026-09-01 (so they are not re-litigated)
+- **Where predictions live once the droplet generates them:** droplet writes
+  `db/predictions.duckdb`; `full_workflow.sh` pulls it DOWN alongside `breakwater.duckdb`;
+  local git commits it. One writer (droplet), one archive (git). This inverts today's
+  direction — predictions are currently written locally and would be clobbered by the sync.
+  Not implemented yet; blocked on the slice work.
+- **Brain (`/home/Michael/projects/brain`): undecided, leave alone.** User: "i havent used the
+  brain yet, it was an idea." Every file there is dated 2026-06-29 and it is not a git repo.
+  `projects/breakwater.md` has drifted (`data/breakwater.duckdb` -> now `db/`,
+  `monday_workflow.sh` -> now `full_workflow.sh`). Breakwater's CLAUDE.md still routes every
+  session there before architecture work; that detour is currently worthless. Do not spend
+  time on it unless asked.
+- **Subscribers:** `data/subscribers.txt` was un-ignored by the user. **The repo is PUBLIC**
+  (`api.github.com/repos/Savin97/breakwater` -> `"private": false`) — user believed it was
+  private and judged the exposure acceptable on that basis; flagged, user's call, one address.
+  Real fix when wanted: a `subscribers` table (email, subscribed_at, status,
+  unsubscribe_token) fed by the landing-page form, digest reads the table not the file.
+  Needs a decision on whether the form posts to the droplet or a third party (Formspree).
+  Own session, not a tweak.
+
+### Also open
+- Droplet has **no backups at all** — the only backup line in its crontab is Ubuntu's
+  commented-out example. Disk is 37% used, 15 GB free, uptime 8 days (prior boot ran 102
+  days), 5 kernel OOM events all self-inflicted by the pipeline. Stable enough to write to,
+  not safe as the only copy.
+- Droplet still needs `data/subscribers.txt` and `DIGEST_SMTP_*` in `.env` before any digest
+  email can send.
+- `run_incremental_pipeline()` has **no callers anywhere** — dead until the slice work revives
+  it. Its line 27 calls `run_pipeline()` with no args while the signature is
+  `run_pipeline(incremental)`; latent `TypeError`, currently unreachable. Fix when rebuilding.
+- `utilities/db_utilities.py` has no trailing newline.
 
 ## 2026-08-31 (session 2) — Droplet memory diagnosis + plan for automated weekly predictions
 

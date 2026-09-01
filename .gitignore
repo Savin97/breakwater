@@ -20,8 +20,6 @@ backtesting/artifacts/
 testing/testing_results/
 testing/testing_results/**
 
-# Contains real subscriber emails - never track
-data/subscribers.txt
 
 # misc stuff
 .DS_Store
