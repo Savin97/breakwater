@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 
 
-def export_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit_df.parquet") -> None:
+def generate_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit_df.parquet") -> None:
     earnings_df = df[df["is_earnings_day"] == 1].copy()
 
     P_extreme_global = earnings_df["is_extreme_reaction"].mean()

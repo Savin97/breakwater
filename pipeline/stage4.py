@@ -32,6 +32,12 @@ def stage4(stage3_df, incremental=False):
     stage4_df = stage3_df.copy()
 
     if incremental:
+        # engineer_earnings_explosiveness_score skipped: score and bucket are
+        # read from cache in stage3 so the last-complete-event values are preserved.
+        # engineer_stock_bucket_lift / engineer_lift_adjusted_bucket skipped for the
+        # same reason — both need is_extreme_reaction, which needs abs_reaction_3d,
+        # unavailable in the 90-day incremental window. The already-adjusted bucket
+        # comes back from the cache, so no re-derivation is needed here.
         features = [
             engineer_vol_stress,
             engineer_sector_vol_stress,
@@ -40,12 +46,6 @@ def stage4(stage3_df, incremental=False):
             engineer_proximity_score,
             engineer_vol_expansion_score,
             engineer_momentum_fragility_score,
-            # engineer_earnings_explosiveness_score skipped: score and bucket are
-            # read from cache in stage3 so the last-complete-event values are preserved.
-            # engineer_stock_bucket_lift / engineer_lift_adjusted_bucket skipped for the
-            # same reason — both need is_extreme_reaction, which needs abs_reaction_3d,
-            # unavailable in the 90-day incremental window. The already-adjusted bucket
-            # comes back from the cache, so no re-derivation is needed here.
             engineer_surprise_momentum_flag,
             engineer_pre_earnings_drift_flag,
             engineer_total_risk_score,

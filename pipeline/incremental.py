@@ -4,13 +4,14 @@ from datetime import date
 import duckdb
 import pandas as pd
 from config import DB_PATH, INCREMENTAL_LOOKBACK_DAYS
+from pipeline.stage1 import stage1
 from pipeline.stage2 import stage2
 from pipeline.stage3 import stage3
 from pipeline.stage4 import stage4
 from streamlit_dash.streamlit_export import export_upcoming_df
 
 
-def run_incremental():
+def run_incremental_pipeline():
     """
     Fast incremental update (~5-10s vs 80s full run).
 
@@ -24,6 +25,7 @@ def run_incremental():
     if _has_new_earnings():
         from pipeline.pipeline import run_pipeline
         return run_pipeline()
+    stage1(incremental=True)
     df = stage2(lookback_days=INCREMENTAL_LOOKBACK_DAYS)
     df = stage3(df, incremental=True)
     df = stage4(df, incremental=True)

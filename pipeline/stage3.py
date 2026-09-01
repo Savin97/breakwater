@@ -25,7 +25,6 @@ from feature_engineering.pre_earnings_sector_features import (
     engineer_stock_vs_sector_vol,
     engineer_sector_earnings_density)
 
-
 def stage3(stage2_df, incremental=False):
     """
     Pipeline Stage 3 - Feature Engineering.

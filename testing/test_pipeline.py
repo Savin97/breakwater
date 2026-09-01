@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from config import INCREMENTAL_LOOKBACK_DAYS
 from pipeline.stage3 import stage3
 from pipeline.stage4 import stage4
 from scoring.scoring_features import engineer_high_conviction
@@ -25,22 +26,29 @@ from scoring.scoring_features import engineer_high_conviction
 
 # ── Fixture ───────────────────────────────────────────────────────────────────
 
-def _build_stage2_df(n_days=250, seed=42):
+def _build_stage2_df(n_days=250, seed=42, e_indices=(60, 120, 180, 220), trend_tail=None):
     """
-    Minimal stage-2-like DataFrame: 2 stocks × n_days rows, 4 earnings events each.
-    Earnings are spaced so every event has ≥ 5 price rows after it (needed for
-    reaction_5d), and enough history before it for rolling features.
+    Minimal stage-2-like DataFrame: 2 stocks × n_days rows, one earnings event per
+    index in e_indices. Earnings are spaced so every event has >= 5 price rows after
+    it (needed for reaction_5d), and enough history before it for rolling features.
+
+    trend_tail: optional (n, drift) — force a sustained drift over the final n rows of
+    the FIRST stock. Used by the incremental-parity test to guarantee that stock ends
+    with a pre-earnings drift flag, so the comparison cannot pass vacuously.
     """
     rng  = np.random.default_rng(seed)
     base = pd.Timestamp("2020-01-02")
-    dates = [base + pd.Timedelta(days=i) for i in range(n_days)]
-
-    # Earnings at these row-indices (well inside the window).
-    e_indices = (60, 120, 180, 220)
+    # padded past n_days: e_indices may name a FUTURE event that has no price row yet,
+    # which is what gives the last rows a non-null days_to_earnings, as in real data.
+    dates = [base + pd.Timedelta(days=i) for i in range(n_days + 90)]
 
     rows = []
     for stock, sector in [("AAA", "Technology"), ("BBB", "Financials")]:
-        prices = 100.0 * np.cumprod(1 + rng.normal(0.0003, 0.013, n_days))
+        rets = rng.normal(0.0003, 0.013, n_days)
+        if trend_tail is not None and stock == "AAA":
+            n_tail, drift = trend_tail
+            rets[-n_tail:] = drift
+        prices = 100.0 * np.cumprod(1 + rets)
 
         def _next_earnings_date(i):
             for ei in e_indices:
@@ -333,3 +341,82 @@ def test_high_conviction_does_not_leak_across_stocks():
     })
     out = engineer_high_conviction(df)
     assert list(out["is_high_conviction"]) == [False, True, False, False]
+
+
+# ── Incremental vs full parity ────────────────────────────────────────────────
+# The droplet scores through the incremental path while we publish from the full one.
+# If they disagree, the dashboard and the PDFs describe the same stock differently and
+# nothing anywhere reports it — that divergence went unnoticed from Jun to Aug 2026.
+
+INCREMENTAL_PARITY_COLS = [
+    "earnings_explosiveness_bucket",
+    "earnings_explosiveness_score",
+    "risk_score",
+    "is_high_conviction",
+    "pre_earnings_drift_flag",
+    "surprise_momentum_flag",
+]
+
+
+def _full_then_incremental(tmp_path, monkeypatch):
+    """Score one dataset both ways and return (full, incremental) latest-row-per-stock."""
+    n_days = 900
+    df = _build_stage2_df(
+        n_days=n_days,
+        # ~quarterly history, plus an UPCOMING event 21 days past the last price row
+        # so the latest row sits in the 1-60 day pre-earnings window the flag needs.
+        e_indices=tuple(range(120, n_days - 10, 63)) + (n_days + 20,),
+        trend_tail=(45, 0.006),                          # guarantees a drift flag
+    )
+    full = stage4(stage3(df, incremental=False), incremental=False)
+
+    # stage3(incremental=True) reads output/full_df.parquet relative to cwd.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "output").mkdir()
+    full.to_parquet(tmp_path / "output" / "full_df.parquet", index=False)
+
+    window_start = df["date"].max() - pd.Timedelta(days=INCREMENTAL_LOOKBACK_DAYS)
+    inc = stage4(stage3(df[df["date"] >= window_start].copy(), incremental=True),
+                 incremental=True)
+
+    return (full.sort_values("date").groupby("stock").last(),
+            inc.sort_values("date").groupby("stock").last())
+
+
+def test_incremental_parity_fixture_is_not_vacuous(tmp_path, monkeypatch):
+    """Guard the test below. If the full path emits no flags there is nothing to
+    disagree about, and parity would pass while proving nothing — which is exactly how
+    the HC tests stayed green over a real bug."""
+    full, _ = _full_then_incremental(tmp_path, monkeypatch)
+    assert (full["pre_earnings_drift_flag"] != "").any(), (
+        "fixture produces no pre-earnings drift flag; parity test would be vacuous"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN BUG, not yet fixed. engineer_pre_earnings_drift_flag builds its baseline "
+        "from drift_30d over the stock's earnings-day rows present in the loaded frame. "
+        "The incremental window is 90 days, and only 4 of 500 real stocks have >=2 earnings "
+        "days in 90 days, so std is NaN, has_hist is False, and the flag falls back to ''. "
+        "On real data 17 stocks lose pre_earnings_drift_flag, 8 differ on "
+        "surprise_momentum_flag, and is_high_conviction flips True->False (ORCL, DECK). "
+        "Score and bucket match because they are served from INCREMENTAL_CACHED_COLS. "
+        "Fix is the slice-loading change: load every earnings-day row (~91 per stock) plus "
+        "the last 90 days of prices, so the baseline can actually be built. strict=True on "
+        "purpose - when that lands this test XPASSes and FAILS, forcing the marker off."
+    ),
+)
+def test_incremental_matches_full_on_latest_row(tmp_path, monkeypatch):
+    """Both paths must describe a stock identically on the latest row per stock —
+    the row every upcoming-events consumer reads."""
+    full, inc = _full_then_incremental(tmp_path, monkeypatch)
+    assert list(full.index) == list(inc.index)
+
+    mismatched = {}
+    for col in INCREMENTAL_PARITY_COLS:
+        a, b = full[col].astype(str), inc[col].astype(str)
+        if not a.equals(b):
+            mismatched[col] = {s: (a[s], b[s]) for s in a.index[a != b]}
+    assert not mismatched, f"full vs incremental disagree: {mismatched}"

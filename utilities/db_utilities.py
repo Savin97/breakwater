@@ -9,6 +9,7 @@
     create_predictions_table_if_not_exists
 """
 import logging
+from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,6 @@ def create_predictions_table_if_not_exists(con):
         ORDER BY stock, earnings_date, run_week, prediction_asof_date;
     """)
 
-
 def merge_tables(con):
     """
         Tables:
@@ -200,6 +200,7 @@ def merge_tables(con):
         LEFT JOIN earnings e ON p.stock = e.stock AND p.date = e.earnings_date
         LEFT JOIN stock_data sd ON p.stock = sd.stock;
         """)
+
 
 def clean_duplicate_earnings_from_db(con, window_days=30):
     """Delete duplicate earnings rows from the DB where two dates for the same stock
@@ -451,3 +452,28 @@ def verify_tables_existence(con):
     # create_predictions_table_if_not_exists is deliberately NOT called here: predictions
     # live in PREDICTIONS_DB_PATH, not this DB. save_predictions.py creates it there.
     print("DB Tables Set Up")
+
+
+def incremental_of_full_ingestion_from_db(con, lookback_days):
+    if lookback_days is not None:
+        cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
+        prices_df = con.execute(
+            "SELECT stock, price, date FROM prices WHERE date >= ? ORDER BY stock, date",
+            [cutoff]
+        ).fetch_df()
+        # Include recent past + all future earnings so merge_asof attaches
+        # the correct upcoming earnings_date to each recent price row.
+        earnings_df = con.execute(
+            "SELECT stock, earnings_date, reported_eps, estimated_eps, surprise_percentage "
+            "FROM earnings WHERE earnings_date >= ? ORDER BY stock, earnings_date",
+            [cutoff]
+        ).fetch_df()
+    else:
+        prices_df = con.execute(
+            "SELECT stock, price, date FROM prices ORDER BY stock, date"
+        ).fetch_df()
+        earnings_df = con.execute(
+            "SELECT stock, earnings_date, reported_eps, estimated_eps, surprise_percentage "
+            "FROM earnings ORDER BY stock, earnings_date"
+        ).fetch_df()
+    return prices_df, earnings_df
