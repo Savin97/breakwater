@@ -194,7 +194,7 @@ the slice loading change -> parity test green -> then deploy.
 
 **Committed:** `b0db658` (HC fix + tests). Predictions-storage commit staged separately.
 
-**Predictions snapshot shipped** — `pipeline/save_predictions.py::save_predictions_snapshot(df)`,
+**Predictions snapshot shipped** — `analysis/save_predictions.py::save_predictions_snapshot(df)`,
 called at the end of stage5. Records what we published: `prediction_asof_date`, `run_week`,
 `week_start`, stock, `earnings_date`, `tier`, `risk_score`, `is_high_conviction`, both flags,
 `model_version`, `git_commit`.

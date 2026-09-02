@@ -1,4 +1,4 @@
-# pipeline/save_predictions.py
+# analysis/save_predictions.py
 import subprocess
 import duckdb
 import pandas as pd

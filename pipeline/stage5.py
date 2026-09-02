@@ -5,7 +5,7 @@ from streamlit_dash.streamlit_export import generate_streamlit_df
 from analysis.chart_weekly import generate_weekly_earnings_chart
 from marketing.generate_public_track_record import generate_public_track_record
 from analysis.last_week_results import generate_last_week_results
-from pipeline.save_predictions import save_predictions_snapshot
+from analysis.save_predictions import save_predictions_snapshot
 def stage5(df):
     print("--------------------\nStage 5 - Outputs...")
 

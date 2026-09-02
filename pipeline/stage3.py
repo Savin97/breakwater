@@ -1,6 +1,5 @@
 # pipeline/stage3.py
-import pandas as pd
-from config import INCREMENTAL_CACHED_COLS
+from utilities.scoring_slice import attach_earnings_history
 from feature_engineering.pre_earnings_stock_features import (
     engineer_daily_ret,
     engineer_drift,
@@ -30,11 +29,12 @@ def stage3(stage2_df, incremental=False):
     Pipeline Stage 3 - Feature Engineering.
 
     incremental=False (default): full run — all features computed from scratch.
-    incremental=True:  fast path — only price-dependent rolling features are
-                       recomputed; expanding earnings stats are read from
-                       output/full_df.parquet and broadcast across all rows.
-                       Use only when no new earnings events have been reported
-                       since the last full run (run_incremental() ensures this).
+    incremental=True:  fast path. Price-dependent rolling features are recomputed on the
+                       contiguous window from the DB; the stock's earnings-day history is
+                       read from output/full_df.parquet and concatenated, so baselines
+                       that aggregate ACROSS events (the drift-flag z-score, the
+                       surprise-momentum streak) have the events they need. Those rows are
+                       not contiguous — see utilities/scoring_slice.py before touching this.
     """
     print("--------------------\nStage 3 - Feature Engineering...")
     stage3_df = stage2_df.copy()
@@ -55,15 +55,9 @@ def stage3(stage2_df, incremental=False):
         for feature in feature_steps:
             stage3_df = feature(stage3_df)
 
-        # Read stable expanding stats (last non-null value per stock via skipna=True).
-        cached_stats = (
-            pd.read_parquet("output/full_df.parquet",
-                            columns=["stock"] + INCREMENTAL_CACHED_COLS)
-            .groupby("stock")[INCREMENTAL_CACHED_COLS]
-            .last()
-            .reset_index()
-        )
-        stage3_df = stage3_df.merge(cached_stats, on="stock", how="left")
+        # Earnings history for the baselines that aggregate across events. Must come
+        # after the loop above: those features are only valid on the contiguous window.
+        stage3_df = attach_earnings_history(stage3_df)
 
     else:
         feature_steps = [

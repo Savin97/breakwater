@@ -393,21 +393,6 @@ def test_incremental_parity_fixture_is_not_vacuous(tmp_path, monkeypatch):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG, not yet fixed. engineer_pre_earnings_drift_flag builds its baseline "
-        "from drift_30d over the stock's earnings-day rows present in the loaded frame. "
-        "The incremental window is 90 days, and only 4 of 500 real stocks have >=2 earnings "
-        "days in 90 days, so std is NaN, has_hist is False, and the flag falls back to ''. "
-        "On real data 17 stocks lose pre_earnings_drift_flag, 8 differ on "
-        "surprise_momentum_flag, and is_high_conviction flips True->False (ORCL, DECK). "
-        "Score and bucket match because they are served from INCREMENTAL_CACHED_COLS. "
-        "Fix is the slice-loading change: load every earnings-day row (~91 per stock) plus "
-        "the last 90 days of prices, so the baseline can actually be built. strict=True on "
-        "purpose - when that lands this test XPASSes and FAILS, forcing the marker off."
-    ),
-)
 def test_incremental_matches_full_on_latest_row(tmp_path, monkeypatch):
     """Both paths must describe a stock identically on the latest row per stock —
     the row every upcoming-events consumer reads."""
