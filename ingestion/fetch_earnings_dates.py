@@ -12,6 +12,7 @@ from config import (
     ALPHAVANTAGE_CALLS_PER_MINUTE,
     EARNINGS_DATE_VALIDATION_WINDOW_DAYS,
     EARNINGS_RECHECK_WINDOW_DAYS,
+    EARNINGS_RESULT_BACKFILL_DAYS,
     YFINANCE_MAX_WORKERS,
     YFINANCE_JITTER_MIN_SECONDS,
     YFINANCE_JITTER_MAX_SECONDS,
@@ -184,12 +185,20 @@ def incremental_ingest_all_earnings_dates_yf(con):
     # Stocks due soon (or whose stored date just passed) are always rechecked,
     # since a stale placeholder estimate can otherwise never self-correct
     # before its own (wrong) date arrives.
+    # ...but never skip a stock whose most recent event is still missing its result.
+    # The event has happened, yfinance has the reported EPS within a day or two, and
+    # without this the stock is not asked again until ~14 days before its NEXT report.
     stocks_to_skip = set(
         row[0] for row in
         con.execute(
             "SELECT DISTINCT stock FROM earnings "
-            "WHERE earnings_date > current_date + CAST(? AS INTEGER)",
-            [EARNINGS_RECHECK_WINDOW_DAYS]
+            "WHERE earnings_date > current_date + CAST(? AS INTEGER) "
+            "  AND stock NOT IN ("
+            "        SELECT stock FROM earnings "
+            "        WHERE reported_eps IS NULL "
+            "          AND earnings_date <= current_date "
+            "          AND earnings_date >= current_date - CAST(? AS INTEGER))",
+            [EARNINGS_RECHECK_WINDOW_DAYS, EARNINGS_RESULT_BACKFILL_DAYS]
         ).fetchall()
     )
 
@@ -222,6 +231,20 @@ def incremental_ingest_all_earnings_dates_yf(con):
             continue
 
         try:
+            # Backfill results onto events we already store. The filter below drops any
+            # date already in the DB and the write below is a plain INSERT, so a row held
+            # as an unconfirmed placeholder would keep its NULL reported_eps until the
+            # date itself changed — which is why 100% of events under 30 days old had no
+            # result. Only fills NULLs; a confirmed row is never overwritten.
+            confirmed = earnings_dates_df[earnings_dates_df["reported_eps"].notna()]
+            for row in confirmed.itertuples(index=False):
+                con.execute("""
+                    UPDATE earnings
+                       SET reported_eps = ?, estimated_eps = ?, surprise_percentage = ?
+                     WHERE stock = ? AND earnings_date = ? AND reported_eps IS NULL
+                """, [row.reported_eps, row.estimated_eps, row.surprise_percentage,
+                      stock, row.earnings_date])
+
             # fiscal_end_date is None so the DB unique index can't deduplicate — filter manually
             existing = {
                 row[0] for row in

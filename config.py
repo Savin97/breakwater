@@ -52,6 +52,14 @@ LIFT_TO_ELEVATED        = 1.5
 LIFT_TO_HIGH_ALERT      = 3.0
 EARNINGS_DATE_VALIDATION_WINDOW_DAYS = 20 # How far ahead to cross-check unconfirmed earnings dates against ticker.calendar
 EARNINGS_RECHECK_WINDOW_DAYS = 14 # Stocks reporting within this many days are always re-fetched, so a wrong estimated date can still self-correct
+# A stock is normally skipped once its next earnings date is far out. That also stopped us
+# ever collecting the RESULT of the event it just reported: yfinance publishes reported_eps
+# within a day or two, but we would not ask again until ~14 days before the NEXT report,
+# roughly 80 days later. Measured 2026-09-02: 100% of events under 30 days old had a NULL
+# reported_eps, still ~80% at 31-90 days. So also re-fetch a stock whose most recent past
+# event is still missing its result, bounded to this window — unbounded, a permanently
+# missing old event would force a re-fetch of that stock on every run forever.
+EARNINGS_RESULT_BACKFILL_DAYS = 30
 
 # Logging
 LOG_LEVEL = "INFO"  # "DEBUG" adds per-stock detail; "INFO" shows summaries only
