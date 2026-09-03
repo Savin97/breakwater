@@ -1,8 +1,13 @@
 # cron/cron_weekly_digest.py
 """
-Weekly earnings risk digest — runs Monday 07:00 UTC.
-Sends an HTML email to all subscribers listing High Alert and Elevated stocks
-with earnings in the next 7 days.
+Weekly earnings risk digest. Sends an HTML email to all subscribers listing
+High Alert and Elevated stocks with earnings in the next 7 days.
+
+Runs LOCALLY, as the last step of scripts/full_workflow.sh — not on the droplet.
+Two things are only available here: the PDF reports it attaches (written by stage5,
+which the droplet does not run) and the DIGEST_SMTP_* credentials. Triggering it from
+the workflow also removes a race: a Monday cron could fire before the weekly run and
+mail out last week's numbers with nothing to indicate it had.
 
 Required .env variables:
     DIGEST_SMTP_HOST   e.g. smtp.gmail.com
@@ -12,6 +17,7 @@ Required .env variables:
 """
 import os
 import smtplib
+import time
 import pandas as pd
 from datetime import date
 from email.mime.base import MIMEBase
@@ -24,9 +30,17 @@ from utilities.output_utilities import latest_run_output_dir
 
 load_dotenv()
 
-PARQUET_PATH   = "output/full_df.parquet"
+# The digest needs one row per upcoming event, which is exactly what upcoming_df.parquet
+# already is: 496 rows / 46 KB, versus full_df.parquet's 2.9M rows / 323 MB. Reading the
+# full frame here was unbounded (no column selection) and is what OOM-killed this job on
+# the droplet's ~590 MB. upcoming_df is written by export_upcoming_df at the end of both
+# the full and the incremental run, so it is always as fresh as the last scoring run.
+PARQUET_PATH   = "output/upcoming_df.parquet"
 COMPANY_NAMES  = "data/sp500_full_info.csv"
 SUBSCRIBERS    = "data/subscribers.txt"
+# The digest is sent immediately after a pipeline run, so anything older than a
+# day means the run did not happen and the numbers are last week's.
+MAX_PARQUET_AGE_HOURS = 24
 REPORTS_DIR    = os.path.join(latest_run_output_dir(), "reports")
 SMTP_HOST      = os.getenv("DIGEST_SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT      = int(os.getenv("DIGEST_SMTP_PORT", "587"))
@@ -61,18 +75,13 @@ def _load_company_names() -> dict:
 def _select_stocks(df: pd.DataFrame, company_names: dict) -> pd.DataFrame:
     today  = pd.Timestamp.today().normalize()
     cutoff = today + pd.Timedelta(days=7)
-    # Use most recent row per stock; groupby last() is skipna=True by default so
-    # earnings_explosiveness_bucket/score come from the last historical earnings day
-    # while earnings_date comes from the most recent row (upcoming event).
-    all_latest = (
-        df.sort_values("date")
-        .groupby("stock")
-        .last()
-        .reset_index()
-    )
-    # Percentile from raw continuous score — sort ties by raw score
-    _rank_key = all_latest["abs_reaction_p75_rolling"].fillna(all_latest["abs_reaction_p75"])
-    all_latest["peer_percentile"] = (_rank_key.rank(pct=True) * 100).fillna(0).astype(int)
+    # df is upcoming_df: already one row per stock, and peer_percentile is already
+    # computed by export_upcoming_df with the same rank formula this used to apply here.
+    # It ranks across the ~496 stocks with an upcoming event rather than all 503, which
+    # moves a percentile by at most 1 point (measured 2026-09-02: 379/496 identical, none
+    # off by more than 1) and makes the digest agree with the dashboard and weekly chart,
+    # which have always read this column.
+    all_latest = df.copy()
     all_latest["company_name"] = all_latest["stock"].map(company_names)
 
     mask = (
@@ -302,6 +311,15 @@ def _send(recipients: list[str], subject: str, html: str, attachments: list[tupl
 def run_weekly_digest():
     if not os.path.exists(PARQUET_PATH):
         print(f"Parquet not found: {PARQUET_PATH} — run the pipeline first.")
+        return
+
+    # Refuse to mail stale numbers. The digest is the product; sending last week's
+    # tiers as though they were this week's is worse than sending nothing, and would
+    # be invisible — every stock still looks plausible. Fail loudly instead.
+    age_hours = (time.time() - os.path.getmtime(PARQUET_PATH)) / 3600
+    if age_hours > MAX_PARQUET_AGE_HOURS:
+        print(f"REFUSING TO SEND: {PARQUET_PATH} is {age_hours:.1f}h old "
+              f"(limit {MAX_PARQUET_AGE_HOURS}h). Run the pipeline first.")
         return
 
     df            = pd.read_parquet(PARQUET_PATH)
