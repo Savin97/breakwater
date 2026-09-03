@@ -8,10 +8,112 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## 2026-09-02 — Slice landed, digest fixed, and the product scope narrowed to weekly
+
+**SCOPE DECISION, made by the user this session — read this before planning anything:**
+**"weekly is enough."** No daily scoring on the droplet. The weekly local `full_workflow.sh`
+run produces everything; the digest is sent from that run. This retires the whole
+"droplet generates predictions automatically" thread that the last three sessions were
+building toward. Do not resurrect it without the user asking.
+
+### Consequences of that decision
+- **Predictions stay local.** `analysis/save_predictions.py` already runs in stage5 on the
+  weekly run and writes git-tracked `db/predictions.duckdb`. One writer, git as archive.
+  The "truth lives on the droplet, local copies it down" design is **moot — do not build it.**
+- **Nothing runs the incremental path any more.** `cron_ingest` is ingest-only, the droplet
+  does not score, `main.py` runs the full pipeline. `pipeline/incremental.py` has **no caller
+  anywhere** and still has a latent `TypeError` on line 27 (`run_pipeline()` called with no
+  args against signature `run_pipeline(incremental)`). Deleting it is defensible.
+- The droplet needs **no** SMTP, no subscribers file, no digest cron. Its only job is the
+  06:00 ingest plus serving Streamlit.
+
+### Shipped
+1. **Slice loading** (`9e914cf`, deployed). `utilities/scoring_slice.py` +
+   `attach_earnings_history()`, called from stage3's incremental branch.
+   Droplet measured: **369 MB, 14s, exit 0** (was 1030 MB, OOM). Local: 427 MB.
+2. **Parity is exact.** Full vs incremental `upcoming_df`: **all 23 columns, all 496 rows
+   identical**, `peer_percentile` included. The old divergence (17 stocks losing
+   `pre_earnings_drift_flag`, 8 on `surprise_momentum_flag`, ORCL/DECK flipping
+   `is_high_conviction`) is gone. xfail marker removed; suite **73 passed**.
+3. **Digest** reads `output/upcoming_df.parquet` not `full_df.parquet`: **128 MB** (was
+   multi-GB, unbounded). Added `MAX_PARQUET_AGE_HOURS = 24` — refuses to send stale numbers
+   rather than silently mailing last week's tiers. Wired in as step 5 of `full_workflow.sh`.
+   Sent LOCALLY on purpose: the PDF attachments come from stage5 (droplet has 0 PDFs in its
+   run dirs) and the SMTP creds are in the local `.env`. Also kills a race a Monday cron
+   would have had with the manual weekly run.
+4. **06:00 droplet cron succeeded for the first time** — 74s, exit 0, DB current.
+
+### Measurements that correct earlier notes
+- **The 274 MB slice estimate was WRONG.** A single `pd.read_parquet(filters=...)` costs
+  **584 MB**: `filters=` only prunes whole row groups by statistics, this file has 3 row
+  groups of ~970k rows, and earnings days are scattered through all of them, so it
+  decompresses everything and filters afterwards. Streaming 25,000-row batches gives
+  **232 MB** for a bit-identical result. That is why `scoring_slice.py` streams.
+- **The full pipeline peaks at 5562 MB**, not the "2000+ MB" recorded earlier. Measured
+  breakdown: the frame itself is **1910 MB** — float64 1468 MB (63 cols), str 288 MB (6),
+  datetime 93 MB, int8 32 MB. Peak is ~3x the frame because each stage copies.
+  float64 -> float32 would save **~734 MB** of frame (-> ~1176 MB) and proportionally more
+  of the peak. **The categorical idea is moot** — string columns are already `str` dtype,
+  not object; there are zero object columns. Cost of float32: precision changes, so
+  `testing/calibration.py` is the acceptance gate before trusting it.
+- Server sizing, if the droplet ever needs to run the full pipeline: that is an **8 GB**
+  box (~$48/mo vs the current $6), not 2 GB. **Try dtypes first** — float32 + categoricals
+  could plausibly halve it and helps local runs too. Cheaper experiment, measurable.
+
+### Earnings results were never backfilled (fixed 2026-09-02)
+`reported_eps` was NULL for **100% of events under 30 days old** and ~80% at 31-90 days,
+filling only at 91-180. Two causes, both needed fixing — the first alone does nothing:
+1. The skip rule (`WHERE earnings_date > current_date + 14`) asks "do we know the next
+   date?" and thereby also suppresses "do we have last quarter's result?". Once a stock
+   reports and yfinance hands us the next date ~90 days out, it is not fetched again for
+   ~80 days. Now also re-fetches stocks whose most recent past event lacks a result,
+   bounded by `EARNINGS_RESULT_BACKFILL_DAYS = 30`.
+2. **The ingestion is INSERT-ONLY.** It filters out every date already in the DB and then
+   does a plain `INSERT` — no upsert. So a placeholder row's NULL could only be corrected
+   by the ±60-day DELETE path, which fires only for a date it has not seen. Added an
+   explicit UPDATE pass before the filter; fills NULLs only, never overwrites a confirmed
+   row. Verified on a DB copy: 5 stocks backfilled, **0 rows added, 0 duplicates**.
+Yahoo had the data all along (ADSK 3.30/+5.64%, CRM 5.90/+80.36%) — we were not asking.
+**First run after this clears an ~80-day backlog: ~191 stocks fetched instead of 19, then
+it settles to the few that reported recently.**
+**Worth what exactly:** `surprise_momentum_flag` is DISPLAY ONLY — digest, PDF reports,
+calendar, dashboard, predictions table. It does not feed `earnings_explosiveness_score`,
+the tier, or `is_high_conviction` (drift flag only). Backtesting 2026-05-18 measured the
+surprise sub-categories at ~4.2x against a High Alert baseline of 3.82x and rejected them
+for high conviction. So this fixes "blank reads as normal when it means unknown", nothing
+in the ranking.
+
+### A trap worth remembering
+Emulating the old `groupby().last()` broadcast with an ffill **manufactures signals**.
+It carried a stale streak of 27 onto ADSK's 2026-08-27 earnings row, where the full path
+has NaN because the just-reported surprise is not in the DB yet — inventing an "Extended
+Beat Streak" the full path declines to assert. Six stocks affected. The full path leaves
+these columns NaN off earnings days and lets the flag functions propagate; consumers read
+`groupby().last()`, which skips NaN. **Do not fill them.** Reasoning is in the code.
+
+### Repo conventions the user stated
+- `pipeline/` holds **only** pipeline stages or versions of the pipeline. Nothing else.
+  (`scoring_slice.py` -> `utilities/`, `save_predictions.py` -> `analysis/` for this reason.)
+- Stages must read simply: prefer a named function call over an inline code block.
+- Droplet and local **must** produce identical results; a difference is a defect.
+
+### Open
+- **`data/subscribers.txt` is tracked as an EMPTY file** (committed 0 bytes in `acb79f5`,
+  so the address was never published — an earlier warning of mine about that was wrong).
+  The user added it to `.gitignore` line 22, but **gitignore does not apply to tracked
+  files**: the working copy (18 bytes, real address) still shows as modified and a
+  `git add .` would commit it. Needs `git rm --cached data/subscribers.txt`.
+- Uncommitted at time of writing: the digest + workflow change, plus the user's own
+  `streamlit_dash/app.py` and new `styles.css`.
+- 7 stocks with `earnings_date` >90 days out (CRM, DG, DLTR, HRL, NDSN, SNPS, ULTA).
+- Brain (`/home/Michael/projects/brain`): still undecided, still untouched, leave alone.
+- Droplet has **no backups**. It now matters less — nothing unique lives there.
+
 ## 2026-09-01 — cron_ingest made ingest-only, branches consolidated, parity test filed
 
-**Same GOAL as below:** automatic weekly predictions + digest emails ON THE DROPLET.
-Today removed the blockers around it. **The slice work itself is still NOT started.**
+**GOAL AS IT STOOD THAT DAY:** automatic weekly predictions + digest emails ON THE DROPLET.
+**SUPERSEDED 2026-09-02** — the user chose weekly-only, so the droplet does not score.
+See the 2026-09-02 entry above before acting on anything in this entry.
 
 ### State of the tree — END OF SESSION, all clean
 - **One branch: `master`.** Local == `origin/master` == **`d9567d8`**, working tree clean.
@@ -48,31 +150,15 @@ Today removed the blockers around it. **The slice work itself is still NOT start
   `run_pipeline(incremental)`; latent `TypeError`, currently unreachable. Fix when rebuilding.
   Also: `streamlit_dash/app.py` imports `run_pipeline` but never calls it — near miss, checked.
 
-### Next, in order — START HERE TOMORROW
-
-**0. Confirm the deploy worked.** `ssh root@harbor-markets.com` then
-`tail -30 /var/log/breakwater_ingest.log`. Expect a clean run, no `Killed`, no `TypeError`.
-This is the first 06:00 cron that should ever have succeeded. If it did, the daily OOM is over.
-
-**1. The slice work — the real task.** Full design in the 2026-08-31 entry below.
-**Read the non-contiguity constraint before writing any code** — the slice has ~90-day gaps,
-so `.diff()`/`.pct_change()`/`.rolling()` on it produce plausible-looking garbage (AAPL: 0.262
-vs a true 0.0104). Split: historical earnings rows use STORED per-event values and only
-aggregate across events; the recent 90-day window is contiguous and recomputed normally.
-Nothing exists yet — `stage2` still only takes `lookback_days`, `stage3` still does the
-391 MB `read_parquet`. Success criterion: the xfail parity test flips to XPASS.
-
-**2. `cron_weekly_digest.py` line 307** reads the whole 2.9M-row frame with no column
-selection. Point it at `output/upcoming_df.parquet` (46 KB — already has tier, score,
-percentile, both flags, HC, earnings_date). **Its crontab line is also commented out**, so the
-digest does not run at all today. Do the parquet change BEFORE uncommenting, or it just OOMs.
+### Next, in order — ALL DONE 2026-09-02, see the entry above
+The slice work, the digest parquet change and the deploy all landed. Kept only so the
+2026-09-01 record reads straight; do not work from this list.
 
 ### Decisions taken 2026-09-01 (so they are not re-litigated)
-- **Where predictions live once the droplet generates them:** droplet writes
-  `db/predictions.duckdb`; `full_workflow.sh` pulls it DOWN alongside `breakwater.duckdb`;
-  local git commits it. One writer (droplet), one archive (git). This inverts today's
-  direction — predictions are currently written locally and would be clobbered by the sync.
-  Not implemented yet; blocked on the slice work.
+- ~~**Where predictions live once the droplet generates them:** droplet writes, workflow
+  pulls it down.~~ **REVERSED 2026-09-02 — DO NOT BUILD.** The droplet does not score, so
+  predictions stay local exactly as they already are: stage5 writes git-tracked
+  `db/predictions.duckdb` on the weekly run. One writer, git as archive. Nothing to do.
 - **Brain (`/home/Michael/projects/brain`): undecided, leave alone.** User: "i havent used the
   brain yet, it was an idea." Every file there is dated 2026-06-29 and it is not a git repo.
   `projects/breakwater.md` has drifted (`data/breakwater.duckdb` -> now `db/`,

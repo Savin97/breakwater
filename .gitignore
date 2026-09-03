@@ -19,7 +19,7 @@ db/*
 backtesting/artifacts/
 testing/testing_results/
 testing/testing_results/**
-
+data/subscribers.txt
 
 # misc stuff
 .DS_Store
