@@ -8,6 +8,45 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## 2026-09-05 — PHASE 2 REVIEW FIXES (commit `a4475a9`, branch `methodology-rebuild`)
+
+**External review of `0ecec2c` found two target-integrity issues. All four items are
+implemented and committed. Still NOT merged to master; still pending re-review. Do not
+start Phase 3.**
+
+Nothing in scoring moved: no threshold, weight, lift gate, legacy reaction column,
+BMO/AMC definition, intraday rule or entropy change. `assert_completed_parity` clean.
+
+1. **Market-session grid anchoring.** Anchors/endpoints were positional offsets in each
+   ticker's own price rows, which silently absorbs a missing row (`.shift(-3)` over a
+   3-session hole spans 6; a BMO event missing D-1 anchors to D-2). Now positions on
+   `market_session_grid(daily_df)`, and the ticker must have a row on the EXACT required
+   dates. New per-horizon `reaction_{k}d_anchored_status`. Impact measured: all 11,417
+   resolved anchors unchanged, 3 outcome values withdrawn (AMAT 3d/5d, CSCO 5d — the
+   2026-05-19..21 ingestion hole). AMC bit-identity now asserted on the 4,832 gap-free
+   AMC events; the 10 that differ are enumerated in the diagnostics §5.
+2. **`announce_ts_observed_at`.** A timestamp observed before the event is a SCHEDULE and
+   was being frozen forever by the NULL-only backfill. `refresh_announcement_timestamp`
+   replaces a schedule with a strictly newer observation, never overwrites a post-event
+   observation, falls back to `ingested_at` when observed_at is NULL, and refuses when
+   both are NULL. Backfill stamps the 2026-09-05 pull date and self-migrated the 12,068
+   seeded rows (11,582 frozen as post-event, 486 still schedules).
+3. **Gate split.** `anchor_resolved_events()` = anchoring control slice.
+   `resolved_events(events, target="abs_reaction_3d_anchored")` = the calibration gate,
+   now requiring the target non-null. The 11,417 vs 11,411 question is accounted for
+   exactly: 11,417 anchors -> 11,412 with a 3d target -> 11,410 paired with the legacy
+   column (2 BMO events at the right edge whose corrected window closes a session
+   earlier). Printed every run in diagnostics §3.
+4. **Doc correction.** "The target, not the model, was wrong" removed everywhere. The
+   supportable claim is: the legacy target is proven wrong for BMO; model validity and
+   incremental value remain UNESTABLISHED pending the Phase 3 rebuild and a
+   competitive-baseline validation.
+
+Tests: 185 pass across test_announcement_timing / test_event_frame / test_pipeline.
+`audit/PHASE2_DIAGNOSTICS.md` regenerated. `output/events_df.parquet` rebuilt.
+
+---
+
 ## 2026-09-05 — PHASE 2: verified announcement timing + parallel anchored target
 
 **Branch `methodology-rebuild` (renamed from `methodology-rebuild-phase-1`, old remote
