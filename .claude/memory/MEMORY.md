@@ -8,6 +8,87 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## 2026-09-05 — PHASE 1 HANDOFF: event frame landed, upcoming-score staleness fixed
+
+**Branch `methodology-rebuild-phase-1`, commit `e197506` (base `09e7861`). NOT merged to
+master. NEXT STEP IS EXTERNAL REVIEW OF THIS COMMIT — do not start Phase 2 until it clears.**
+
+### What was wrong
+Every forward-looking consumer recovered upcoming state with
+`df.sort_values("date").groupby("stock").last()`. `GroupBy.last()` skips NaN *per column*,
+and the scoring columns are NaN off earnings days, so the row it returned took
+date/earnings_date from today but score/tier/lift from the stock's **last completed
+event**. 100% of shipped upcoming calls were exactly one earnings event stale
+(audit/PHASE0_AUDIT_REV2.md §Q4).
+
+### What was implemented
+- `pipeline/events.py` — the event frame: one row per earnings event, every completed
+  event plus **one pending row per eligible stock** (that stock's final daily row, outcome
+  blanked, `is_pending=True`), written to `output/events_df.parquet`. Built in a new
+  stage 4b between stage4 and stage5.
+- `feature_engineering/event_features.py` — the event-level cores. The daily pipeline AND
+  the event frame both call them, so historical and pending events cannot drift apart.
+- Consumers now read `is_pending == 1` explicitly: `streamlit_export.py`,
+  `save_predictions.py`, `report_builder.py` (also dropped its second stale source,
+  `earnings_df.iloc[-1]`), `calendar_builder.py`.
+- `score_asof_date` added to the event frame, `upcoming_df.parquet` and the predictions
+  archive.
+
+Every `shift(1)` kept verbatim. A pending row carries a NaN outcome and sorts last within
+its stock, so it cannot touch any completed row, while its own
+`shift(1).expanding()/rolling()` spans all completed prior events including the most
+recent — **that is the fix, not a new statistic.** No model calibration changed.
+
+### Two rules for anyone continuing this
+1. **Never put a pending row in the daily frame.** It would corrupt `merge_asof`, the
+   per-stock rolling price windows and the `groupby("date")` cross-sectional ranks.
+2. **The cross-stock `reaction_entropy.ffill()` in the score is order-dependent** and
+   pending rows sit between one stock's last event and the next stock's first. Letting
+   them contribute moved 385 completed scores. A pending row now reads that chain without
+   updating it (`entropy.mask(is_pending).ffill()`). Cost real time to find; the parity
+   assertion is what caught it.
+
+### Parity / tests — all green
+- Daily frame **byte-identical**: 87 cols × 2,914,315 rows, after parquet round-trip.
+- All 22 history-dependent columns **identical on all 45,701 completed events**
+  (`completed_parity_report` → `{}`; asserted on every pipeline run).
+- `python -m testing.calibration` output **identical** to the frozen baseline.
+- **103 tests pass** (73 existing + 30 new in `testing/test_event_frame.py`, covering all
+  12 required invariants with non-vacuity guards).
+- Baseline evidence + regeneration procedure: `audit/phase1_golden/README.md`.
+
+### Shipped effect
+8 of 495 upcoming final tiers change (ADBE, ISRG, NXPI, EA, CMG, WDC, PTC, WSM);
+High Conviction 5 → 12. NXPI moves on a byte-identical score — its stale lift 1.400 sat
+under the 1.5 gate, the correct 1.535 clears it.
+
+### Found along the way (fixed here, worth knowing)
+- `calendar_builder` was **dead**: it selected its forward window out of
+  `is_earnings_day == 1` rows, i.e. completed events with past dates, so it rendered zero
+  events every run. Now reads pending rows; window opens today.
+- `save_predictions.py` had a live `NameError` (`week_end` vs `window_end`) on its success
+  path — stage 5 could not complete.
+- `report_builder` needed a guard: a fresh tier can be one the stock has never held, which
+  `KeyError`'d the bucket-stats lookup. Reindexed over all three tiers.
+
+### Known remaining issues (NOT addressed — deliberate)
+- **`score_asof_date` exposed 15 stale price feeds**: AVB, BK, CAG, CPB, CTRA, DAY, EA,
+  EPAM, EQR, HOLX, LW, MOH, MTCH, PAYC, POOL — still carrying a future earnings date with
+  prices stopping as far back as 2026-02-03. Reported, not dropped. Investigate.
+- **Two secondary fields also de-staled** (follows from the shared-core invariant):
+  `surprise_momentum_flag` changed on 172/500; `pre_earnings_drift_flag` on 26 and
+  `is_high_conviction` on 7. All the flag changes are **>60 days out** (min 61) — the old
+  daily branch only fired within `days_to_earnings.between(1, 60)`. **Inside 60 days,
+  which is every near-term deliverable, the flags are identical.**
+- Cross-stock `reaction_entropy.ffill()` defect — still there on purpose.
+- `scoring_slice.py` and `INCREMENTAL_CACHED_COLS` — still there on purpose. The event
+  frame makes both redundant (5 MB vs 323 MB), but clean up only after this is proven.
+- Announcement-time / BMO-AMC correction — **Phase 2**, not started. See
+  `audit/PHASE0_AUDIT_REV2.md` for the plan and for what may NOT be claimed until the
+  historical chain is rebuilt (every published lift figure is overstated).
+- Predictions archive untouched: the 10 pre-audit rows keep `score_asof_date = NULL`,
+  which is itself the marker that their score came from the previous completed event.
+
 ## 2026-09-04/05 — First full end-to-end run; digest + predictions scoped to a work week
 
 **THE CHAIN WORKS END TO END.** `full_workflow.sh` ran: pipeline -> 5 PDFs -> parquets
@@ -678,38 +759,3 @@ drift-only. `report/recommendations_builder.py` added with 4 tiers of language.
 **merged_stock_data:** denormalised join of the above — NOT used by pipeline (stage2 reads raw tables directly)
 
 ---
-
-## 2026-09-05 — Phase 1: event frame landed, upcoming-score staleness fixed
-
-Branch `methodology-rebuild-phase-1`, base SHA `09e7861`. **Not merged to master.**
-
-**What was wrong** (audit/PHASE0_AUDIT_REV2.md §Q4): every consumer recovered upcoming
-state with `df.sort_values("date").groupby("stock").last()`. `GroupBy.last()` skips NaN
-*per column*, and the scoring columns are NaN off earnings days, so the "latest row" took
-date/earnings_date from today but score/tier/lift from the stock's **last completed
-event**. 100% of shipped upcoming calls were one earnings event stale.
-
-**What was built:** `pipeline/events.py` — one row per earnings event, completed plus one
-pending row per eligible stock (from that stock's final daily row, NaN outcome, sorted
-last within the stock). `feature_engineering/event_features.py` holds the event-level
-cores; the daily pipeline and the event frame both call them, so there is one
-implementation. Every `shift(1)` kept: a pending row's `shift(1).expanding()` naturally
-spans all completed events including the most recent — that IS the fix.
-
-**Do not** put a pending row in the daily frame. It would corrupt merge_asof, the
-per-stock rolling windows and the `groupby("date")` cross-sectional ranks.
-
-**Gotcha that cost time:** the deliberately-preserved cross-stock `reaction_entropy.ffill()`
-in the score is order-dependent, and pending rows sit between one stock's last event and
-the next stock's first. Letting them contribute moved 385 completed scores. A pending row
-now reads the chain without updating it (`entropy.mask(is_pending).ffill()`).
-
-**Proven:** daily frame byte-identical (87 cols × 2.9M rows); all 22 history-dependent
-columns identical on all 45,701 completed events; calibration output identical. 103 tests
-pass (73 existing + 30 new in `testing/test_event_frame.py`).
-
-**Shipped effect:** 8 of 495 upcoming final tiers change; High Conviction 5 → 12.
-
-**Still deferred, do not touch yet:** `scoring_slice.py` and `INCREMENTAL_CACHED_COLS`
-(clean up only after this is proven in production); the cross-stock entropy ffill bug;
-announcement-time/BMO-AMC correction (Phase 2).
