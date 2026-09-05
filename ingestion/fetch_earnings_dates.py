@@ -26,10 +26,65 @@ logger = logging.getLogger(__name__)
 # silently shift values into the wrong slot.
 EARNINGS_INSERT_COLS = ["stock", "earnings_date", "fiscal_end_date",
                         "reported_eps", "estimated_eps", "surprise_percentage",
-                        "ingested_at", "announce_ts_ny", "announce_ts_source"]
+                        "ingested_at", "announce_ts_ny", "announce_ts_source",
+                        "announce_ts_observed_at"]
 _INSERT_COL_SQL = ", ".join(EARNINGS_INSERT_COLS)
 
 ANNOUNCE_TS_SOURCE_YFINANCE = "yfinance_earnings_dates"
+
+# A stored announcement timestamp is REFRESHABLE while it is still a schedule and frozen
+# once it has been observed after the fact.
+#
+#   observed_at <= announce_ts_ny   the provider told us this BEFORE the announcement.
+#                                   That is a SCHEDULE. Issuers move them, and providers
+#                                   correct them, so it must not become the permanent
+#                                   historical record.
+#   observed_at >  announce_ts_ny   the provider told us this AFTER the announcement. It
+#                                   is an observation of what happened and is never
+#                                   overwritten.
+#
+# `ingested_at` stands in where `announce_ts_observed_at` is NULL (rows written before
+# the column existed): it is a lower bound on when we could have observed the timestamp,
+# so it can only make a row look MORE like a schedule, never less. If both are NULL the
+# comparison is NULL, the row does not match, and nothing is overwritten — the
+# conservative direction.
+#
+# The refresh also requires the incoming observation to be strictly newer than the one it
+# replaces, so re-running ingestion is idempotent and an older observation can never
+# clobber a newer one.
+_REFRESH_ANNOUNCE_TS_SQL = """
+    UPDATE earnings
+       SET announce_ts_ny = ?,
+           announce_ts_source = ?,
+           announce_ts_observed_at = ?
+     WHERE stock = ? AND earnings_date = ?
+       AND (announce_ts_ny IS NULL
+            OR (COALESCE(announce_ts_observed_at, ingested_at) <= announce_ts_ny
+                AND ? > COALESCE(announce_ts_observed_at, ingested_at)))
+"""
+
+
+def refresh_announcement_timestamp(con, stock, earnings_date, announce_ts_ny,
+                                   source, observed_at) -> int:
+    """Store an observed announcement timestamp, refreshing a stale pre-event schedule.
+
+    Returns the number of rows changed. See `_REFRESH_ANNOUNCE_TS_SQL` for the rule; the
+    short version is fill-if-empty, replace-if-still-a-schedule, never touch a
+    post-event observation.
+
+    Keyed on (stock, earnings_date), so it corrects the TIME of an event whose calendar
+    date is unchanged. A provider correction that moves the date itself is a different
+    row and is handled by the placeholder-clearing DELETE in the caller.
+    """
+    def _py(v):
+        return v.to_pydatetime() if hasattr(v, "to_pydatetime") else v
+
+    ts, obs = _py(announce_ts_ny), _py(observed_at)
+    if ts is None or pd.isna(ts):
+        return 0
+    changed = con.execute(_REFRESH_ANNOUNCE_TS_SQL,
+                          [ts, source, obs, stock, earnings_date, obs]).fetchone()
+    return int(changed[0]) if changed else 0
 
 def fetch_one_earnings_dates(stock: str):
     """Network fetch + pandas reshape only — no DB access. Mirrors the fetch/reshape
@@ -68,7 +123,15 @@ def fetch_one_earnings_dates(stock: str):
         earnings_dates_df["stock"]               = stock
         earnings_dates_df["fiscal_end_date"]     = None
         earnings_dates_df["surprise_percentage"] = earnings_dates_df["surprise_percentage"] / 100
-        earnings_dates_df["ingested_at"]         = datetime.now()
+        observed_at = datetime.now()
+        earnings_dates_df["ingested_at"]         = observed_at
+        # WHEN the provider was observed saying this. A row fetched while the event is
+        # still upcoming is a schedule; one fetched afterwards is an observation. Only
+        # this column can tell them apart later, so it is written at the moment of the
+        # fetch and never inferred.
+        earnings_dates_df["announce_ts_observed_at"] = observed_at
+        earnings_dates_df.loc[earnings_dates_df["announce_ts_ny"].isna(),
+                              "announce_ts_observed_at"] = pd.NaT
         earnings_dates_df = earnings_dates_df[EARNINGS_INSERT_COLS]
 
         return {"stock": stock, "earnings_dates_df": earnings_dates_df, "error": None}
@@ -150,6 +213,7 @@ def ingest_all_earnings_dates(con):
             # whole purpose is that it was independently observed.
             df["announce_ts_ny"] = pd.NaT
             df["announce_ts_source"] = None
+            df["announce_ts_observed_at"] = pd.NaT
             df = df[EARNINGS_INSERT_COLS]
 
             count_before = con.execute("SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]).fetchone()[0] #type:ignore
@@ -266,20 +330,23 @@ def incremental_ingest_all_earnings_dates_yf(con):
                 """, [row.reported_eps, row.estimated_eps, row.surprise_percentage,
                       stock, row.earnings_date])
 
-            # Backfill the announcement timestamp onto rows we already store. Same
-            # reason as above: the dedup filter below drops any date already in the DB,
-            # so without this an event ingested before Phase 2 would stay timestamp-less
-            # forever and remain permanently unresolved. Only fills NULLs — an observed
-            # timestamp already on the row is never overwritten by a later fetch.
+            # Store the announcement timestamp on rows we already hold. The dedup filter
+            # below drops any date already in the DB, so without this an event ingested
+            # before Phase 2 would stay timestamp-less forever and remain permanently
+            # unresolved.
+            #
+            # This used to fill NULLs only, which froze a pre-event SCHEDULE into the
+            # historical record permanently: a date fetched while the event was upcoming
+            # kept whatever hour the provider had pencilled in, even after the provider
+            # published the real one. `refresh_announcement_timestamp` replaces a stored
+            # schedule with a later observation and still never overwrites a timestamp
+            # that was already observed after the fact.
             for row in earnings_dates_df.itertuples(index=False):
                 if pd.isna(row.announce_ts_ny):
                     continue
-                con.execute("""
-                    UPDATE earnings
-                       SET announce_ts_ny = ?, announce_ts_source = ?
-                     WHERE stock = ? AND earnings_date = ? AND announce_ts_ny IS NULL
-                """, [row.announce_ts_ny.to_pydatetime(), row.announce_ts_source,
-                      stock, row.earnings_date])
+                refresh_announcement_timestamp(
+                    con, stock, row.earnings_date, row.announce_ts_ny,
+                    row.announce_ts_source, row.announce_ts_observed_at)
 
             # fiscal_end_date is None so the DB unique index can't deduplicate — filter manually
             existing = {

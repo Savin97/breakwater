@@ -33,9 +33,25 @@ from feature_engineering.announcement_timing import (
     AMC, BMO, INTRADAY, UNKNOWN, ANCHOR_OFFSET,
     RESOLVED, PENDING, UNRESOLVED_NO_TIMESTAMP, UNRESOLVED_INTRADAY,
     UNRESOLVED_NO_SESSION, UNRESOLVED_PRICE_GAP, UNRESOLVED_NO_PRIOR_SESSION,
-    ANCHORED_OUTCOME_COLS,
-    classify_announce_window, resolve_event_anchors, resolved_events,
+    UNRESOLVED_ANCHOR_BEFORE_HISTORY,
+    ANCHORED_OUTCOME_COLS, ANCHORED_STATUS_COLS, ANCHORED_REACTION_WINDOWS,
+    DEFAULT_ANCHORED_TARGET,
+    TARGET_AVAILABLE, TARGET_ENDPOINT_BEYOND_GRID, TARGET_ENDPOINT_PRICE_GAP,
+    TARGET_ENDPOINT_AFTER_LAST_PRICE,
+    classify_announce_window, market_session_grid, resolve_event_anchors,
+    anchor_resolved_events, resolved_events,
 )
+
+
+def _gap_free(events):
+    """Events whose every anchored horizon actually resolved to a real endpoint.
+
+    An AMC event with a missing session inside its window is NOT expected to match the
+    legacy value: `.shift(-k)` counts the ticker's rows and steps over the hole, the
+    corrected target counts MARKET SESSIONS and refuses. Bit-identity is a claim about
+    the gap-free events, and `test_1_grid_*` below pins the gapped ones separately.
+    """
+    return events[events[ANCHORED_STATUS_COLS].eq(TARGET_AVAILABLE).all(axis=1)]
 from testing.test_pipeline import _build_stage2_df
 
 FULL_DF_PATH = "output/full_df.parquet"
@@ -182,12 +198,31 @@ def test_2_amc_anchor_is_the_report_date_close(events_df):
 
 def test_2_amc_bit_identical_on_real_history(real_events_df):
     events, _ = real_events_df
-    amc = events[(events["announce_window"] == AMC) & (events["anchor_status"] == RESOLVED)]
-    assert len(amc) > 1000, f"only {len(amc)} resolved AMC events on real data"
+    amc = _gap_free(events[(events["announce_window"] == AMC)
+                           & (events["anchor_status"] == RESOLVED)])
+    assert len(amc) > 1000, f"only {len(amc)} gap-free resolved AMC events on real data"
     for k in (1, 3, 5):
         assert np.array_equal(amc[f"reaction_{k}d_anchored"].to_numpy(dtype="float64"),
                               amc[f"reaction_{k}d"].to_numpy(dtype="float64"),
                               equal_nan=True), f"AMC reaction_{k}d_anchored != legacy"
+
+
+def test_2_amc_legacy_disagreement_is_only_ever_a_session_gap(real_events_df):
+    """The converse of the control: every AMC event where the corrected target differs
+    from the legacy one must be explained by a missing session, never by the anchoring
+    code drifting on its own."""
+    events, _ = real_events_df
+    amc = events[(events["announce_window"] == AMC) & (events["anchor_status"] == RESOLVED)]
+    for k in (1, 3, 5):
+        x = amc[f"reaction_{k}d_anchored"].to_numpy(dtype="float64")
+        y = amc[f"reaction_{k}d"].to_numpy(dtype="float64")
+        differs = ~((x == y) | (np.isnan(x) & np.isnan(y)))
+        if not differs.any():
+            continue
+        statuses = amc.loc[differs, f"reaction_{k}d_anchored_status"]
+        assert (statuses != TARGET_AVAILABLE).all(), (
+            f"AMC reaction_{k}d_anchored differs from legacy on an event whose endpoint "
+            f"was available: {amc.loc[differs & statuses.eq(TARGET_AVAILABLE).reindex(amc.index, fill_value=False), ['stock', 'earnings_date']]}")
 
 
 # ── Invariant 3 — the BMO anchor precedes the announcement ────────────────────
@@ -202,16 +237,18 @@ def test_3_bmo_anchor_close_strictly_precedes_the_announcement(events_df):
     assert (bmo["anchor_date"] < bmo["announce_ts_ny"]).all()
 
 
-def test_3_bmo_anchor_is_the_immediately_preceding_session(daily_df, events_df):
-    """Not merely earlier — the session immediately before, with no session skipped."""
+def test_3_bmo_anchor_is_the_immediately_preceding_market_session(daily_df, events_df):
+    """Not merely earlier — the MARKET session immediately before, with none skipped.
+    Checked against the market grid rather than the ticker's own rows, because the
+    ticker's rows are exactly what must not define the offset."""
+    grid = market_session_grid(daily_df)
     bmo = events_df[(events_df["announce_window"] == BMO)
                     & (events_df["anchor_status"] == RESOLVED)]
-    for stock, sub in bmo.groupby("stock"):
-        sessions = np.sort(daily_df.loc[daily_df["stock"] == stock, "date"]
-                           .to_numpy(dtype="datetime64[ns]"))
-        for ed, ad in zip(sub["earnings_date"], sub["anchor_date"]):
-            i = int(np.searchsorted(sessions, np.datetime64(ed, "ns")))
-            assert sessions[i - 1] == np.datetime64(ad, "ns")
+    assert len(bmo) > 0
+    for ed, ad in zip(bmo["earnings_date"], bmo["anchor_date"]):
+        i = int(np.searchsorted(grid, np.datetime64(ed, "ns")))
+        assert grid[i] == np.datetime64(ed, "ns")
+        assert grid[i - 1] == np.datetime64(ad, "ns")
 
 
 def test_3_bmo_anchor_precedes_on_real_history(real_events_df):
@@ -226,46 +263,46 @@ def test_3_bmo_anchor_precedes_on_real_history(real_events_df):
 def test_4_anchored_3d_spans_three_post_announcement_sessions(daily_df, events_df):
     """Invariant 4 — the event clock counts POST-ANNOUNCEMENT trading sessions, so BMO
     and AMC 3d cover three each: AMC close(D)->close(D+3), BMO close(D-1)->close(D+2)."""
+    grid = market_session_grid(daily_df)
     res = events_df[events_df["anchor_status"] == RESOLVED]
     assert len(res) > 0
     checked = {AMC: 0, BMO: 0}
     for stock, sub in res.groupby("stock"):
         s = daily_df[daily_df["stock"] == stock].sort_values("date")
-        sessions = s["date"].to_numpy(dtype="datetime64[ns]")
-        px = s["price"].to_numpy(dtype="float64")
+        by_date = dict(zip(s["date"].to_numpy(dtype="datetime64[ns]"),
+                           s["price"].to_numpy(dtype="float64")))
         for row in sub.itertuples():
-            i = int(np.searchsorted(sessions, np.datetime64(row.earnings_date, "ns")))
+            i = int(np.searchsorted(grid, np.datetime64(row.earnings_date, "ns")))
             a = i + ANCHOR_OFFSET[row.announce_window]
-            assert sessions[a] == np.datetime64(row.anchor_date, "ns")
+            assert grid[a] == np.datetime64(row.anchor_date, "ns")
             for k in (1, 3, 5):
                 got = getattr(row, f"reaction_{k}d_anchored")
-                if a + k >= len(px):
-                    assert np.isnan(got)
+                status = getattr(row, f"reaction_{k}d_anchored_status")
+                if a + k >= len(grid):
+                    assert np.isnan(got) and status == TARGET_ENDPOINT_BEYOND_GRID
                     continue
-                # exactly k sessions of price action starting at the first session the
-                # market can trade the news in
-                assert got == px[a + k] / px[a] - 1
-                first_tradeable = sessions[a + 1]
-                last_session = sessions[a + k]
-                n_sessions = int(np.searchsorted(sessions, last_session)
-                                 - np.searchsorted(sessions, first_tradeable) + 1)
-                assert n_sessions == k
+                # exactly k MARKET sessions of price action, starting at the first
+                # session the market can trade the news in
+                assert int(np.searchsorted(grid, grid[a + k])
+                           - np.searchsorted(grid, grid[a + 1]) + 1) == k
+                if grid[a + k] not in by_date or grid[a] not in by_date:
+                    assert np.isnan(got) and status != TARGET_AVAILABLE
+                    continue
+                assert status == TARGET_AVAILABLE
+                assert got == by_date[grid[a + k]] / by_date[grid[a]] - 1
             checked[row.announce_window] += 1
     assert checked[AMC] > 0 and checked[BMO] > 0, f"one window unexercised: {checked}"
 
 
 def test_4_bmo_and_amc_use_the_same_session_count_on_real_history(real_events_df):
     events, daily = real_events_df
+    grid = market_session_grid(daily)
     res = resolved_events(events)
     sample = pd.concat([res[res["announce_window"] == w].head(200) for w in (BMO, AMC)])
-    sessions_by_stock = {
-        s: sub.sort_values("date")["date"].to_numpy(dtype="datetime64[ns]")
-        for s, sub in daily[daily["stock"].isin(sample["stock"])].groupby("stock")
-    }
     for row in sample.itertuples():
-        sess = sessions_by_stock[row.stock]
-        a = int(np.searchsorted(sess, np.datetime64(row.anchor_date, "ns")))
-        i = int(np.searchsorted(sess, np.datetime64(row.earnings_date, "ns")))
+        a = int(np.searchsorted(grid, np.datetime64(row.anchor_date, "ns")))
+        i = int(np.searchsorted(grid, np.datetime64(row.earnings_date, "ns")))
+        assert grid[i] == np.datetime64(row.earnings_date, "ns")
         assert a == i + ANCHOR_OFFSET[row.announce_window]
 
 
@@ -448,14 +485,28 @@ def test_9_a_missing_price_row_is_a_gap_not_a_calendar_problem(daily_df, timing_
     assert pd.isna(out.at[victim, "anchor_date"])
 
 
-def test_9_bmo_on_the_first_price_row_has_no_anchor(daily_df, timing_df):
-    """A BMO event on a ticker's very first session has no prior close. Unresolved,
-    not silently anchored to itself."""
+def test_9_bmo_before_the_tickers_history_has_no_anchor(daily_df, timing_df):
+    """A BMO event on a ticker's very first session has no prior close of its own, even
+    though the market traded that session. Unresolved with THAT reason — a young ticker
+    is not an ingestion bug — and never silently anchored to itself."""
     events = build_event_frame(daily_df, timing_df)
     victim = events.index[(events["announce_window"] == BMO) & ~events["is_pending"]][0]
     stock = events.at[victim, "stock"]
     ed = pd.Timestamp(events.at[victim, "earnings_date"])
     truncated = daily_df[~((daily_df["stock"] == stock) & (daily_df["date"] < ed))]
+    assert (truncated["date"] < ed).any(), "the other stock must still trade before ed"
+    out = resolve_event_anchors(events, truncated)
+    assert out.at[victim, "anchor_status"] == UNRESOLVED_ANCHOR_BEFORE_HISTORY
+    assert pd.isna(out.at[victim, "anchor_date"])
+
+
+def test_9_bmo_on_the_first_market_session_has_no_prior_session(daily_df, timing_df):
+    """When the MARKET grid itself has nothing before the report date there is no prior
+    session at all, which is a different fact from the ticker being young."""
+    events = build_event_frame(daily_df, timing_df)
+    victim = events.index[(events["announce_window"] == BMO) & ~events["is_pending"]][0]
+    ed = pd.Timestamp(events.at[victim, "earnings_date"])
+    truncated = daily_df[daily_df["date"] >= ed]          # every ticker, not just one
     out = resolve_event_anchors(events, truncated)
     assert out.at[victim, "anchor_status"] == UNRESOLVED_NO_PRIOR_SESSION
     assert pd.isna(out.at[victim, "anchor_date"])
@@ -466,6 +517,222 @@ def test_9_every_unresolved_event_has_a_stated_reason(events_df):
     assert set(events_df["anchor_status"]) <= set(ANCHOR_STATUSES)
     assert events_df["anchor_status"].notna().all()
     assert events_df["anchor_session_status"].notna().all()
+
+
+# ── The market-session grid, not the ticker's observed rows ───────────────────
+# External review of Phase 2, item 1. Anchors and endpoints are positions on the
+# canonical market-session grid; the ticker must then have a price row on those EXACT
+# dates. Each test below deletes ONE stock's row for a session the other stock still
+# trades, so the market grid is unchanged and only the ticker's coverage moves.
+
+
+def _grid_of(daily_df):
+    return market_session_grid(daily_df)
+
+
+def _victim(events, window):
+    """The first completed, resolved event in `window` with room to move around it."""
+    m = ((events["announce_window"] == window) & ~events["is_pending"]
+         & (events["anchor_status"] == RESOLVED))
+    return events.index[m][0]
+
+
+def _drop_row(daily_df, stock, date):
+    holed = daily_df[~((daily_df["stock"] == stock)
+                       & (daily_df["date"] == pd.Timestamp(date)))]
+    assert (holed["date"] == pd.Timestamp(date)).any(), \
+        "another stock must still establish that the market traded that session"
+    assert len(holed) == len(daily_df) - 1
+    return holed
+
+
+def test_grid_a_missing_anchor_row_never_falls_back_to_the_session_before(
+        daily_df, timing_df):
+    """BMO anchor = the market session before D. If the ticker has no row for THAT
+    session, the answer is "unavailable", not D-2.
+
+    Counting positions in the ticker's own rows silently returns D-2 here and produces a
+    two-session window labelled as one. Nothing in the output would show it.
+    """
+    events = build_event_frame(daily_df, timing_df)
+    victim = _victim(events, BMO)
+    stock = events.at[victim, "stock"]
+    anchor = pd.Timestamp(events.at[victim, "anchor_date"])
+    grid = _grid_of(daily_df)
+    d_minus_2 = pd.Timestamp(grid[int(np.searchsorted(grid, np.datetime64(anchor))) - 1])
+
+    holed = _drop_row(daily_df, stock, anchor)
+    out = resolve_event_anchors(events, holed)
+    assert out.at[victim, "anchor_status"] == UNRESOLVED_PRICE_GAP
+    assert pd.isna(out.at[victim, "anchor_date"])
+    assert out.at[victim, "anchor_date"] != d_minus_2
+    for col in ANCHORED_OUTCOME_COLS:
+        assert pd.isna(out.at[victim, col]), f"{col} produced without a real anchor"
+
+
+def test_grid_a_missing_endpoint_row_never_stretches_the_window(daily_df, timing_df):
+    """AMC k-endpoint = market session D+k. If the ticker has no row for that exact
+    session, the outcome is unavailable — never the NEXT row the ticker does have, which
+    is what `.shift(-k)` on the ticker's own rows returns.
+
+    The legacy columns do exactly that and are left alone; the corrected target must not.
+    """
+    events = build_event_frame(daily_df, timing_df)
+    base = events
+    victim = _victim(events, AMC)
+    stock = events.at[victim, "stock"]
+    anchor = pd.Timestamp(base.at[victim, "anchor_date"])
+    grid = _grid_of(daily_df)
+    a = int(np.searchsorted(grid, np.datetime64(anchor)))
+    endpoint_3d = pd.Timestamp(grid[a + 3])
+    next_row_price = float(daily_df.loc[(daily_df["stock"] == stock)
+                                        & (daily_df["date"] == pd.Timestamp(grid[a + 4])),
+                                        "price"].iloc[0])
+    anchor_price = float(daily_df.loc[(daily_df["stock"] == stock)
+                                      & (daily_df["date"] == anchor), "price"].iloc[0])
+    stretched = next_row_price / anchor_price - 1
+
+    holed = _drop_row(daily_df, stock, endpoint_3d)
+    out = resolve_event_anchors(events, holed)
+    # the anchor is untouched — only the far end of the window moved
+    assert out.at[victim, "anchor_status"] == RESOLVED
+    assert pd.Timestamp(out.at[victim, "anchor_date"]) == anchor
+    assert out.at[victim, "reaction_3d_anchored_status"] == TARGET_ENDPOINT_PRICE_GAP
+    assert pd.isna(out.at[victim, "reaction_3d_anchored"])
+    assert pd.isna(out.at[victim, "abs_reaction_3d_anchored"])
+    assert not np.isclose(np.nan_to_num(out.at[victim, "reaction_3d_anchored"], nan=-999),
+                          stretched), "the window was stretched to the next observed row"
+    # the horizons that do not cross the hole are unaffected
+    assert out.at[victim, "reaction_1d_anchored_status"] == TARGET_AVAILABLE
+    assert out.at[victim, "reaction_1d_anchored"] == base.at[victim, "reaction_1d_anchored"]
+
+
+def test_grid_a_bmo_report_date_gap_costs_only_the_horizons_that_need_it(
+        daily_df, timing_df):
+    """A BMO event anchors on D-1, so a missing row on D itself does not break the
+    anchor — it breaks exactly the 1-session horizon, whose endpoint IS D. The 3- and
+    5-session horizons end later and survive. Per-horizon availability, not a blanket
+    verdict."""
+    events = build_event_frame(daily_df, timing_df)
+    base = events
+    victim = _victim(events, BMO)
+    stock = events.at[victim, "stock"]
+    ed = pd.Timestamp(events.at[victim, "earnings_date"])
+
+    holed = _drop_row(daily_df, stock, ed)
+    out = resolve_event_anchors(events, holed)
+    assert out.at[victim, "anchor_status"] == RESOLVED
+    assert pd.Timestamp(out.at[victim, "anchor_date"]) == pd.Timestamp(base.at[victim, "anchor_date"])
+    assert out.at[victim, "anchor_session_status"] == UNRESOLVED_PRICE_GAP
+    assert out.at[victim, "reaction_1d_anchored_status"] == TARGET_ENDPOINT_PRICE_GAP
+    assert pd.isna(out.at[victim, "reaction_1d_anchored"])
+    for k in (3, 5):
+        assert out.at[victim, f"reaction_{k}d_anchored_status"] == TARGET_AVAILABLE
+        assert out.at[victim, f"reaction_{k}d_anchored"] == base.at[victim, f"reaction_{k}d_anchored"]
+
+
+def test_grid_endpoint_past_the_end_of_the_grid_is_named_separately(daily_df, timing_df):
+    """An unfinished window and a missing row are different facts and get different
+    names, so "we do not know yet" is never counted as an ingestion bug."""
+    events = build_event_frame(daily_df, timing_df)
+    victim = _victim(events, AMC)
+    grid = _grid_of(daily_df)
+    a = int(np.searchsorted(grid, np.datetime64(pd.Timestamp(events.at[victim, "anchor_date"]))))
+    # cut the whole market's history off between the 3- and 5-session endpoints
+    truncated = daily_df[daily_df["date"] <= pd.Timestamp(grid[a + 3])]
+    out = resolve_event_anchors(events, truncated)
+    assert out.at[victim, "anchor_status"] == RESOLVED
+    assert out.at[victim, "reaction_3d_anchored_status"] == TARGET_AVAILABLE
+    assert out.at[victim, "reaction_5d_anchored_status"] == TARGET_ENDPOINT_BEYOND_GRID
+    assert pd.isna(out.at[victim, "reaction_5d_anchored"])
+    assert out.at[victim, "reaction_5d_anchored_status"] != TARGET_ENDPOINT_PRICE_GAP
+
+
+def test_grid_is_the_market_grid_not_the_tickers_rows(daily_df, timing_df):
+    """The grid must come from the whole loaded frame. A hole in ONE ticker cannot
+    remove a session from it, which is what makes the checks above meaningful."""
+    victim_stock = sorted(daily_df["stock"].unique())[0]
+    holed = daily_df[daily_df["stock"] != victim_stock]
+    assert len(_grid_of(daily_df)) == len(_grid_of(daily_df[daily_df["stock"] == victim_stock]))
+    assert set(_grid_of(holed)) <= set(_grid_of(daily_df))
+
+
+# ── The corrected-target gate: anchor resolved vs target available ────────────
+# External review of Phase 2, item 3.
+
+
+def test_gate_requires_the_requested_target_to_be_present(events_df):
+    """`resolved_events` is the calibration/training gate, so it must require the
+    outcome the caller is going to consume — not merely a real anchor."""
+    gated = resolved_events(events_df)
+    assert gated[DEFAULT_ANCHORED_TARGET].notna().all()
+    assert (gated["anchor_status"] == RESOLVED).all()
+    assert (~gated["is_pending"]).all()
+
+
+def test_gate_is_per_target(events_df):
+    for target in ANCHORED_OUTCOME_COLS:
+        gated = resolved_events(events_df, target=target)
+        assert gated[target].notna().all(), target
+        assert len(gated) <= len(anchor_resolved_events(events_df))
+
+
+def test_gate_target_none_is_the_anchor_only_slice(events_df):
+    assert resolved_events(events_df, target=None).index.equals(
+        anchor_resolved_events(events_df).index)
+
+
+def test_gate_rejects_a_target_that_is_not_an_anchored_outcome(events_df):
+    with pytest.raises(ValueError):
+        resolved_events(events_df, target="abs_reaction_3d")     # the LEGACY column
+
+
+def test_gate_excludes_an_event_whose_endpoint_row_is_missing(daily_df, timing_df):
+    """The concrete failure the gate exists for: a resolved anchor whose 3-session
+    endpoint the ticker has no row for must not reach a corrected calibration."""
+    events = build_event_frame(daily_df, timing_df)
+    victim = _victim(events, AMC)
+    stock, anchor = events.at[victim, "stock"], pd.Timestamp(events.at[victim, "anchor_date"])
+    grid = _grid_of(daily_df)
+    a = int(np.searchsorted(grid, np.datetime64(anchor)))
+    holed = _drop_row(daily_df, stock, pd.Timestamp(grid[a + 3]))
+
+    scored = build_and_score_event_frame(holed, timing_df, verify=False)
+    row = scored.index[(scored["stock"] == stock)
+                       & (scored["earnings_date"] == events.at[victim, "earnings_date"])
+                       & ~scored["is_pending"]][0]
+    assert scored.at[row, "anchor_status"] == RESOLVED
+    assert row in anchor_resolved_events(scored).index
+    assert row not in resolved_events(scored).index
+
+
+def test_gate_accounts_for_the_paired_row_difference_on_real_history(real_events_df):
+    """The three counts that get confused with each other, pinned as an identity:
+
+        anchor resolved  >=  anchored target available  >=  paired with the legacy one
+
+    and each step is fully explained by a NAMED status, never by a silent dropna.
+    """
+    events, _ = real_events_df
+    anchored = anchor_resolved_events(events)
+    gated = resolved_events(events)
+    paired = gated.dropna(subset=["abs_reaction_3d"])
+    assert len(anchored) >= len(gated) >= len(paired)
+
+    # step 1: every anchor that loses its target says why, in reaction_3d_anchored_status
+    lost = anchored[anchored[DEFAULT_ANCHORED_TARGET].isna()]
+    assert len(anchored) - len(gated) == len(lost)
+    assert (lost["reaction_3d_anchored_status"] != TARGET_AVAILABLE).all()
+    assert lost["reaction_3d_anchored_status"].isin({
+        TARGET_ENDPOINT_BEYOND_GRID, TARGET_ENDPOINT_AFTER_LAST_PRICE,
+        TARGET_ENDPOINT_PRICE_GAP}).all()
+
+    # step 2: the remaining difference is the LEGACY column being absent, which is a
+    # property of the comparison and not of the gate. A BMO 3d window closes one session
+    # earlier than the legacy one, so this is expected at the right edge of history.
+    legacy_missing = gated[gated["abs_reaction_3d"].isna()]
+    assert len(gated) - len(paired) == len(legacy_missing)
+    assert legacy_missing[DEFAULT_ANCHORED_TARGET].notna().all()
 
 
 # ── Invariant 10 — Phase 1 legacy parity still holds ──────────────────────────
@@ -573,11 +840,13 @@ def test_a_timestamped_row_round_trips_through_the_write_path():
             "surprise_percentage": 0.1, "ingested_at": pd.Timestamp("2024-05-02"),
             "announce_ts_ny": pd.Timestamp("2024-05-01 06:30"),
             "announce_ts_source": "yfinance_earnings_dates",
+            "announce_ts_observed_at": pd.Timestamp("2024-05-02 03:00"),
         }, {
             "stock": "BBB", "earnings_date": pd.Timestamp("2024-05-01").date(),
             "fiscal_end_date": None, "reported_eps": 1.0, "estimated_eps": 0.9,
             "surprise_percentage": 0.1, "ingested_at": pd.Timestamp("2024-05-02"),
             "announce_ts_ny": pd.NaT, "announce_ts_source": None,
+            "announce_ts_observed_at": pd.NaT,
         }])[EARNINGS_INSERT_COLS]
         con.register("tmp_earnings_df", df)
         con.execute(f"INSERT INTO earnings ({_INSERT_COL_SQL}) "
@@ -604,8 +873,8 @@ def test_load_announcement_timing_degrades_on_a_pre_phase2_database():
     finally:
         con.close()
     assert out.empty
-    assert list(out.columns) == ["stock", "earnings_date",
-                                 "announce_ts_ny", "announce_ts_source"]
+    assert list(out.columns) == ["stock", "earnings_date", "announce_ts_ny",
+                                 "announce_ts_source", "announce_ts_observed_at"]
 
 
 def test_backfill_is_idempotent_and_only_fills_nulls():
@@ -620,9 +889,12 @@ def test_backfill_is_idempotent_and_only_fills_nulls():
             "fiscal_end_date": None, "reported_eps": 1.0, "estimated_eps": 0.9,
             "surprise_percentage": 0.1, "ingested_at": pd.Timestamp("2024-05-02"),
             "announce_ts_ny": ts, "announce_ts_source": src,
-        } for s, ts, src in [("AAA", pd.NaT, None),
-                             ("BBB", pd.Timestamp("2024-05-01 16:00"), "yfinance_earnings_dates")]
-        ])[EARNINGS_INSERT_COLS]
+            "announce_ts_observed_at": obs,
+        } for s, ts, src, obs in [
+            ("AAA", pd.NaT, None, pd.NaT),
+            ("BBB", pd.Timestamp("2024-05-01 16:00"), "yfinance_earnings_dates",
+             pd.Timestamp("2024-05-02 03:00")),
+        ]])[EARNINGS_INSERT_COLS]
         con.register("tmp_earnings_df", rows)
         con.execute(f"INSERT INTO earnings ({_INSERT_COL_SQL}) "
                     f"SELECT {_INSERT_COL_SQL} FROM tmp_earnings_df")
@@ -683,3 +955,266 @@ def test_yfinance_ingestion_no_longer_discards_the_timestamp(monkeypatch):
     assert list(out["earnings_date"]) == list(
         pd.to_datetime(idx).tz_localize(None).date)
     assert list(classify_announce_window(out["announce_ts_ny"])) == [BMO, AMC]
+
+
+# ── A pre-event schedule must not be frozen forever ──────────────────────────
+# External review of Phase 2, item 2. `announce_ts_ny` collected while an event is still
+# upcoming is a SCHEDULE: the issuer can move it and the provider can correct it. The
+# NULL-only backfill this phase shipped with wrote such a schedule once and never looked
+# at it again, so a historical anchored target could rest permanently on a time that
+# never happened. `announce_ts_observed_at` is the minimum provenance needed to tell the
+# two apart, and the refresh rule is written in terms of it.
+
+_E = pd.Timestamp("2024-05-01").date()          # the report date used throughout
+
+
+def _seed_event(con, announce_ts_ny, observed_at, source, ingested_at=None):
+    from ingestion.fetch_earnings_dates import EARNINGS_INSERT_COLS, _INSERT_COL_SQL
+    df = pd.DataFrame([{
+        "stock": "AAA", "earnings_date": _E, "fiscal_end_date": None,
+        "reported_eps": None, "estimated_eps": 0.9, "surprise_percentage": None,
+        "ingested_at": ingested_at if ingested_at is not None else observed_at,
+        "announce_ts_ny": announce_ts_ny, "announce_ts_source": source,
+        "announce_ts_observed_at": observed_at,
+    }])[EARNINGS_INSERT_COLS]
+    con.register("tmp_earnings_df", df)
+    con.execute(f"INSERT INTO earnings ({_INSERT_COL_SQL}) "
+                f"SELECT {_INSERT_COL_SQL} FROM tmp_earnings_df")
+    con.unregister("tmp_earnings_df")
+
+
+def _stored(con):
+    return con.execute("SELECT announce_ts_ny, announce_ts_source, "
+                       "announce_ts_observed_at FROM earnings "
+                       "WHERE stock = 'AAA'").fetchone()
+
+
+def test_observed_at_column_exists_on_the_earnings_table():
+    con = _fresh_db()
+    try:
+        cols = {r[0]: r[1] for r in con.execute("DESCRIBE earnings").fetchall()}
+    finally:
+        con.close()
+    assert cols.get("announce_ts_observed_at") == "TIMESTAMP"
+
+
+def test_refresh_fills_a_row_that_has_no_timestamp():
+    from ingestion.fetch_earnings_dates import refresh_announcement_timestamp
+    con = _fresh_db()
+    try:
+        _seed_event(con, pd.NaT, pd.NaT, None, ingested_at=pd.Timestamp("2024-04-01"))
+        n = refresh_announcement_timestamp(
+            con, "AAA", _E, pd.Timestamp("2024-05-01 06:30"), "yfinance_earnings_dates",
+            pd.Timestamp("2024-05-03 02:00"))
+        got = _stored(con)
+    finally:
+        con.close()
+    assert n == 1
+    assert got[0] == pd.Timestamp("2024-05-01 06:30")
+
+
+def test_refresh_replaces_a_pre_event_schedule_with_a_later_observation():
+    """The scenario the review asked for, end to end:
+
+      * a timestamp is stored while the event is still upcoming (a SCHEDULE),
+      * the provider later returns a DIFFERENT time for the same event,
+      * after the refresh the stored historical timing is the NEWER observation.
+
+    Here the correction also flips the classified window, which is the whole reason a
+    stale schedule matters: it would have anchored the corrected target to the wrong
+    session forever.
+    """
+    from ingestion.fetch_earnings_dates import refresh_announcement_timestamp
+    from utilities.db_utilities import load_announcement_timing
+    con = _fresh_db()
+    try:
+        # observed 11 days BEFORE the announcement -> a schedule
+        _seed_event(con, pd.Timestamp("2024-05-01 16:05"), pd.Timestamp("2024-04-20"),
+                    "yfinance_earnings_dates")
+        assert classify_announce_window(pd.Series([_stored(con)[0]])).iloc[0] == AMC
+
+        # observed two days AFTER it -> an observation of what actually happened
+        n = refresh_announcement_timestamp(
+            con, "AAA", _E, pd.Timestamp("2024-05-01 06:30"), "yfinance_earnings_dates",
+            pd.Timestamp("2024-05-03 02:00"))
+        got = _stored(con)
+        timing = load_announcement_timing(con)
+    finally:
+        con.close()
+    assert n == 1
+    assert got[0] == pd.Timestamp("2024-05-01 06:30")
+    assert got[2] == pd.Timestamp("2024-05-03 02:00")          # provenance updated
+    assert got[1] == "yfinance_earnings_dates"
+    assert timing.loc[0, "announce_ts_ny"] == pd.Timestamp("2024-05-01 06:30")
+    assert timing.loc[0, "announce_ts_observed_at"] == pd.Timestamp("2024-05-03 02:00")
+    assert classify_announce_window(timing["announce_ts_ny"]).iloc[0] == BMO
+
+
+def test_refresh_never_overwrites_a_post_event_observation():
+    """Once a timestamp has been observed AFTER the announcement it is a record of what
+    happened, and no later fetch may move it."""
+    from ingestion.fetch_earnings_dates import refresh_announcement_timestamp
+    con = _fresh_db()
+    try:
+        _seed_event(con, pd.Timestamp("2024-05-01 06:30"), pd.Timestamp("2024-05-03"),
+                    "yfinance_earnings_dates")
+        n = refresh_announcement_timestamp(
+            con, "AAA", _E, pd.Timestamp("2024-05-01 16:05"), "yfinance_earnings_dates",
+            pd.Timestamp("2024-06-01"))
+        got = _stored(con)
+    finally:
+        con.close()
+    assert n == 0
+    assert got[0] == pd.Timestamp("2024-05-01 06:30")
+    assert got[2] == pd.Timestamp("2024-05-03")
+
+
+def test_refresh_ignores_an_older_observation():
+    """A stale fetch arriving late must not clobber a newer one. This is also what makes
+    re-running ingestion idempotent."""
+    from ingestion.fetch_earnings_dates import refresh_announcement_timestamp
+    con = _fresh_db()
+    try:
+        _seed_event(con, pd.Timestamp("2024-05-01 16:05"), pd.Timestamp("2024-04-25"),
+                    "yfinance_earnings_dates")
+        n = refresh_announcement_timestamp(
+            con, "AAA", _E, pd.Timestamp("2024-05-01 06:30"), "yfinance_earnings_dates",
+            pd.Timestamp("2024-04-20"))                      # older than what is stored
+        got = _stored(con)
+    finally:
+        con.close()
+    assert n == 0
+    assert got[0] == pd.Timestamp("2024-05-01 16:05")
+
+
+def test_refresh_is_idempotent():
+    from ingestion.fetch_earnings_dates import refresh_announcement_timestamp
+    con = _fresh_db()
+    try:
+        _seed_event(con, pd.Timestamp("2024-05-01 16:05"), pd.Timestamp("2024-04-20"),
+                    "yfinance_earnings_dates")
+        args = ("AAA", _E, pd.Timestamp("2024-05-01 06:30"), "yfinance_earnings_dates",
+                pd.Timestamp("2024-05-03 02:00"))
+        assert refresh_announcement_timestamp(con, *args) == 1
+        assert refresh_announcement_timestamp(con, *args) == 0     # now post-event
+        got = _stored(con)
+    finally:
+        con.close()
+    assert got[0] == pd.Timestamp("2024-05-01 06:30")
+
+
+@pytest.mark.parametrize("ingested_at,expect_refresh", [
+    (pd.Timestamp("2024-04-20"), True),    # row created BEFORE the event -> a schedule
+    (pd.Timestamp("2024-05-03"), False),   # row created AFTER it -> treat as observed
+])
+def test_refresh_falls_back_to_ingested_at_on_a_pre_column_row(ingested_at, expect_refresh):
+    """Rows written before `announce_ts_observed_at` existed have NULL in it. Their
+    `ingested_at` is a lower bound on when the timestamp could have been observed, so it
+    can only make a row look MORE like a schedule — never less. Using it is the
+    conservative direction; with both NULL nothing is refreshed at all."""
+    from ingestion.fetch_earnings_dates import refresh_announcement_timestamp
+    con = _fresh_db()
+    try:
+        _seed_event(con, pd.Timestamp("2024-05-01 16:05"), pd.NaT,
+                    "yfinance_earnings_dates", ingested_at=ingested_at)
+        n = refresh_announcement_timestamp(
+            con, "AAA", _E, pd.Timestamp("2024-05-01 06:30"), "yfinance_earnings_dates",
+            pd.Timestamp("2024-05-10"))
+        got = _stored(con)
+    finally:
+        con.close()
+    assert n == (1 if expect_refresh else 0)
+    assert got[0] == (pd.Timestamp("2024-05-01 06:30") if expect_refresh
+                      else pd.Timestamp("2024-05-01 16:05"))
+
+
+def test_refresh_does_nothing_when_the_observation_time_is_unknown():
+    """Neither column set means we cannot say whether the stored value is a schedule.
+    Refusing to touch it is the only safe answer."""
+    from ingestion.fetch_earnings_dates import refresh_announcement_timestamp
+    con = _fresh_db()
+    try:
+        _seed_event(con, pd.Timestamp("2024-05-01 16:05"), pd.NaT,
+                    "yfinance_earnings_dates", ingested_at=pd.NaT)
+        n = refresh_announcement_timestamp(
+            con, "AAA", _E, pd.Timestamp("2024-05-01 06:30"), "yfinance_earnings_dates",
+            pd.Timestamp("2024-05-10"))
+        got = _stored(con)
+    finally:
+        con.close()
+    assert n == 0
+    assert got[0] == pd.Timestamp("2024-05-01 16:05")
+
+
+def test_yfinance_fetch_records_when_it_observed_the_timestamp(monkeypatch):
+    """The refresh rule is only as good as the observation time it is given, so the
+    fetcher must stamp it at the moment of the fetch rather than leave it to be inferred
+    later."""
+    import ingestion.fetch_earnings_dates as fed
+
+    idx = pd.DatetimeIndex(
+        [pd.Timestamp("2024-05-01 06:30"), pd.Timestamp("2024-02-01 16:05")],
+        name="Earnings Date").tz_localize("America/New_York")
+    payload = pd.DataFrame(
+        {"EPS Estimate": [0.9, 1.1], "Reported EPS": [1.0, 1.2], "Surprise(%)": [11.0, 9.0]},
+        index=idx)
+
+    class _Ticker:
+        def __init__(self, symbol):
+            self.earnings_dates = payload
+
+    monkeypatch.setattr(fed.yf, "Ticker", _Ticker)
+    monkeypatch.setattr(fed.time, "sleep", lambda *_: None)
+    before = pd.Timestamp.now()
+    out = fed.fetch_one_earnings_dates("AAA")["earnings_dates_df"]
+    after = pd.Timestamp.now()
+
+    assert "announce_ts_observed_at" in out.columns
+    assert out["announce_ts_observed_at"].notna().all()
+    assert (out["announce_ts_observed_at"] >= before).all()
+    assert (out["announce_ts_observed_at"] <= after).all()
+    # ingested_at and the observation are the same moment for a fresh fetch
+    assert (out["announce_ts_observed_at"] == out["ingested_at"]).all()
+
+
+def test_backfill_stamps_the_seed_pull_date_as_the_observation_time():
+    """The audit seed is evidence pulled on a known day. Recording that day is what lets
+    the rule above tell a seeded post-event observation (frozen) from a seeded schedule
+    for an event that had not happened yet (refreshable)."""
+    from scripts.backfill_announcement_timestamps import (
+        backfill, SOURCE_LABEL, SOURCE_OBSERVED_AT)
+    con = _fresh_db()
+    try:
+        _seed_event(con, pd.NaT, pd.NaT, None, ingested_at=pd.Timestamp("2024-04-01"))
+        backfill(con, pd.DataFrame([{
+            "stock": "AAA", "earnings_date": _E,
+            "announce_ts_ny": pd.Timestamp("2024-05-01 06:30")}]))
+        got = _stored(con)
+    finally:
+        con.close()
+    assert got[1] == SOURCE_LABEL
+    assert got[2] == SOURCE_OBSERVED_AT
+    # the seeded event reported long before the pull, so it is a post-event observation
+    assert got[2] > got[0]
+
+
+def test_backfill_migrates_observed_at_onto_rows_it_seeded_earlier():
+    """The column was added after the seed had already run once. Stamping the pull date
+    on those rows is a one-time, idempotent migration — without it 12,068 rows would be
+    permanently un-classifiable as schedule or observation."""
+    from scripts.backfill_announcement_timestamps import (
+        backfill, SOURCE_LABEL, SOURCE_OBSERVED_AT)
+    con = _fresh_db()
+    try:
+        _seed_event(con, pd.Timestamp("2024-05-01 06:30"), pd.NaT, SOURCE_LABEL,
+                    ingested_at=pd.Timestamp("2024-04-01"))
+        first = backfill(con, pd.DataFrame(columns=["stock", "earnings_date",
+                                                    "announce_ts_ny"]))
+        got = _stored(con)
+        second = backfill(con, pd.DataFrame(columns=["stock", "earnings_date",
+                                                     "announce_ts_ny"]))
+    finally:
+        con.close()
+    assert first["seeded_rows_missing_observed_at"] == 1
+    assert got[2] == SOURCE_OBSERVED_AT
+    assert second["seeded_rows_missing_observed_at"] == 0

@@ -18,8 +18,9 @@ Rules
 * Only fills NULLs. An observed timestamp already on a row is never overwritten.
 * Only touches (stock, earnings_date) pairs that already exist in `earnings`. It creates
   no events; a timestamp for an event we do not store is simply skipped and counted.
-* Records provenance in `announce_ts_source`, so a later reader can tell a backfilled
-  timestamp from a freshly ingested one.
+* Records provenance in `announce_ts_source` and the pull date in
+  `announce_ts_observed_at`, so a later reader can tell a backfilled timestamp from a
+  freshly ingested one, and a schedule from a post-event observation.
 * Idempotent: run it twice and the second run updates nothing.
 * No timestamp is invented for the AlphaVantage date-only history. Those rows stay NULL
   and their events stay explicitly unresolved.
@@ -39,6 +40,14 @@ from utilities.db_utilities import create_earnings_table_if_not_exists
 
 SOURCE_PARQUET = "audit/provider_timestamps.parquet"
 SOURCE_LABEL = "audit_provider_timestamps_2026_09_05"
+
+# When the audit actually pulled these timestamps from yfinance. Recorded as
+# `announce_ts_observed_at` so the seeded rows carry the schedule-vs-observation
+# distinction like any other row: a seeded event that had already reported by this date
+# was OBSERVED after the fact and is frozen; a seeded event still upcoming on this date
+# was a SCHEDULE and ingestion may refresh it later (external review of Phase 2, item 2).
+# It is a fact about the pull, not a guess — do not move it to "now".
+SOURCE_OBSERVED_AT = pd.Timestamp("2026-09-05")
 
 
 def load_seed(path=SOURCE_PARQUET) -> pd.DataFrame:
@@ -80,16 +89,30 @@ def backfill(con, seed: pd.DataFrame, dry_run: bool = False) -> dict:
                           WHERE e.stock = s.stock AND e.earnings_date = s.earnings_date)
     """).fetchone()[0]
 
+    # Rows this script seeded before `announce_ts_observed_at` existed carry the seed
+    # label but no observation date, which leaves them un-classifiable as
+    # schedule-vs-observation. Stamp the pull date on them once. Self-migrating and
+    # idempotent, and it touches only rows this script itself wrote.
+    stats["seeded_rows_missing_observed_at"] = con.execute("""
+        SELECT COUNT(*) FROM earnings
+        WHERE announce_ts_source = ? AND announce_ts_observed_at IS NULL
+    """, [SOURCE_LABEL]).fetchone()[0]
+
     if not dry_run:
+        con.execute("""
+            UPDATE earnings SET announce_ts_observed_at = ?
+             WHERE announce_ts_source = ? AND announce_ts_observed_at IS NULL
+        """, [SOURCE_OBSERVED_AT.to_pydatetime(), SOURCE_LABEL])
         con.execute("""
             UPDATE earnings AS e
                SET announce_ts_ny = s.announce_ts_ny,
-                   announce_ts_source = ?
+                   announce_ts_source = ?,
+                   announce_ts_observed_at = ?
               FROM seed_ts AS s
              WHERE e.stock = s.stock
                AND e.earnings_date = s.earnings_date
                AND e.announce_ts_ny IS NULL
-        """, [SOURCE_LABEL])
+        """, [SOURCE_LABEL, SOURCE_OBSERVED_AT.to_pydatetime()])
         stats["filled"] = stats["would_fill"]
     con.unregister("seed_ts")
 

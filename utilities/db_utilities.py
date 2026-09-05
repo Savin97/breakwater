@@ -52,6 +52,14 @@ def create_earnings_table_if_not_exists(con):
     # NULL forever; those events are simply unresolved.
     con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_ny TIMESTAMP")
     con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_source TEXT")
+    # WHEN we observed the provider saying that time. Without it a timestamp collected
+    # while the event was still upcoming — a SCHEDULE, which the provider may later
+    # correct — is indistinguishable from one observed after the event, and a NULL-only
+    # backfill rule freezes the schedule into the historical record forever (external
+    # review of Phase 2, item 2). observed_at <= announce_ts_ny means the row is still a
+    # schedule and may be refreshed; observed_at > announce_ts_ny means the observation
+    # post-dates the announcement and is never overwritten.
+    con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_observed_at TIMESTAMP")
 
 
 def load_announcement_timing(con) -> pd.DataFrame:
@@ -62,25 +70,39 @@ def load_announcement_timing(con) -> pd.DataFrame:
     is a one-time seed loaded into this column by
     scripts/backfill_announcement_timestamps.py, not a runtime input.
 
+    `announce_ts_observed_at` rides along as provenance: it says when the provider was
+    observed saying that time, which is what separates a still-upcoming SCHEDULE from a
+    post-event observation. A DB predating that column reports it as NaT.
+
+    Where a (stock, earnings_date) somehow carries more than one timestamped row, the
+    MOST RECENTLY OBSERVED one wins — a later observation supersedes an earlier one, the
+    same rule the ingestion refresh applies.
+
     Returns an empty frame (not an error) on a DB predating the column, so an old
     database degrades to "every event UNKNOWN and unresolved" rather than to a crash.
     """
+    out_cols = ["stock", "earnings_date", "announce_ts_ny", "announce_ts_source",
+                "announce_ts_observed_at"]
     cols = {row[0] for row in con.execute("DESCRIBE earnings").fetchall()}
     if "announce_ts_ny" not in cols:
-        return pd.DataFrame(columns=["stock", "earnings_date",
-                                     "announce_ts_ny", "announce_ts_source"])
-    out = con.execute("""
-        SELECT stock, earnings_date, announce_ts_ny, announce_ts_source
+        return pd.DataFrame(columns=out_cols)
+    observed = ("announce_ts_observed_at" if "announce_ts_observed_at" in cols
+                else "CAST(NULL AS TIMESTAMP)")
+    out = con.execute(f"""
+        SELECT stock, earnings_date, announce_ts_ny, announce_ts_source,
+               {observed} AS announce_ts_observed_at
         FROM earnings
         WHERE announce_ts_ny IS NOT NULL
         QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY stock, earnings_date ORDER BY announce_ts_ny
+            PARTITION BY stock, earnings_date
+            ORDER BY {observed} DESC NULLS LAST, announce_ts_ny
         ) = 1
         ORDER BY stock, earnings_date
     """).fetch_df()
     out["earnings_date"] = pd.to_datetime(out["earnings_date"])
     out["announce_ts_ny"] = pd.to_datetime(out["announce_ts_ny"])
-    return out
+    out["announce_ts_observed_at"] = pd.to_datetime(out["announce_ts_observed_at"])
+    return out[out_cols]
 
 def create_sectors_data_table_if_not_exists(con):
     con.execute("""

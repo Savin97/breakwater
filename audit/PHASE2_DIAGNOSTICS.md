@@ -1,12 +1,18 @@
 # Phase 2 diagnostics — the corrected outcome dataset
 
-Frozen output of `PYTHONPATH=. .venv/bin/python -m audit.phase2_diagnostics`, run on the
-Phase 2 implementation commit against `output/events_df.parquet`.
+Frozen output of `PYTHONPATH=. .venv/bin/python -m audit.phase2_diagnostics`, regenerated
+after the external review of commit `0ecec2c` against `output/events_df.parquet`.
 
 **This describes a dataset, not a model.** No tier hit rate, lift or capture number appears
 here on purpose: every tier in the frame was produced by a scorer fitted on the mismeasured
 target, so reading performance off it would repeat exactly the mistake
 `audit/PHASE0_AUDIT_REV2.md` §Q3 documents. The rebuild and re-fit are Phase 3.
+
+What these numbers establish, stated exactly: **the legacy target is proven wrong for BMO
+events** — it measures a window that opens one session after the news. They establish
+nothing about the model. The validity and the incremental value of the scoring model
+remain **unestablished**, pending the corrected-history rebuild and a competitive-baseline
+validation against an honest alternative.
 
 Every figure below is computed on events with an **independently observed announcement
 timestamp**. Nothing is inferred from price behavior.
@@ -16,11 +22,27 @@ timestamp**. Nothing is inferred from price behavior.
 The audit's verified-timestamp analysis (§Q2, `audit/verified_timing_analysis.py`, a
 standalone script that never touched the pipeline) reported the market baseline
 P(|reaction_3d| ≥ 8%) moving 0.128 → 0.204 and the BMO baseline 0.041 → 0.173. The
-production implementation reproduces both to three decimals on 11,417 resolved events,
-which is the intended agreement: the pipeline now computes what the audit script proved
-was needed.
+production implementation reproduces both to three decimals, which is the intended
+agreement: the pipeline now computes what the audit script proved was needed.
+
+## What the review changed (§3, §5, §6 below)
+
+Anchors and endpoints are now positions on the **canonical market-session grid** rather
+than on each ticker's own price rows, and the ticker must have a price row on the exact
+required dates. On this dataset that leaves every one of the 11,417 resolved anchors
+unchanged and withdraws 3 outcome values that the old positional arithmetic had stretched
+over a three-session ingestion hole (AMAT 3d/5d and CSCO 5d, 2026-05-19 → 05-21).
+
+`resolved_events()` now additionally requires the requested anchored target to be
+non-null, which separates "anchor resolved" (11,417) from "target available" (11,412) from
+"paired with the legacy column" (11,410). §3 accounts for every row of both steps.
+
+§5's AMC control is correspondingly split: bit-identity is asserted on the 4,832 AMC
+events with no missing session in any window, and each of the 10 that differ is listed
+with the horizon and the reason.
 
 ```
+
 
 ==============================================================================
 1. ANNOUNCEMENT WINDOWS — observed timestamps only, never price behavior
@@ -71,14 +93,30 @@ year
   on Phase 3: a walk-forward re-fit cannot claim a window the timestamps do not cover.
 
 ==============================================================================
-3. LEGACY vs ANCHORED  P(|reaction_3d| >= 8%)  — resolved events only
+3. THE CORRECTED-TARGET GATE — anchor resolved vs target available
 ==============================================================================
-  n = 11417 resolved events   2008-04-16 -> 2026-09-03
+    11417  anchor resolved          — the pre-announcement close is real (anchor_resolved_events)
+    11412  abs_reaction_3d_anchored available — the gate that may feed calibration (resolved_events)
+    11410  ... AND legacy abs_reaction_3d present — the extra requirement of a PAIRED comparison
+
+  anchor resolved but no anchored target: 5
+        4  unavailable_endpoint_beyond_market_grid — the endpoint session is past the end of the loaded market grid (the window has not finished unfolding)
+        1  unavailable_endpoint_price_gap — the market traded the endpoint session but this ticker has no price row for it (ingestion gap)
+  anchored target present but legacy absent: 2
+    BF-B@2026-09-02(BMO), EPAM@2026-08-06(BMO)
+    A BMO 3d window closes one session EARLIER than the legacy one, so at the
+    right-hand edge of history the corrected target can exist where the legacy one
+    does not. Only the paired table below needs both.
+
+==============================================================================
+3b. LEGACY vs ANCHORED  P(|reaction_3d| >= 8%)  — paired rows only
+==============================================================================
+  n = 11412 gated events   2008-04-16 -> 2026-09-02
 
   slice             n      legacy    anchored     delta
-  ALL           11411      0.1281      0.2043   +0.0762
+  ALL           11410      0.1281      0.2043   +0.0762
   BMO            6573      0.0411      0.1733   +0.1322
-  AMC            4838      0.2464      0.2464   +0.0000
+  AMC            4837      0.2464      0.2464   +0.0000
 
   Read this as a measurement correction, not a result. The legacy BMO rate is
   low because the legacy window starts one session AFTER the news.
@@ -102,12 +140,31 @@ p99  0.1163    0.2100  1.8061
 5. AMC EQUALITY CHECK — anchored must be BIT-IDENTICAL to legacy
 ==============================================================================
   reaction_1d : IDENTICAL   n=4842
-  reaction_3d : IDENTICAL   n=4842
-  reaction_5d : IDENTICAL   n=4842
-  abs_reaction_3d: IDENTICAL
+  reaction_3d : 1 DIFFER   n=4842
+  reaction_5d : 2 DIFFER   n=4842
+  abs_reaction_3d: 1 DIFFER   n=4842
 
-  PASS — AMC was never mismeasured, so the correction must be a no-op there.
-  This is the control that proves the anchoring code is not moving things on its own.
+  Every DIFFER above must be a session the ticker has no price row for; the split is
+  below and the strict check follows it.
+
+  AMC was never mismeasured by the LEGACY CLOCK, so re-anchoring must be a no-op there.
+  It is not a no-op where the ticker is missing a price row inside the window: the
+  legacy `.shift(-k)` counts rows and steps over the hole, the corrected target counts
+  MARKET SESSIONS and refuses. Those events are listed below; every other AMC event
+  must match bit for bit.
+  AMC events with a missing session inside some window: 10
+    AMAT@2026-05-14  1d=available  3d=unavailable_endpoint_price_gap  5d=unavailable_endpoint_price_gap
+    AVGO@2026-09-02  1d=available  3d=unavailable_endpoint_beyond_market_grid  5d=unavailable_endpoint_beyond_market_grid
+    CSCO@2026-05-13  1d=available  3d=available  5d=unavailable_endpoint_price_gap
+    DELL@2026-09-01  1d=available  3d=available  5d=unavailable_endpoint_beyond_market_grid
+    HPE@2026-09-02  1d=available  3d=unavailable_endpoint_beyond_market_grid  5d=unavailable_endpoint_beyond_market_grid
+    LULU@2026-09-03  1d=available  3d=unavailable_endpoint_beyond_market_grid  5d=unavailable_endpoint_beyond_market_grid
+    MTCH@2026-08-04  1d=available  3d=available  5d=unavailable_endpoint_after_last_price
+    NTAP@2026-09-02  1d=available  3d=unavailable_endpoint_beyond_market_grid  5d=unavailable_endpoint_beyond_market_grid
+    PANW@2026-09-01  1d=available  3d=available  5d=unavailable_endpoint_beyond_market_grid
+    PAYC@2026-08-05  1d=available  3d=available  5d=unavailable_endpoint_after_last_price
+
+  PASS — bit-identity on the 4832 gap-free AMC events.
 
 ==============================================================================
 6. UNRESOLVED EVENTS — counts and reasons
@@ -116,9 +173,18 @@ p99  0.1163    0.2100  1.8061
        98  unresolved_intraday            announced mid-session; no unambiguous pre-announcement close
     34284  TOTAL UNRESOLVED (75.0% of completed events)
 
-  resolved but with an incomplete forward window: 4 (the 3 sessions after the anchor have not all closed yet)
-  None of these carry an anchored target, and resolved_events() is the only gate
-  into corrected calibration — invariant 7.
+  Per-horizon target availability on the resolved anchors:
+    reaction_1d_anchored: 11417 available of 11417
+    reaction_3d_anchored: 11412 available of 11417
+          4  unavailable_endpoint_beyond_market_grid — the endpoint session is past the end of the loaded market grid (the window has not finished unfolding)
+          1  unavailable_endpoint_price_gap — the market traded the endpoint session but this ticker has no price row for it (ingestion gap)
+    reaction_5d_anchored: 11404 available of 11417
+          8  unavailable_endpoint_beyond_market_grid — the endpoint session is past the end of the loaded market grid (the window has not finished unfolding)
+          3  unavailable_endpoint_after_last_price — the endpoint session is past this ticker's last price row
+          2  unavailable_endpoint_price_gap — the market traded the endpoint session but this ticker has no price row for it (ingestion gap)
+
+  A resolved ANCHOR is not an available TARGET. resolved_events() requires both and
+  is the only gate into corrected calibration — invariant 7.
 
 ==============================================================================
 7. MISSING-PRICE / NON-SESSION CASES — counted, never rolled
@@ -132,7 +198,7 @@ p99  0.1163    0.2100  1.8061
 
   The 24 price-gap cases are an INGESTION bug, not a calendar problem —
   the market traded that day and we have no row. Rolling them forward would hide it.
-  HD@2026-05-19, WMT@2026-05-21, DE@2026-05-21, TGT@2026-05-20, ADI@2026-05-20, CPRT@2026-05-21, LOW@2026-05-20, WSM@2026-05-21, JBL@2026-06-16, GIS@2026-06-24, SPGI@2008-01-24, DECK@2026-05-21, TTWO@2026-05-21, WDAY@2026-05-21, HAS@2026-05-20, KEYS@2026-05-19, FDS@2026-06-25, NDSN@2026-05-20, ROST@2026-05-21, NKE@2026-06-25, TJX@2026-05-20, SPGI@2006-04-25, INTU@2026-05-20, RL@2026-05-21
+  HD@2026-05-19, WMT@2026-05-21, DE@2026-05-21, TGT@2026-05-20, ADI@2026-05-20, SPGI@2008-01-24, DECK@2026-05-21, TTWO@2026-05-21, WDAY@2026-05-21, FDS@2026-06-25, NKE@2026-06-25, TJX@2026-05-20, CPRT@2026-05-21, LOW@2026-05-20, WSM@2026-05-21, JBL@2026-06-16, SPGI@2006-04-25, INTU@2026-05-20, HAS@2026-05-20, KEYS@2026-05-19, NDSN@2026-05-20, ROST@2026-05-21, GIS@2026-06-24, RL@2026-05-21
 
   In-frame report-date session check (anchor_session_status):
      45701  ok

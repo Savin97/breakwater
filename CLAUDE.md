@@ -80,6 +80,12 @@ announcement lands after the close of the report date. That is true for AMC repo
 timestamped BMO events the measured P(|reaction| ≥ 8%) is 0.041; anchored correctly it is
 0.173. See `audit/PHASE0_AUDIT_REV2.md` §Q1–Q2 and `audit/PHASE2_DIAGNOSTICS.md`.
 
+**What this does and does not establish.** The legacy target is *proven wrong for BMO
+events*. Nothing here establishes anything about the model: its validity and its
+incremental value remain **unestablished**, pending the corrected-history rebuild (Phase 3)
+and a competitive-baseline validation. Do not restate this finding as a claim about the
+model being right.
+
 **The legacy columns are unchanged and remain the production target.** Phase 2 adds a
 *parallel* corrected target so the two can be compared on equal terms; nothing switches over
 until the whole historical chain is rebuilt and the thresholds re-fit, which is Phase 3.
@@ -90,11 +96,32 @@ until the whole historical chain is rebuilt and the thresholds re-fit, which is 
 |---|---|
 | `announce_ts_ny` | observed announcement time, naive **NY local** |
 | `announce_ts_source` | provenance of that timestamp |
+| `announce_ts_observed_at` | **when** the provider was observed saying it — the schedule-vs-observation flag |
 | `announce_window` | `BMO` (<09:30) / `AMC` (≥16:00) / `INTRADAY` / `UNKNOWN` — a pure function of the clock |
 | `anchor_date` | last close **strictly before** the announcement: AMC → close(D), BMO → close(D−1) |
-| `anchor_status` | `resolved`, `pending`, or `unresolved_{no_timestamp,intraday,no_session,price_gap,no_prior_session}` |
+| `anchor_status` | `resolved`, `pending`, or `unresolved_{no_timestamp,intraday,no_session,price_gap,no_prior_session,anchor_before_history}` |
 | `anchor_session_status` | whether the report date is a session and this ticker has a row for it |
-| `reaction_{1,3,5}d_anchored`, `abs_reaction_3d_anchored` | k post-announcement sessions from the anchor. AMC is **bit-identical** to legacy by construction — that equality is the control. |
+| `reaction_{1,3,5}d_anchored`, `abs_reaction_3d_anchored` | k post-announcement **market sessions** from the anchor |
+| `reaction_{1,3,5}d_anchored_status` | per-horizon availability: `available`, or `unavailable_endpoint_{beyond_market_grid,after_last_price,price_gap}`, or the `anchor_status` when the anchor itself failed |
+
+**Anchors and endpoints are positions on the market-session grid**
+(`market_session_grid(daily_df)` — every date the loaded price data shows the market
+trading), never positions in the ticker's own price rows, and never calendar arithmetic:
+
+```
+anchor session     = grid[i + offset]        i = the report date's grid index
+k-session endpoint = grid[i + offset + k]    AMC offset 0, BMO offset −1
+```
+
+The ticker must then have a price row on those **exact** dates. Counting the ticker's own
+rows silently absorbs a hole — `.shift(-3)` over a three-session gap yields a six-session
+window, and a BMO event missing its D−1 row anchors to D−2 — and the arithmetic still
+returns a number. The legacy columns do exactly this and are deliberately left alone; the
+corrected target refuses and says which session it was missing. So an AMC anchored
+reaction is bit-identical to the legacy one **wherever the ticker has a row on every
+session in the window** (4,832 of 4,842 AMC events); the 10 that differ are all missing
+sessions and are enumerated in `audit/PHASE2_DIAGNOSTICS.md` §5. That equality is the
+control.
 
 Rules that must not be relaxed:
 
@@ -106,8 +133,18 @@ Rules that must not be relaxed:
   guessed at.
 - **Never auto-roll a non-trading-day date.** A weekend/holiday date and a date the market
   traded but we failed to ingest have different causes; rolling hides both (§Q6).
-- **Only `resolved_events()` may feed a corrected calibration.** Unresolved events carry NaN
-  anchored targets, so they cannot enter one by accident.
+- **Only `resolved_events()` may feed a corrected calibration**, and "anchor resolved" is
+  not "target available". `anchor_resolved_events()` is the anchoring control slice;
+  `resolved_events(events, target=...)` additionally requires that anchored outcome to be
+  non-null and defaults to `abs_reaction_3d_anchored`. On the current data that is
+  11,417 resolved anchors → 11,412 with a 3d target → 11,410 also carrying the legacy
+  column for a paired comparison; every step is accounted for in the diagnostics §3.
+- **A pre-event timestamp is a schedule, not a record.** A timestamp observed while the
+  event was still upcoming may be corrected later, so ingestion refreshes it when a newer
+  observation arrives (`refresh_announcement_timestamp`). A timestamp observed *after* the
+  announcement is never overwritten. `announce_ts_observed_at` is what tells the two
+  apart; where it is NULL, `ingested_at` stands in as a lower bound, and where both are
+  NULL nothing is refreshed.
 - `audit/provider_timestamps.parquet` is **evidence, not a runtime input**. It seeded
   `earnings.announce_ts_ny` once via `scripts/backfill_announcement_timestamps.py`;
   ingestion keeps the column current from there. A test asserts no `pipeline/` module reads it.

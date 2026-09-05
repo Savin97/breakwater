@@ -128,8 +128,12 @@ def attach_announcement_timing(events: pd.DataFrame,
                                timing_df: pd.DataFrame | None) -> pd.DataFrame:
     """Join the observed announcement timestamps and classify the window.
 
-    `timing_df` is (stock, earnings_date, announce_ts_ny, announce_ts_source) as returned
-    by `utilities.db_utilities.load_announcement_timing`. Passing None means "no observed
+    `timing_df` is (stock, earnings_date, announce_ts_ny, announce_ts_source,
+    announce_ts_observed_at) as returned by
+    `utilities.db_utilities.load_announcement_timing`. `announce_ts_observed_at` is when
+    the provider was observed to say that time; it carries the schedule-vs-confirmed
+    distinction into the event frame (external-review item 2) and is provenance only —
+    no anchoring decision reads it. Passing None means "no observed
     timing available" — every event comes out UNKNOWN and, below, unresolved. That is the
     honest degradation and it is deliberately the DEFAULT: the caller that wants verified
     timing has to go and get it, so a production path can never acquire announcement
@@ -139,11 +143,16 @@ def attach_announcement_timing(events: pd.DataFrame,
     if timing_df is None or len(timing_df) == 0:
         events["announce_ts_ny"] = pd.NaT
         events["announce_ts_source"] = None
+        events["announce_ts_observed_at"] = pd.NaT
     else:
-        t = timing_df[["stock", "earnings_date", "announce_ts_ny", "announce_ts_source"]].copy()
+        cols = ["stock", "earnings_date", "announce_ts_ny", "announce_ts_source"]
+        t = timing_df[cols + [c for c in ("announce_ts_observed_at",)
+                              if c in timing_df.columns]].copy()
         t["earnings_date"] = pd.to_datetime(t["earnings_date"])
         t = t.drop_duplicates(subset=["stock", "earnings_date"], keep="first")
         events = events.merge(t, on=["stock", "earnings_date"], how="left")
+        if "announce_ts_observed_at" not in events.columns:
+            events["announce_ts_observed_at"] = pd.NaT
     events["announce_window"] = classify_announce_window(events["announce_ts_ny"]).values
     return events
 
