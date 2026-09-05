@@ -7,6 +7,7 @@ from utilities.db_utilities import get_max_dates_by_stock
 from utilities.api_functions import (get_earnings_data_from_api)
 from utilities.data_utilities import to_float_or_none, get_alpha_vantage_api_key, read_stocks_to_fetch
 from utilities.output_utilities import get_run_logs_dir
+from utilities.time_utilities import now_ny, MAX_HOST_CLOCK_AHEAD_OF_NY_HOURS
 from config import (
     STOCKS_START_DATE,
     ALPHAVANTAGE_CALLS_PER_MINUTE,
@@ -43,24 +44,46 @@ ANNOUNCE_TS_SOURCE_YFINANCE = "yfinance_earnings_dates"
 #                                   is an observation of what happened and is never
 #                                   overwritten.
 #
+# Both sides of that comparison are naive NEW YORK wall clock (utilities.time_utilities).
+# The classification is a statement about the New York event clock and must not change
+# with the timezone of the host running the pipeline: `datetime.now()` on a UTC or
+# Israeli box reads hours ahead of NY, which would make a pre-event observation look
+# post-event and freeze a schedule into the historical record forever.
+#
 # `ingested_at` stands in where `announce_ts_observed_at` is NULL (rows written before
-# the column existed): it is a lower bound on when we could have observed the timestamp,
-# so it can only make a row look MORE like a schedule, never less. If both are NULL the
-# comparison is NULL, the row does not match, and nothing is overwritten — the
-# conservative direction.
+# the column existed). It is a legacy operational column written in MACHINE-LOCAL time by
+# whichever host ran that ingestion, and its convention is not recorded, so it is never
+# compared against announce_ts_ny directly. It is first widened into a guaranteed lower
+# bound on the same instant in NY terms — a host clock can lead New York by at most
+# MAX_HOST_CLOCK_AHEAD_OF_NY_HOURS — so the row is frozen only when it was observed after
+# the announcement under EVERY possible host timezone. The residual error therefore only
+# ever goes one way: an ambiguous legacy row can be treated as a schedule when it was
+# really an observation, and is then replaced by a strictly newer, correctly-stamped
+# observation of the same event. That is the conservative direction. The opposite error —
+# a false post-event classification — is the one that is unrecoverable, because it welds a
+# time that never happened onto the historical record. If both columns are NULL the
+# comparison is NULL, the row does not match, and nothing is overwritten.
 #
 # The refresh also requires the incoming observation to be strictly newer than the one it
 # replaces, so re-running ingestion is idempotent and an older observation can never
-# clobber a newer one.
-_REFRESH_ANNOUNCE_TS_SQL = """
+# clobber a newer one. Against a legacy row that bound is the widened one too, for the
+# same reason; a row only takes the widened path once, because the refresh writes a real
+# NY-convention `announce_ts_observed_at` and every later comparison is exact.
+
+# Naive NY wall clock if we have it; otherwise the legacy machine-local `ingested_at`
+# widened into a lower bound that holds for any host timezone.
+_OBSERVED_AT_NY = (f"COALESCE(announce_ts_observed_at, "
+                   f"ingested_at - INTERVAL {MAX_HOST_CLOCK_AHEAD_OF_NY_HOURS} HOUR)")
+
+_REFRESH_ANNOUNCE_TS_SQL = f"""
     UPDATE earnings
        SET announce_ts_ny = ?,
            announce_ts_source = ?,
            announce_ts_observed_at = ?
      WHERE stock = ? AND earnings_date = ?
        AND (announce_ts_ny IS NULL
-            OR (COALESCE(announce_ts_observed_at, ingested_at) <= announce_ts_ny
-                AND ? > COALESCE(announce_ts_observed_at, ingested_at)))
+            OR ({_OBSERVED_AT_NY} <= announce_ts_ny
+                AND ? > {_OBSERVED_AT_NY}))
 """
 
 
@@ -71,6 +94,10 @@ def refresh_announcement_timestamp(con, stock, earnings_date, announce_ts_ny,
     Returns the number of rows changed. See `_REFRESH_ANNOUNCE_TS_SQL` for the rule; the
     short version is fill-if-empty, replace-if-still-a-schedule, never touch a
     post-event observation.
+
+    `announce_ts_ny` and `observed_at` are both naive NEW YORK wall clock; pass
+    `utilities.time_utilities.now_ny()` for an observation made right now, never
+    `datetime.now()`.
 
     Keyed on (stock, earnings_date), so it corrects the TIME of an event whose calendar
     date is unchanged. A provider correction that moves the date itself is a different
@@ -123,13 +150,20 @@ def fetch_one_earnings_dates(stock: str):
         earnings_dates_df["stock"]               = stock
         earnings_dates_df["fiscal_end_date"]     = None
         earnings_dates_df["surprise_percentage"] = earnings_dates_df["surprise_percentage"] / 100
-        observed_at = datetime.now()
-        earnings_dates_df["ingested_at"]         = observed_at
+        earnings_dates_df["ingested_at"]         = datetime.now()
         # WHEN the provider was observed saying this. A row fetched while the event is
         # still upcoming is a schedule; one fetched afterwards is an observation. Only
         # this column can tell them apart later, so it is written at the moment of the
         # fetch and never inferred.
-        earnings_dates_df["announce_ts_observed_at"] = observed_at
+        #
+        # In naive NEW YORK wall clock, the same convention as `announce_ts_ny`, because
+        # the refresh rule compares the two directly. `datetime.now()` would put the
+        # host's timezone into that comparison: on a UTC or Israeli box a schedule
+        # fetched hours before the announcement would read as later than it and be frozen
+        # into the historical record. `ingested_at` above keeps its own legacy
+        # machine-local convention — it is an operational column, not part of the
+        # announcement-timing comparison.
+        earnings_dates_df["announce_ts_observed_at"] = now_ny()
         earnings_dates_df.loc[earnings_dates_df["announce_ts_ny"].isna(),
                               "announce_ts_observed_at"] = pd.NaT
         earnings_dates_df = earnings_dates_df[EARNINGS_INSERT_COLS]

@@ -47,6 +47,12 @@ SOURCE_LABEL = "audit_provider_timestamps_2026_09_05"
 # was OBSERVED after the fact and is frozen; a seeded event still upcoming on this date
 # was a SCHEDULE and ingestion may refresh it later (external review of Phase 2, item 2).
 # It is a fact about the pull, not a guess — do not move it to "now".
+#
+# Naive NY wall clock, like every other announcement-timing value
+# (utilities.time_utilities). Midnight NY on the pull date is a deliberate LOWER BOUND on
+# the moment of the pull: it can only make a seeded row look more like a schedule and so
+# more refreshable, never less, which is the conservative direction under any host
+# timezone.
 SOURCE_OBSERVED_AT = pd.Timestamp("2026-09-05")
 
 

@@ -96,7 +96,7 @@ until the whole historical chain is rebuilt and the thresholds re-fit, which is 
 |---|---|
 | `announce_ts_ny` | observed announcement time, naive **NY local** |
 | `announce_ts_source` | provenance of that timestamp |
-| `announce_ts_observed_at` | **when** the provider was observed saying it — the schedule-vs-observation flag |
+| `announce_ts_observed_at` | **when** the provider was observed saying it, naive **NY local** — the schedule-vs-observation flag |
 | `announce_window` | `BMO` (<09:30) / `AMC` (≥16:00) / `INTRADAY` / `UNKNOWN` — a pure function of the clock |
 | `anchor_date` | last close **strictly before** the announcement: AMC → close(D), BMO → close(D−1) |
 | `anchor_status` | `resolved`, `pending`, or `unresolved_{no_timestamp,intraday,no_session,price_gap,no_prior_session,anchor_before_history}` |
@@ -145,6 +145,23 @@ Rules that must not be relaxed:
   announcement is never overwritten. `announce_ts_observed_at` is what tells the two
   apart; where it is NULL, `ingested_at` stands in as a lower bound, and where both are
   NULL nothing is refreshed.
+- **One clock: naive New York wall time.** `announce_ts_ny` and `announce_ts_observed_at`
+  are both naive NY local, because the refresh rule compares them directly and the
+  BMO/AMC cut points (09:30, 16:00) are NY wall-clock facts.
+  `utilities/time_utilities.now_ny()` is the only sanctioned source — `datetime.now()`
+  returns the *host's* clock, so on a UTC or Israel box an observation made hours before
+  an announcement reads as later than it, and a schedule gets frozen into the historical
+  record permanently. A static test forbids stamping `announce_ts_observed_at` from a
+  host clock; `test_schedule_vs_observation_is_identical_on_every_host` runs the whole
+  rule under five host timezones and across both US DST transitions.
+  The legacy `ingested_at` is **machine-local and its convention was never recorded**, so
+  it is never compared against `announce_ts_ny` raw: the fallback first widens it by
+  `MAX_HOST_CLOCK_AHEAD_OF_NY_HOURS` (19 — UTC+14 against EST) into a lower bound that
+  holds on any host, and a row is frozen only if it was post-event under *every* possible
+  host timezone. The residual error therefore only ever runs toward "still a schedule",
+  which a later correctly-stamped observation repairs; a false post-event classification
+  would be permanent. Every `announce_ts_observed_at` currently in the DB came from the
+  backfill's fixed pull date, so no stored row carries a host-local stamp.
 - `audit/provider_timestamps.parquet` is **evidence, not a runtime input**. It seeded
   `earnings.announce_ts_ny` once via `scripts/backfill_announcement_timestamps.py`;
   ingestion keeps the column current from there. A test asserts no `pipeline/` module reads it.

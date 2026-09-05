@@ -59,6 +59,14 @@ def create_earnings_table_if_not_exists(con):
     # review of Phase 2, item 2). observed_at <= announce_ts_ny means the row is still a
     # schedule and may be refreshed; observed_at > announce_ts_ny means the observation
     # post-dates the announcement and is never overwritten.
+    #
+    # Naive NY LOCAL time, the SAME convention as announce_ts_ny, because the refresh
+    # rule compares the two directly — a comparison that would otherwise depend on the
+    # timezone of whatever host ran the ingestion. Write it with
+    # `utilities.time_utilities.now_ny()`, never `datetime.now()`. This is not the
+    # convention of the legacy `ingested_at` column, which is machine-local; see
+    # `ingestion.fetch_earnings_dates._REFRESH_ANNOUNCE_TS_SQL` for how that one is
+    # widened before it is ever compared against announce_ts_ny.
     con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_observed_at TIMESTAMP")
 
 
