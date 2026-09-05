@@ -394,8 +394,15 @@ def test_incremental_parity_fixture_is_not_vacuous(tmp_path, monkeypatch):
 
 
 def test_incremental_matches_full_on_latest_row(tmp_path, monkeypatch):
-    """Both paths must describe a stock identically on the latest row per stock —
-    the row every upcoming-events consumer reads."""
+    """Both DAILY paths must describe a stock identically on the latest row per stock.
+
+    NOTE: since the Phase 1 event-frame rebuild, no upcoming-events consumer reads this
+    row any more — they read the pending rows of pipeline/events.py (see
+    testing/test_event_frame.py). This remains a parity test of the incremental daily
+    scoring path against the full one, nothing more. groupby().last() is used here
+    deliberately, to compare the two paths on the exact mechanism the incremental cache
+    was built around; production code must not use it (test_event_frame invariant 9).
+    """
     full, inc = _full_then_incremental(tmp_path, monkeypatch)
     assert list(full.index) == list(inc.index)
 

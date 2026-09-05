@@ -27,3 +27,6 @@ data/subscribers.txt
 *.env
 .ipynb_checkpoints/
 temp.py
+# Phase 1 parity scaffolding: a full pre-change copy of the daily frame (309 MB).
+# Regenerate in ~35s with the command in audit/phase1_golden/README.md.
+audit/phase1_golden/daily_df_pre.parquet

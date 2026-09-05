@@ -8,6 +8,7 @@ import pandas as pd
 from report.chart_builder import generate_reactions_chart
 from report.recommendations_builder import build_recommendation
 from utilities.output_utilities import get_run_output_dir
+from pipeline.events import pending_events
 
 def generate_report(stock, data):
     project_root = Path(__file__).resolve().parents[1]
@@ -50,10 +51,19 @@ def generate_report(stock, data):
     HTML(string=html_out, base_url=project_root).write_pdf(REPORT_OUTPUT_PATH)
 
 
-def generate_reports(df):
+def generate_reports(df, events_df):
+    """Per-stock PDF reports for the coming week.
+
+    Upcoming state comes from the PENDING rows of the event frame. This replaced two
+    stale mechanisms: `df.sort_values("date").groupby("stock").last()` (per-column NaN
+    skipping) and `earnings_df.iloc[-1]` (explicitly the last COMPLETED event), both of
+    which shipped a tier, score and IV snapshot one earnings event old
+    (audit/PHASE0_AUDIT_REV2.md §Q4). `df` is still the source for each stock's
+    historical reaction chart and bucket table.
+    """
     today  = pd.Timestamp.today().normalize()
     cutoff = today + pd.Timedelta(days=7)
-    latest_per_stock = df.sort_values("date").groupby("stock").last().reset_index()
+    latest_per_stock = pending_events(events_df)
     mask = (latest_per_stock["earnings_date"] >= today) & (latest_per_stock["earnings_date"] <= cutoff)
 
     stocks_to_report_for = latest_per_stock[mask].sort_values("risk_score", ascending=False)["stock"].tolist()
@@ -90,26 +100,31 @@ def generate_reports(df):
             print(f"  {stock}: no earnings rows, skipping.")
             continue
 
-        latest_row     = earnings_df.iloc[-1]
-        current_bucket = latest_row["earnings_explosiveness_bucket"]
-        if not isinstance(current_bucket, str):
-            latest_row     = earnings_df.iloc[-2]
-            current_bucket = latest_row["earnings_explosiveness_bucket"]
+        # The pending event row: tier, score and flags as of today, not as of the
+        # stock's previous report.
+        latest_row     = latest_per_stock_idx.loc[stock]
+        current_bucket = str(latest_row["earnings_explosiveness_bucket"])
 
         prior_strength = 20
+        # Reindexed over every tier: now that the tier comes from the pending event it
+        # can be one this stock has never historically occupied, which used to KeyError
+        # below. Zero prior events shrink to the market prior (lift 1.0), which is the
+        # right answer for "no opinion yet".
         eb = (
-            earnings_df.groupby("earnings_explosiveness_bucket")["is_extreme_reaction"]
+            earnings_df.groupby("earnings_explosiveness_bucket", observed=False)["is_extreme_reaction"]
             .agg(extreme_count="sum", event_count="count")
+            .reindex(["Normal", "Elevated", "High Alert"])
+            .fillna(0)
         )
         eb["shrunk_prob"]               = (eb["extreme_count"] + prior_strength * P_extreme_global) / (eb["event_count"] + prior_strength)
         eb["global_hist_prob"]           = bucket_stats.loc[eb.index, "global_hist_prob"]
         eb["lift_vs_baseline"]           = eb["shrunk_prob"] / P_extreme_global
         eb["lift_vs_same_bucket_global"] = eb["shrunk_prob"] / eb["global_hist_prob"]
 
-        upcoming_date   = pd.Timestamp(latest_per_stock_idx.loc[stock, "earnings_date"])
+        upcoming_date   = pd.Timestamp(latest_row["earnings_date"])
         surprise_flag   = str(latest_row.get("surprise_momentum_flag", "") or "")
         drift_flag      = str(latest_row.get("pre_earnings_drift_flag",  "") or "")
-        high_conviction = bool(latest_per_stock_idx.loc[stock, "is_high_conviction"])
+        high_conviction = bool(latest_row["is_high_conviction"])
 
         # The lift-based tier promotion that used to live here now runs in stage4
         # (engineer_lift_adjusted_bucket), so current_bucket already reflects it and

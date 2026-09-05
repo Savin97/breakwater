@@ -1,0 +1,6 @@
+Tier,Score col,N,Min score,Max score
+High Alert,risk_score,2108,69.79,100.0
+Elevated,risk_score,1877,29.68,78.97
+Normal,risk_score,17081,8.71,72.98
+OVERLAP Elevated / High Alert,,911,909 Elevated > High Alert min,2 High Alert < Elevated max
+OVERLAP Normal / Elevated,,16698,15400 Normal > Elevated min,1298 Elevated < Normal max

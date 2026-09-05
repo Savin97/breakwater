@@ -133,6 +133,7 @@ def create_predictions_table_if_not_exists(con):
             surprise_momentum_flag  TEXT,
             model_version           TEXT,
             git_commit              TEXT,
+            score_asof_date         DATE,
             ingested_at             TIMESTAMP
         );
     """)
@@ -140,6 +141,11 @@ def create_predictions_table_if_not_exists(con):
     # scripts/sync_pipeline.sh overwrites the local DB with the droplet's copy, so a
     # schema change applied on only one side gets silently reverted on the next sync.
     con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS run_week DATE")
+    # score_asof_date: the observation date the tier was computed from. Added in the
+    # Phase 1 event-frame rebuild so staleness is a recorded fact rather than something
+    # a later audit has to infer. Rows written before it exists stay NULL — those are
+    # the pre-rebuild calls, whose score came from the previous completed event.
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS score_asof_date DATE")
     con.execute("""
         UPDATE predictions
         SET run_week = date_trunc('week', prediction_asof_date)

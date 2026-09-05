@@ -30,6 +30,13 @@ from config import (DEFAULT_REACTION_WINDOW,
                     LONG_TERM_VOLATILITY,
                     SHORT_TERM_MOMENTUM,
                     LONG_TERM_MOMENTUM)
+from feature_engineering.event_features import (
+    event_abs_reaction_median,
+    event_abs_reaction_p75,
+    event_abs_reaction_p75_rolling,
+    event_abs_reaction_p90_rolling,
+    event_surprise_features,
+    event_pre_earnings_drift_z)
 
 def engineer_daily_ret(input_df):
     df = input_df
@@ -107,10 +114,7 @@ def engineer_abs_reaction_median(input_df):
     earnings_df = df.loc[earnings_mask, ["stock","earnings_date", DEFAULT_REACTION_WINDOW]].copy()
     earnings_df = earnings_df.sort_values(["stock", "earnings_date"])
 
-    earnings_df["abs_reaction_median"] = (
-        earnings_df.groupby("stock")[DEFAULT_REACTION_WINDOW]
-        .transform(lambda x: x.abs().shift(1).expanding().median())
-        )
+    earnings_df = event_abs_reaction_median(earnings_df)
     df.loc[earnings_mask, "abs_reaction_median"] = earnings_df["abs_reaction_median"]
     assert earnings_mask.sum() == len(earnings_df), "Mismatch: earnings rows vs earnings_df"
     return df
@@ -140,10 +144,7 @@ def engineer_abs_reaction_p75(input_df):
     earnings_df = df.loc[earnings_mask, ["stock","earnings_date",DEFAULT_REACTION_WINDOW]].copy()
     earnings_df = earnings_df.sort_values(["stock", "earnings_date"])
 
-    earnings_df["abs_reaction_p75"] = (
-        earnings_df.groupby("stock")[DEFAULT_REACTION_WINDOW]
-        .transform(lambda x: x.abs().shift(1).expanding().quantile(0.75))
-        )
+    earnings_df = event_abs_reaction_p75(earnings_df)
     df.loc[earnings_mask, "abs_reaction_p75"] = earnings_df["abs_reaction_p75"]
     assert earnings_mask.sum() == len(earnings_df), "Mismatch: earnings rows vs earnings_df"
 
@@ -151,33 +152,22 @@ def engineer_abs_reaction_p75(input_df):
 
 
 def engineer_abs_reaction_p75_rolling(df, window=28, percentile=0.75):
+    """Rolling p75 over the stock's last `window` PRIOR earnings events.
+
+    Computation lives in feature_engineering.event_features so the pending upcoming
+    event uses the identical window (Phase 1). Stocks with < `window` events get NaN
+    here and fall back to expanding abs_reaction_p75 in scoring.
+    """
     earnings_mask = df["is_earnings_day"] == True
-    # Single window: requires 28 past earnings events to produce a value.
-    # Stocks with < 28 events get NaN here and fall back to expanding abs_reaction_p75 in scoring.
-    df.loc[earnings_mask, "abs_reaction_p75_rolling"] = (
-        df.loc[earnings_mask]
-          .groupby("stock")["abs_reaction_3d"]
-          .transform(
-              lambda x: x.shift(1).rolling(window, min_periods=window).quantile(percentile)
-          )
-    )
+    earnings_df = event_abs_reaction_p75_rolling(df.loc[earnings_mask].copy(), window, percentile)
+    df.loc[earnings_mask, "abs_reaction_p75_rolling"] = earnings_df["abs_reaction_p75_rolling"]
     return df
 
 def engineer_abs_reaction_p90_rolling(df, window=28, percentile=0.9):
-    earnings_df = df["is_earnings_day"] == True
-    # Rolling percentile per stock, using past earnings only
-    df.loc[earnings_df, "abs_reaction_p90_rolling"] = (
-        df.loc[earnings_df]
-          .groupby("stock")["abs_reaction_3d"]
-          .transform(
-              lambda x: (
-                  x.shift(1)
-                   .rolling(window, min_periods=window)
-                   .quantile(percentile)
-              )
-          )
-    )
-
+    """Rolling p90 over the stock's last `window` PRIOR earnings events."""
+    earnings_mask = df["is_earnings_day"] == True
+    earnings_df = event_abs_reaction_p90_rolling(df.loc[earnings_mask].copy(), window, percentile)
+    df.loc[earnings_mask, "abs_reaction_p90_rolling"] = earnings_df["abs_reaction_p90_rolling"]
     return df
 
 #---------------------------------------
@@ -198,32 +188,7 @@ def engineer_surprise_features(input_df):
     earnings_df = df.loc[earnings_mask, ["stock", "earnings_date", "surprise_percentage"]].copy()
     earnings_df = earnings_df.sort_values(["stock", "earnings_date"])
 
-    grp = earnings_df.groupby("stock")["surprise_percentage"]
-
-    # Rolling stats on past earnings (shift(1) excludes current event)
-    earnings_df["surprise_mean_5"] = grp.transform(
-        lambda x: x.shift(1).rolling(5, min_periods=3).mean()
-    )
-    earnings_df["surprise_std_5"] = grp.transform(
-        lambda x: x.shift(1).rolling(5, min_periods=3).std()
-    )
-
-    # Beat indicator: 1=beat, 0=miss, NaN if no estimate — based on prior event
-    def _streak(x):
-        shifted = x.shift(1)
-        beat = (shifted >= 0).astype(float)   # 1=beat, 0=miss
-        beat[shifted.isna()] = np.nan
-        # Convert to direction: +1 for beat, -1 for miss
-        direction = beat.where(beat == 1, -1)
-        direction[beat.isna()] = np.nan
-        # Run-length encode: each direction change starts a new group
-        run_id = direction.ne(direction.shift()).cumsum()
-        count  = direction.groupby(run_id).cumcount() + 1
-        streak = count * direction
-        streak[beat.isna()] = np.nan
-        return streak
-
-    earnings_df["surprise_streak"] = grp.transform(_streak)
+    earnings_df = event_surprise_features(earnings_df)
 
     for col in ["surprise_mean_5", "surprise_std_5", "surprise_streak"]:
         df.loc[earnings_mask, col] = earnings_df[col].values
@@ -248,11 +213,7 @@ def engineer_pre_earnings_drift_z(input_df):
     earnings_df = df.loc[earnings_mask, ["stock", "earnings_date", "drift_30d"]].copy()
     earnings_df = earnings_df.sort_values(["stock", "earnings_date"])
 
-    grp = earnings_df.groupby("stock")["drift_30d"]
-    baseline = grp.transform(lambda x: x.shift(1).expanding().mean())
-    std      = grp.transform(lambda x: x.shift(1).expanding(min_periods=5).std())
-
-    earnings_df["pre_earnings_drift_z"] = (earnings_df["drift_30d"] - baseline) / std
+    earnings_df = event_pre_earnings_drift_z(earnings_df)
 
     df.loc[earnings_mask, "pre_earnings_drift_z"] = earnings_df["pre_earnings_drift_z"]
     return df

@@ -678,3 +678,38 @@ drift-only. `report/recommendations_builder.py` added with 4 tiers of language.
 **merged_stock_data:** denormalised join of the above — NOT used by pipeline (stage2 reads raw tables directly)
 
 ---
+
+## 2026-09-05 — Phase 1: event frame landed, upcoming-score staleness fixed
+
+Branch `methodology-rebuild-phase-1`, base SHA `09e7861`. **Not merged to master.**
+
+**What was wrong** (audit/PHASE0_AUDIT_REV2.md §Q4): every consumer recovered upcoming
+state with `df.sort_values("date").groupby("stock").last()`. `GroupBy.last()` skips NaN
+*per column*, and the scoring columns are NaN off earnings days, so the "latest row" took
+date/earnings_date from today but score/tier/lift from the stock's **last completed
+event**. 100% of shipped upcoming calls were one earnings event stale.
+
+**What was built:** `pipeline/events.py` — one row per earnings event, completed plus one
+pending row per eligible stock (from that stock's final daily row, NaN outcome, sorted
+last within the stock). `feature_engineering/event_features.py` holds the event-level
+cores; the daily pipeline and the event frame both call them, so there is one
+implementation. Every `shift(1)` kept: a pending row's `shift(1).expanding()` naturally
+spans all completed events including the most recent — that IS the fix.
+
+**Do not** put a pending row in the daily frame. It would corrupt merge_asof, the
+per-stock rolling windows and the `groupby("date")` cross-sectional ranks.
+
+**Gotcha that cost time:** the deliberately-preserved cross-stock `reaction_entropy.ffill()`
+in the score is order-dependent, and pending rows sit between one stock's last event and
+the next stock's first. Letting them contribute moved 385 completed scores. A pending row
+now reads the chain without updating it (`entropy.mask(is_pending).ffill()`).
+
+**Proven:** daily frame byte-identical (87 cols × 2.9M rows); all 22 history-dependent
+columns identical on all 45,701 completed events; calibration output identical. 103 tests
+pass (73 existing + 30 new in `testing/test_event_frame.py`).
+
+**Shipped effect:** 8 of 495 upcoming final tiers change; High Conviction 5 → 12.
+
+**Still deferred, do not touch yet:** `scoring_slice.py` and `INCREMENTAL_CACHED_COLS`
+(clean up only after this is proven in production); the cross-stock entropy ffill bug;
+announcement-time/BMO-AMC correction (Phase 2).

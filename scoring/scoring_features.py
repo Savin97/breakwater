@@ -8,6 +8,14 @@ from config import (
     LIFT_PRIOR_STRENGTH,
     LIFT_TO_ELEVATED,
     LIFT_TO_HIGH_ALERT)
+from feature_engineering.event_features import (
+    event_earnings_explosiveness,
+    event_explosiveness_score,
+    event_stock_bucket_lift_values,
+    event_lift_adjusted_bucket,
+    event_high_conviction,
+    surprise_momentum_flag_values,
+    pre_earnings_drift_flag_values)
 
 def engineer_large_reaction(input_df):
     """
@@ -119,14 +127,7 @@ def engineer_earnings_explosiveness(input_df, epsilon = 1e-6):
         - med_col / p75_col are already computed using ONLY past earnings events (shifted).
         - vol_30d is rolling vol from daily returns (ideally shifted by 1 day).
     """
-    df = input_df
-    df["earnings_explosiveness_z"] = (
-        df["abs_reaction_median"] / np.maximum(df["vol_30d"], epsilon)
-        )
-    df["earnings_tail_z"] = (
-        df["abs_reaction_p75"] / np.maximum(df["vol_30d"], epsilon)
-        )
-    return df
+    return event_earnings_explosiveness(input_df, epsilon)
 
 def engineer_sector_vol_stress(input_df: pd.DataFrame, q_high = 0.9) -> pd.DataFrame:
     """
@@ -165,22 +166,9 @@ def engineer_earnings_explosiveness_score(input_df):
         e1 = (df["earnings_explosiveness_z"].fillna(0) / 7).clip(0, 1)  # expanding median z, 7sigma ceiling                                                                    
         e2 = (p75 / vol / 7).clip(0, 1)                                  # rolling tail z, 7sigma ceiling                                                                       
     """
-    df = input_df
-    p75 = df["abs_reaction_p75_rolling"].fillna(df["abs_reaction_p75"])
-    e3 = (p75 / 0.12).clip(0, 1)           # raw magnitude: 12% ceiling
-    e4 = np.clip(df["reaction_entropy"].ffill().fillna(0), 0, 1)
-    df["earnings_explosiveness_score"] = 100 * np.clip(0.85 * e3 + 0.15 * e4, 0, 1)
-
-    # Fixed thresholds from OOS decile calibration (testing/testing.py).
-    # Equal-frequency qcut produced non-monotonic actual rates across buckets.
-    # (73, 79) minimises ECE (2.68pp) across 2011-2025 walk-forward.
-    # Actual OOS extreme rates: Normal ~6%, Elevated ~24%, High Alert ~38%.
-    df["earnings_explosiveness_bucket"] = pd.cut(
-        df["earnings_explosiveness_score"],
-        bins=[-np.inf, BUCKET_ELEVATED_FLOOR, BUCKET_HIGH_ALERT_FLOOR, np.inf],
-        labels=["Normal", "Elevated", "High Alert"]
-    )
-    return df
+    # Cut points 73/79 and the 0.85/0.15 weights are model calibration; see
+    # feature_engineering.event_features.event_explosiveness_score.
+    return event_explosiveness_score(input_df)
 
 
 def engineer_stock_bucket_lift(input_df):
@@ -206,22 +194,10 @@ def engineer_stock_bucket_lift(input_df):
     df = input_df
     earnings_mask = df["is_earnings_day"] == 1
 
-    ev = (
-        df.loc[earnings_mask, ["stock", "date", "is_extreme_reaction", "earnings_explosiveness_bucket"]]
-          .sort_values("date", kind="mergesort")
+    lift = event_stock_bucket_lift_values(
+        df.loc[earnings_mask, ["stock", "date", "is_extreme_reaction",
+                               "earnings_explosiveness_bucket"]]
     )
-
-    # Market baseline as of each event — expanding over ALL prior events, every stock.
-    global_prior = ev["is_extreme_reaction"].expanding().mean().shift(1)
-
-    # This stock's prior record within the same bucket.
-    grp        = ev.groupby(["stock", "earnings_explosiveness_bucket"], observed=True)["is_extreme_reaction"]
-    n_prior    = grp.cumcount()
-    sum_prior  = grp.transform(lambda s: s.shift(1).expanding().sum())
-
-    shrunk = (sum_prior + LIFT_PRIOR_STRENGTH * global_prior) / (n_prior + LIFT_PRIOR_STRENGTH)
-    lift   = (shrunk / global_prior).replace([np.inf, -np.inf], np.nan).fillna(1.0)
-
     df["stock_bucket_lift"] = np.nan
     df.loc[lift.index, "stock_bucket_lift"] = lift
     return df
@@ -237,26 +213,7 @@ def engineer_lift_adjusted_bucket(input_df):
     corrupts the ordering of a score the lift is already 0.79 rank-correlated with.
     Used as a conditional gate instead, the same signal is strongly additive.
     """
-    df = input_df
-    bucket = df["earnings_explosiveness_bucket"].astype(object)
-    lift   = df["stock_bucket_lift"]
-
-    df["earnings_explosiveness_bucket_structural"] = bucket
-
-    # Order matters: test the High Alert gate first. Written as separate masks rather
-    # than an if/elif chain because the chained form silently makes Normal -> High Alert
-    # unreachable (a Normal event clearing 3.0 also clears 1.5 and stops at Elevated).
-    to_high_alert = bucket.isin(["Normal", "Elevated"]) & (lift >= LIFT_TO_HIGH_ALERT)
-    to_elevated   = (bucket == "Normal") & (lift >= LIFT_TO_ELEVATED) & ~to_high_alert
-
-    adjusted = bucket.copy()
-    adjusted[to_elevated]   = "Elevated"
-    adjusted[to_high_alert] = "High Alert"
-
-    df["earnings_explosiveness_bucket"] = pd.Categorical(
-        adjusted, categories=["Normal", "Elevated", "High Alert"], ordered=True
-    )
-    return df
+    return event_lift_adjusted_bucket(input_df)
 
 
 def engineer_surprise_momentum_flag(input_df):
@@ -275,17 +232,9 @@ def engineer_surprise_momentum_flag(input_df):
     df = input_df
     earnings_mask = df["is_earnings_day"] == 1
 
-    streak = df["surprise_streak"]
-    mean5  = df["surprise_mean_5"]
-    std5   = df["surprise_std_5"]
-
-    flag = pd.Series("", index=df.index)
-    flag.loc[earnings_mask & (std5   >  0.20)]                     = "Erratic"
-    flag.loc[earnings_mask & (streak <= -3)]                        = "Miss Streak"
-    flag.loc[earnings_mask & (streak >=  4) & (mean5 > 0.05)]      = "Beat Streak"
-    flag.loc[earnings_mask & (streak >=  6)]                        = "Extended Beat Streak"
-
-    df["surprise_momentum_flag"] = flag
+    df["surprise_momentum_flag"] = surprise_momentum_flag_values(
+        df["surprise_streak"], df["surprise_mean_5"], df["surprise_std_5"], earnings_mask
+    )
 
     # Propagate earnings-day flag to subsequent non-earnings rows.
     # Earnings-day rows act as anchors — even "" resets the carry-forward so a streak
@@ -310,11 +259,7 @@ def engineer_pre_earnings_drift_flag(input_df):
     """
     df = input_df
     earnings_mask = df["is_earnings_day"] == 1
-    z = df["pre_earnings_drift_z"]
-
-    flag = pd.Series("", index=df.index)
-    flag.loc[earnings_mask & (z >= 1.5)]  = "Extended"
-    flag.loc[earnings_mask & (z <= -1.5)] = "Compressed"
+    flag = pre_earnings_drift_flag_values(df["pre_earnings_drift_z"], earnings_mask)
 
     # For pre-earnings window rows: recompute from current drift_30d vs historical
     # earnings-day distribution. Uses full history as baseline (correct for upcoming
@@ -354,12 +299,7 @@ def engineer_high_conviction(input_df):
     # without this the bucket is NaN on non-earnings rows and HC silently evaluates
     # False regardless of the stock's actual tier. Requires df sorted by [stock, date].
     bucket = df.groupby("stock")["earnings_explosiveness_bucket"].ffill()
-    df["is_high_conviction"] = (
-        (bucket == "High Alert") &
-        df["pre_earnings_drift_flag"].notna() &
-        (df["pre_earnings_drift_flag"] != "")
-    )
-    return df
+    return event_high_conviction(df, bucket)
 
 def classify_large_relative_earnings_move_bucket(input_df):
     """
