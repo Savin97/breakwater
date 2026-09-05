@@ -8,6 +8,79 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## 2026-09-05 — PHASE 2: verified announcement timing + parallel anchored target
+
+**Branch `methodology-rebuild` (renamed from `methodology-rebuild-phase-1`, pushed, old
+remote deleted). Phase 1 approved through `8ce659c`. NOT merged to master.**
+
+### What Phase 2 does — and deliberately does NOT do
+Adds a **parallel** corrected outcome. `reaction_{1,3,5}d` / `abs_reaction_3d` are
+untouched and remain the production target; they are the CONTROL. Nothing switches over
+until the historical chain is rebuilt and 73/79 etc. re-fit — that is Phase 3.
+Explicitly deferred and untouched: 73/79, 0.85/0.15, the 0.12 ceiling, lift gates and
+prior strength, same-day global-lift ordering, the cross-stock entropy ffill.
+
+### The mechanism
+- `feature_engineering/announcement_timing.py` — window classification and anchoring.
+  Window is a pure function of the OBSERVED NY clock: `<09:30` BMO, `>=16:00` AMC, else
+  INTRADAY, no timestamp = UNKNOWN. Anchor = last close strictly BEFORE the announcement
+  (AMC → close(D), BMO → close(D-1)); anchored reaction spans k post-announcement
+  SESSIONS via price-row positions, never calendar arithmetic.
+- `earnings.announce_ts_ny` + `announce_ts_source` (naive NY local; self-migrating
+  ALTER TABLE). `ingestion/fetch_earnings_dates.py` no longer throws the timestamp away
+  — that `.dt.date` is the original sin. Both writers now name columns explicitly instead
+  of `SELECT *`, and there is a per-row UPDATE that backfills the timestamp onto rows the
+  dedup filter would otherwise skip forever.
+- `scripts/backfill_announcement_timestamps.py` — one-time, idempotent seed of
+  `audit/provider_timestamps.parquet` into that column. **This is how the audit artifact
+  enters production: once, as a seed. No `pipeline/` module reads that parquet, and a
+  test enforces it.** Filled 12,068 of 12,269; 201 seed events are not in our DB.
+- `pipeline/events.py` — `build_event_frame(daily_df, timing_df=None)`. Default None
+  means "no observed timing → everything UNKNOWN/unresolved". The PIPELINE loads it
+  explicitly (`load_pipeline_announcement_timing`), so production can't acquire timing by
+  accident and unit tests can't acquire a database by accident.
+
+### Numbers (audit/PHASE2_DIAGNOSTICS.md, reproducible via `python -m audit.phase2_diagnostics`)
+- Windows on 45,701 completed: BMO 6,575 / AMC 4,842 / INTRADAY 98 / UNKNOWN 34,186.
+- **Resolved 11,417 (25.0%).** Coverage ~96% for 2021-2026, ~26% in 2020, ~0 before.
+  That is the binding constraint on any Phase 3 walk-forward.
+- P(|reaction_3d| >= 8%): ALL 0.128 -> 0.204, **BMO 0.041 -> 0.173**, AMC 0.246 -> 0.246.
+  Reproduces `audit/verified_timing_analysis.py` to 3 dp — the point of the exercise.
+- BMO |reaction| is ~1.75x larger at every quantile (p10 through p99), mean 0.0276 ->
+  0.0482. A uniform level shift, not a tail artifact.
+- Unresolved: 34,186 no_timestamp + 98 intraday. 4 resolved events have an incomplete
+  forward window.
+- **24 price-gap events** (market traded, ticker has no row) — mostly 2026-05-19..21 plus
+  SPGI 2006/2008. An INGESTION bug; still not fixed, still not rolled. 299 non-session
+  dates, 972 outside the ticker's own price history.
+
+### Things a successor must not undo
+1. **AMC anchored == legacy, bit for bit.** That is the control proving the anchoring code
+   moves nothing on its own. If it ever fails, the anchoring is wrong, not the legacy.
+2. **Never infer BMO/AMC from price.** `test_6_the_classifier_never_touches_price` walks
+   the AST of `classify_announce_window` and fails on any price-derived name. Rev-1 of the
+   audit made exactly this mistake and every corrected number it published was circular.
+3. **Never fabricate a timestamp.** AlphaVantage history is date-only and stays NULL.
+4. **Never auto-roll a non-session date** (audit Q6) — weekend/holiday and ingestion-gap
+   have different causes and rolling hides both.
+5. `resolved_events()` is the ONLY gate into a corrected calibration. Unresolved events
+   carry NaN anchored targets so they cannot enter one by accident.
+
+### Green
+- Phase 1 completed-event parity `{}` on all 45,701 events, with AND without timing.
+- Every `PARITY_COLS` value identical with and without timing — timing does not reach the
+  score at all.
+- `python -m testing.calibration` still byte-identical to `audit/phase1_golden/calibration_pre.txt`.
+- Pending drift flags still 0 diffs vs the legacy golden; High Conviction still 5.
+- **160 tests pass** (107 + 53 new in `testing/test_announcement_timing.py`, one per
+  invariant plus non-vacuity guards).
+
+### Next (Phase 3 — nothing about the corrected model is claimable before it)
+Rebuild the chain from anchored outcomes in the §Q3 order, then re-fit 73/79, `LIFT_TO_*`,
+`LIFT_PRIOR_STRENGTH`, the 0.12 ceiling and the 0.85/0.15 weights, then calibrate
+STRATIFIED by announcement window. Decide the pre-2020 policy: a shorter honest window vs
+paid historical timestamps. **Do not re-fit on inferred labels.**
+
 ## 2026-09-05 — PHASE 1 HANDOFF: event frame landed, upcoming-score staleness fixed
 
 **Branch `methodology-rebuild-phase-1`, commit `e197506` (base `09e7861`). NOT merged to

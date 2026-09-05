@@ -8,6 +8,7 @@
     create_eps_estimates_table_if_not_exists
     create_predictions_table_if_not_exists
 """
+import pandas as pd
 import logging
 from datetime import date, timedelta
 
@@ -41,6 +42,45 @@ def create_earnings_table_if_not_exists(con):
         CREATE UNIQUE INDEX IF NOT EXISTS earnings_unique
         ON earnings(stock, earnings_date, fiscal_end_date);
     """)
+    # Phase 2 (audit/PHASE0_AUDIT_REV2.md Q1) — the observed announcement time, so the
+    # BMO/AMC window is a recorded fact rather than something a later analysis infers
+    # from price behavior. Naive NY LOCAL time; the column name carries the zone, which
+    # keeps it reproducible regardless of the reader's session timezone.
+    # announce_ts_source records where the timestamp came from, so provenance survives
+    # into the event frame (invariant 8). NULL means "not observed" — never a default,
+    # never back-filled from a guess. The AlphaVantage history is date-only and stays
+    # NULL forever; those events are simply unresolved.
+    con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_ny TIMESTAMP")
+    con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_source TEXT")
+
+
+def load_announcement_timing(con) -> pd.DataFrame:
+    """Observed announcement timestamps, keyed by (stock, earnings_date).
+
+    The event frame's only source of announcement timing. Reads the `earnings` table and
+    nothing else — in particular it never reads audit/provider_timestamps.parquet, which
+    is a one-time seed loaded into this column by
+    scripts/backfill_announcement_timestamps.py, not a runtime input.
+
+    Returns an empty frame (not an error) on a DB predating the column, so an old
+    database degrades to "every event UNKNOWN and unresolved" rather than to a crash.
+    """
+    cols = {row[0] for row in con.execute("DESCRIBE earnings").fetchall()}
+    if "announce_ts_ny" not in cols:
+        return pd.DataFrame(columns=["stock", "earnings_date",
+                                     "announce_ts_ny", "announce_ts_source"])
+    out = con.execute("""
+        SELECT stock, earnings_date, announce_ts_ny, announce_ts_source
+        FROM earnings
+        WHERE announce_ts_ny IS NOT NULL
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY stock, earnings_date ORDER BY announce_ts_ny
+        ) = 1
+        ORDER BY stock, earnings_date
+    """).fetch_df()
+    out["earnings_date"] = pd.to_datetime(out["earnings_date"])
+    out["announce_ts_ny"] = pd.to_datetime(out["announce_ts_ny"])
+    return out
 
 def create_sectors_data_table_if_not_exists(con):
     con.execute("""

@@ -58,6 +58,12 @@ from feature_engineering.event_features import (
     pre_earnings_drift_flag_values,
 )
 from scoring.scoring_features import classify_large_relative_earnings_move_bucket
+from feature_engineering.announcement_timing import (
+    ANCHORED_OUTCOME_COLS,
+    classify_announce_window,
+    resolve_event_anchors,
+    resolution_summary,
+)
 
 # Realized outcomes. A pending event has none — blanked so nothing downstream can read a
 # neighbouring event's result as this one's, and so the lift's expanding aggregations
@@ -66,6 +72,8 @@ OUTCOME_COLS = [
     "reaction_1d", "reaction_3d", "reaction_5d", "abs_reaction_3d",
     "is_up", "is_down", "is_nochange",
     "is_large_reaction", "is_extreme_reaction", "earnings_move_bucket",
+    # Phase 2's parallel timing-aware outcomes. Same rule: a pending event has none.
+    *ANCHORED_OUTCOME_COLS,
 ]
 
 # History-dependent state recomputed on the event frame. Blanked on pending rows at
@@ -94,13 +102,66 @@ CARRIED_NOTE = (
 )
 
 
-def build_event_frame(daily_df: pd.DataFrame) -> pd.DataFrame:
+def load_pipeline_announcement_timing() -> pd.DataFrame:
+    """The pipeline's one call site for verified announcement timing.
+
+    Opens the production DuckDB read-only and returns whatever `earnings.announce_ts_ny`
+    holds. This is the ONLY place in `pipeline/` that knows where announcement timing
+    lives, and it is a database column — never `audit/provider_timestamps.parquet`. That
+    parquet seeded the column once via scripts/backfill_announcement_timestamps.py and is
+    not on any runtime path; ordinary ingestion keeps the column current from here on.
+    """
+    import duckdb
+    from config import DB_PATH
+    from utilities.db_utilities import load_announcement_timing
+
+    con = duckdb.connect(DB_PATH, read_only=True)
+    try:
+        timing = load_announcement_timing(con)
+    finally:
+        con.close()
+    print(f"  announcement timing: {len(timing)} observed timestamps from the earnings table")
+    return timing
+
+
+def attach_announcement_timing(events: pd.DataFrame,
+                               timing_df: pd.DataFrame | None) -> pd.DataFrame:
+    """Join the observed announcement timestamps and classify the window.
+
+    `timing_df` is (stock, earnings_date, announce_ts_ny, announce_ts_source) as returned
+    by `utilities.db_utilities.load_announcement_timing`. Passing None means "no observed
+    timing available" — every event comes out UNKNOWN and, below, unresolved. That is the
+    honest degradation and it is deliberately the DEFAULT: the caller that wants verified
+    timing has to go and get it, so a production path can never acquire announcement
+    timing by accident, and a unit test can never acquire a database by accident.
+    """
+    events = events.copy()
+    if timing_df is None or len(timing_df) == 0:
+        events["announce_ts_ny"] = pd.NaT
+        events["announce_ts_source"] = None
+    else:
+        t = timing_df[["stock", "earnings_date", "announce_ts_ny", "announce_ts_source"]].copy()
+        t["earnings_date"] = pd.to_datetime(t["earnings_date"])
+        t = t.drop_duplicates(subset=["stock", "earnings_date"], keep="first")
+        events = events.merge(t, on=["stock", "earnings_date"], how="left")
+    events["announce_window"] = classify_announce_window(events["announce_ts_ny"]).values
+    return events
+
+
+def build_event_frame(daily_df: pd.DataFrame,
+                      timing_df: pd.DataFrame | None = None) -> pd.DataFrame:
     """One row per (stock, earnings event): every completed event, plus one pending row
     per eligible stock.
 
     A stock is eligible for a pending row when its final daily row carries a future
     earnings_date (days_to_earnings > 0). A stock whose final row IS its earnings day
     gets no pending row — the next date is not yet known from the forward merge_asof.
+
+    `timing_df` (Phase 2) carries the observed announcement timestamps. It decides
+    `announce_window`, `anchor_date`, `anchor_status` and the parallel
+    `reaction_*_anchored` targets. The legacy `reaction_1d/3d/5d` and `abs_reaction_3d`
+    are carried through from the daily frame untouched — they are the control this phase
+    is measured against, and nothing switches over before Phase 3.
     """
     completed = daily_df[daily_df["is_earnings_day"] == 1].copy()
     completed["is_pending"] = False
@@ -143,6 +204,13 @@ def build_event_frame(daily_df: pd.DataFrame) -> pd.DataFrame:
     events["event_id"] = (
         events["stock"].astype(str) + "|" + events["earnings_date"].dt.strftime("%Y-%m-%d")
     )
+
+    # Phase 2 — verified announcement timing and the parallel anchored outcomes.
+    # Ordering matters: this runs on the assembled frame, after the pending rows exist
+    # and after the sort, so a pending event is anchored as `pending` rather than
+    # silently picking up a window's anchor for an outcome that has not happened.
+    events = attach_announcement_timing(events, timing_df)
+    events = pd.concat([events, resolve_event_anchors(events, daily_df)], axis=1)
     return events
 
 
@@ -276,13 +344,21 @@ def assert_completed_parity(events: pd.DataFrame, daily_df: pd.DataFrame) -> Non
         )
 
 
-def build_and_score_event_frame(daily_df: pd.DataFrame, verify: bool = True) -> pd.DataFrame:
-    events = score_event_frame(build_event_frame(daily_df))
+def build_and_score_event_frame(daily_df: pd.DataFrame,
+                                timing_df: pd.DataFrame | None = None,
+                                verify: bool = True) -> pd.DataFrame:
+    """`timing_df` defaults to None — no observed announcement timing, so every event is
+    UNKNOWN/unresolved and no anchored target is produced. The pipeline loads it from the
+    DB (`load_announcement_timing`) and passes it in explicitly; see pipeline/stage5.py.
+    Making the caller supply it keeps the production dependency visible and keeps unit
+    tests off the database."""
+    events = score_event_frame(build_event_frame(daily_df, timing_df))
     if verify:
         assert_completed_parity(events, daily_df)
     n_pending = int(events["is_pending"].sum())
     print(f"Event frame: {len(events)} events "
           f"({len(events) - n_pending} completed, {n_pending} pending)")
+    print(resolution_summary(events))
     return events
 
 

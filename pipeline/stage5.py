@@ -6,7 +6,7 @@ from analysis.chart_weekly import generate_weekly_earnings_chart
 from marketing.generate_public_track_record import generate_public_track_record
 from analysis.last_week_results import generate_last_week_results
 from analysis.save_predictions import save_predictions_snapshot
-from pipeline.events import build_and_score_event_frame
+from pipeline.events import build_and_score_event_frame, load_pipeline_announcement_timing
 
 
 def stage5(df, events_df=None):
@@ -20,7 +20,7 @@ def stage5(df, events_df=None):
     """
     print("--------------------\nStage 5 - Outputs...")
     if events_df is None:
-        events_df = build_and_score_event_frame(df)
+        events_df = build_and_score_event_frame(df, load_pipeline_announcement_timing())
 
     def generate_full_parquet(df):
         df.to_parquet("output/full_df.parquet", index=False)

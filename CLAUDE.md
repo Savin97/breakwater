@@ -59,16 +59,66 @@ The project uses a `.venv` (Python 3.14). Activate with `source .venv/bin/activa
 | 2 | `pipeline/stage2.py` | Reads `prices`, `earnings`, `stock_data` tables from DB; merges into a single DataFrame. Also dedups earnings and asserts data freshness. |
 | 3 | `pipeline/stage3.py` | Calls ~20 feature-engineering functions in sequence; each appends columns and returns the df. `incremental=True` recomputes only price-dependent rolling features and reads expanding earnings stats from `config.INCREMENTAL_CACHED_COLS`. |
 | 4 | `pipeline/stage4.py` | Calls the risk-scoring functions; produces `risk_score` (0–100), `earnings_explosiveness_bucket`, and component scores. `incremental=True` skips everything needing `abs_reaction_3d`. |
+| 4b | `pipeline/events.py` | Builds the **event frame** — one row per earnings event, every completed event plus one pending row per stock — attaches verified announcement timing, and asserts completed-event parity against the daily frame. Written to `output/events_df.parquet`. |
 | 5 | `pipeline/stage5.py` | Writes `output/full_df.parquet`, then generates PDF reports, the weekly calendar, charts, the public track record, the Streamlit export, and a predictions snapshot. |
 
 The intermediate output between stages is a pandas DataFrame. Stage 3 and 4 functions all follow the same pattern: accept `input_df`, copy it, add columns, return it — never mutate in place.
 
 ## Data Storage
 
-- **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price)`, `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
+- **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price)`, `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage, announce_ts_ny, announce_ts_source)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
 - **Parquet** (`output/full_df.parquet`): the fully engineered + scored DataFrame, written at the top of stage 5. This is the source of truth for backtesting, calibration, and reporting.
 - **Parquet** (`output/streamlit_df.parquet`, `output/upcoming_df.parquet`): produced by `streamlit_dash/streamlit_export.py`; consumed by the Streamlit app.
+- **Parquet** (`output/events_df.parquet`, ~15 MB): the event frame. One row per earnings event; `is_pending == 0` is history, `is_pending == 1` is the upcoming call. Every forward-looking consumer reads this, never `groupby("stock").last()`.
 - **Stock universe** (`data/stock_list.csv`): the list of stocks to process.
+
+## Announcement Timing and the Corrected Target (Phase 2)
+
+`reaction_1d/3d/5d` and `abs_reaction_3d` measure `close(D+k)/close(D)`, which assumes the
+announcement lands after the close of the report date. That is true for AMC reporters and
+**false for BMO reporters**, whose first post-announcement session is D itself. On 6,573
+timestamped BMO events the measured P(|reaction| ≥ 8%) is 0.041; anchored correctly it is
+0.173. See `audit/PHASE0_AUDIT_REV2.md` §Q1–Q2 and `audit/PHASE2_DIAGNOSTICS.md`.
+
+**The legacy columns are unchanged and remain the production target.** Phase 2 adds a
+*parallel* corrected target so the two can be compared on equal terms; nothing switches over
+until the whole historical chain is rebuilt and the thresholds re-fit, which is Phase 3.
+
+`feature_engineering/announcement_timing.py` owns this. Event-frame columns:
+
+| column | meaning |
+|---|---|
+| `announce_ts_ny` | observed announcement time, naive **NY local** |
+| `announce_ts_source` | provenance of that timestamp |
+| `announce_window` | `BMO` (<09:30) / `AMC` (≥16:00) / `INTRADAY` / `UNKNOWN` — a pure function of the clock |
+| `anchor_date` | last close **strictly before** the announcement: AMC → close(D), BMO → close(D−1) |
+| `anchor_status` | `resolved`, `pending`, or `unresolved_{no_timestamp,intraday,no_session,price_gap,no_prior_session}` |
+| `anchor_session_status` | whether the report date is a session and this ticker has a row for it |
+| `reaction_{1,3,5}d_anchored`, `abs_reaction_3d_anchored` | k post-announcement sessions from the anchor. AMC is **bit-identical** to legacy by construction — that equality is the control. |
+
+Rules that must not be relaxed:
+
+- **Never infer BMO/AMC from realized price behavior.** Audit rev-1 did (ticker labelled BMO
+  because its day-0 move exceeded its day-+1 move) and every "corrected" number it produced
+  was circular. `test_6_the_classifier_never_touches_price` enforces this statically.
+- **Never fabricate a timestamp.** The AlphaVantage date-only history stays NULL and its
+  events stay unresolved. 25.0% of completed events are resolved; the rest are counted, not
+  guessed at.
+- **Never auto-roll a non-trading-day date.** A weekend/holiday date and a date the market
+  traded but we failed to ingest have different causes; rolling hides both (§Q6).
+- **Only `resolved_events()` may feed a corrected calibration.** Unresolved events carry NaN
+  anchored targets, so they cannot enter one by accident.
+- `audit/provider_timestamps.parquet` is **evidence, not a runtime input**. It seeded
+  `earnings.announce_ts_ny` once via `scripts/backfill_announcement_timestamps.py`;
+  ingestion keeps the column current from there. A test asserts no `pipeline/` module reads it.
+
+```bash
+# one-time seed of the audit timestamps into the DB (idempotent)
+PYTHONPATH=. .venv/bin/python scripts/backfill_announcement_timestamps.py [--dry-run]
+
+# dataset diagnostics — window mix, coverage by year, legacy vs anchored, unresolved reasons
+PYTHONPATH=. .venv/bin/python -m audit.phase2_diagnostics
+```
 
 ## Feature Engineering Conventions
 

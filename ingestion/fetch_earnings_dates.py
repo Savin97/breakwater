@@ -21,6 +21,16 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# Physical column order of the `earnings` table. Both writers below name their columns
+# explicitly rather than `SELECT *`, so adding a column (Phase 2 added two) can never
+# silently shift values into the wrong slot.
+EARNINGS_INSERT_COLS = ["stock", "earnings_date", "fiscal_end_date",
+                        "reported_eps", "estimated_eps", "surprise_percentage",
+                        "ingested_at", "announce_ts_ny", "announce_ts_source"]
+_INSERT_COL_SQL = ", ".join(EARNINGS_INSERT_COLS)
+
+ANNOUNCE_TS_SOURCE_YFINANCE = "yfinance_earnings_dates"
+
 def fetch_one_earnings_dates(stock: str):
     """Network fetch + pandas reshape only — no DB access. Mirrors the fetch/reshape
     portion of incremental_ingest_all_earnings_dates_yf's loop body exactly.
@@ -43,18 +53,23 @@ def fetch_one_earnings_dates(stock: str):
             "Reported EPS":   "reported_eps",
             "Surprise(%)":    "surprise_percentage",
         })
-        earnings_dates_df["earnings_date"] = (
+        # yfinance's index is tz-aware America/New_York and carries the ANNOUNCEMENT TIME.
+        # Phase 2: keep it. Discarding it with .dt.date is what forced every timing
+        # analysis to infer BMO/AMC from price behavior, which is circular
+        # (audit/PHASE0_AUDIT_REV2.md Q1). The calendar date is still stored exactly as
+        # before — announce_ts_ny is additive, nothing downstream of earnings_date moves.
+        announce_ts_ny = (
             pd.to_datetime(earnings_dates_df["earnings_date"])
-            .dt.tz_localize(None)
-            .dt.date
+            .dt.tz_localize(None)          # tz-aware -> NY LOCAL wall clock, kept verbatim
         )
+        earnings_dates_df["announce_ts_ny"]      = announce_ts_ny
+        earnings_dates_df["announce_ts_source"]  = ANNOUNCE_TS_SOURCE_YFINANCE
+        earnings_dates_df["earnings_date"]       = announce_ts_ny.dt.date
         earnings_dates_df["stock"]               = stock
         earnings_dates_df["fiscal_end_date"]     = None
         earnings_dates_df["surprise_percentage"] = earnings_dates_df["surprise_percentage"] / 100
         earnings_dates_df["ingested_at"]         = datetime.now()
-        earnings_dates_df = earnings_dates_df[["stock", "earnings_date", "fiscal_end_date",
-                                               "reported_eps", "estimated_eps",
-                                               "surprise_percentage", "ingested_at"]]
+        earnings_dates_df = earnings_dates_df[EARNINGS_INSERT_COLS]
 
         return {"stock": stock, "earnings_dates_df": earnings_dates_df, "error": None}
     except Exception as e:
@@ -130,10 +145,16 @@ def ingest_all_earnings_dates(con):
 
             df["surprise_percentage"] = df["surprise_percentage"] / 100
             df["ingested_at"] = datetime.now()
+            # AlphaVantage returns a reported DATE and no time. Left NULL — inventing a
+            # plausible hour here would put a fabricated timestamp behind a column whose
+            # whole purpose is that it was independently observed.
+            df["announce_ts_ny"] = pd.NaT
+            df["announce_ts_source"] = None
+            df = df[EARNINGS_INSERT_COLS]
 
             count_before = con.execute("SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]).fetchone()[0] #type:ignore
             con.register("tmp_earnings_df", df)
-            con.execute("INSERT OR IGNORE INTO earnings SELECT * FROM tmp_earnings_df")
+            con.execute(f"INSERT OR IGNORE INTO earnings ({_INSERT_COL_SQL}) SELECT {_INSERT_COL_SQL} FROM tmp_earnings_df")
             con.unregister("tmp_earnings_df")
             count_after = con.execute("SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]).fetchone()[0]#type:ignore
             added = count_after - count_before
@@ -245,6 +266,21 @@ def incremental_ingest_all_earnings_dates_yf(con):
                 """, [row.reported_eps, row.estimated_eps, row.surprise_percentage,
                       stock, row.earnings_date])
 
+            # Backfill the announcement timestamp onto rows we already store. Same
+            # reason as above: the dedup filter below drops any date already in the DB,
+            # so without this an event ingested before Phase 2 would stay timestamp-less
+            # forever and remain permanently unresolved. Only fills NULLs — an observed
+            # timestamp already on the row is never overwritten by a later fetch.
+            for row in earnings_dates_df.itertuples(index=False):
+                if pd.isna(row.announce_ts_ny):
+                    continue
+                con.execute("""
+                    UPDATE earnings
+                       SET announce_ts_ny = ?, announce_ts_source = ?
+                     WHERE stock = ? AND earnings_date = ? AND announce_ts_ny IS NULL
+                """, [row.announce_ts_ny.to_pydatetime(), row.announce_ts_source,
+                      stock, row.earnings_date])
+
             # fiscal_end_date is None so the DB unique index can't deduplicate — filter manually
             existing = {
                 row[0] for row in
@@ -272,7 +308,7 @@ def incremental_ingest_all_earnings_dates_yf(con):
                 "SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]
             ).fetchone()[0]
             con.register("tmp_earnings_df", earnings_dates_df)
-            con.execute("INSERT INTO earnings SELECT * FROM tmp_earnings_df")
+            con.execute(f"INSERT INTO earnings ({_INSERT_COL_SQL}) SELECT {_INSERT_COL_SQL} FROM tmp_earnings_df")
             con.unregister("tmp_earnings_df")
             count_after = con.execute(
                 "SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]
