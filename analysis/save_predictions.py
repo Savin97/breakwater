@@ -6,6 +6,7 @@ from datetime import date
 
 from config import PREDICTIONS_DB_PATH, MODEL_VERSION
 from utilities.db_utilities import create_predictions_table_if_not_exists
+from utilities.data_utilities import work_week_window
 
 
 def _get_git_commit() -> str:
@@ -17,40 +18,43 @@ def _get_git_commit() -> str:
         return ""
 
 
-def save_predictions_snapshot(df: pd.DataFrame) -> None:
-    """Persist THIS WEEK's predictions so backtesting can compare the tier/score we
-    published against the realized reaction. Called once per pipeline run (stage5).
+def save_predictions_snapshot(df: pd.DataFrame, weeks: int = 1,
+                              current_week: bool = False) -> None:
+    """Persist the calls we published so backtesting can compare the tier/score we sent
+    against the realized reaction. Called once per pipeline run (stage5).
 
-    Scope is deliberately the run week only — the product is "here is the week's
-    earnings risk", so the table holds exactly the calls we made, nothing else. Events
-    further out are still scored in full_df/upcoming_df; they land here in the week
-    they actually fall in.
+    Selects on the SAME window as the weekly digest — a whole Mon-Fri work week, see
+    work_week_window — so every call the email makes is in the table. The table is the
+    wider record: it keeps all tiers, while the email shows only High Alert / Elevated. These were
+    computed separately before and drifted: a Friday run mailed four calls (ORCL, ADBE,
+    COO, CPRT) that this table never recorded, because its window was today..Sunday and
+    nothing reports at a weekend.
 
-    The window is today..Sunday of the run week, not Monday..Sunday: starting at today
-    means a mid-week re-run cannot write a "prediction" for an event that already
-    reported, which would otherwise leak hindsight into any backtest of this table.
-    Monday's rows for those earlier events are already stored and stay untouched.
+    The lower bound is clamped to today so a mid-week or --current-week run cannot write
+    a "prediction" for an event that already reported, which would leak hindsight into
+    any backtest of this table. Rows written earlier for those events stay untouched, and
+    the predictions_first_call view picks the earliest call per event regardless.
     """
     today = pd.Timestamp(date.today())
+    window_start, window_end = work_week_window(weeks=weeks, current_week=current_week)
+    start = max(window_start, today)          # never record an event that already reported
     run_week_start = today - pd.Timedelta(days=today.weekday())      # Monday of this week
-    week_end = run_week_start + pd.Timedelta(days=6)                 # through Sunday: a
-    # handful of earnings_dates land on a weekend (bad source data), and cutting at
-    # Friday would drop them from the record entirely rather than flagging them.
 
     latest = df.sort_values("date").groupby("stock").last().reset_index()
     upcoming = latest[
-        (latest["earnings_date"] >= today) & (latest["earnings_date"] <= week_end)
+        (latest["earnings_date"] >= start) & (latest["earnings_date"] <= window_end)
     ].copy()
 
     if upcoming.empty:
-        print(f"No earnings events between {today.date()} and {week_end.date()} — "
+        print(f"No earnings events between {start.date()} and {window_end.date()} — "
               "nothing to save to predictions table.")
         return
 
     snap = pd.DataFrame({
         "prediction_asof_date":    today.date(),
         # Monday of the week we made the call, vs week_start = Monday of the week the
-        # company reports. run_week is what predictions_week_open groups on.
+        # company reports. run_week records WHEN the call was made; it is no longer a
+        # grouping key — predictions_first_call dedups on the event itself.
         "run_week":                run_week_start.date(),
         "week_start":              (upcoming["earnings_date"]
                                      - pd.to_timedelta(upcoming["earnings_date"].dt.weekday, unit="D")).dt.date,

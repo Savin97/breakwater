@@ -162,3 +162,31 @@ def read_stocks_to_fetch(con=None, active_only: bool = False) -> list[str]:
         out = [s for s in out if s not in inactive]
 
     return out
+
+def work_week_window(today=None, weeks: int = 1, current_week: bool = False):
+    """
+    Return (start, end) for a whole Mon-Fri work week — the window both the weekly
+    digest and the predictions snapshot select on, so the record always matches what
+    was published. They were computed separately before and drifted: a Friday run
+    emailed four calls the predictions table never recorded.
+
+    Default is the next COMPLETE work week. Running on a Monday that is this week;
+    any other day this week is already part-spent, so it is next week's block. The
+    consequence is deliberate — run on a Tuesday and the rest of that week is never
+    published, because it is no longer a whole week.
+
+    current_week=True overrides that and returns this week's Mon-Fri whatever day it
+    is run, for re-sending or reviewing the week already in progress.
+
+    weeks=2 extends to the Friday of the following block (two whole work weeks).
+
+    Ends on Friday, never Sunday: a handful of stocks carry source dates landing on a
+    weekend, which are bad data rather than real events.
+    """
+    today = pd.Timestamp(today if today is not None else date.today()).normalize()
+    if current_week or today.weekday() == 0:
+        start = today - timedelta(days=today.weekday())          # Monday of this week
+    else:
+        start = today + timedelta(days=7 - today.weekday())      # Monday of next week
+    end = start + timedelta(days=4 + 7 * (max(weeks, 1) - 1))    # Friday of the last block
+    return start, end

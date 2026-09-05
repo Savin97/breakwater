@@ -8,6 +8,59 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## 2026-09-04/05 — First full end-to-end run; digest + predictions scoped to a work week
+
+**THE CHAIN WORKS END TO END.** `full_workflow.sh` ran: pipeline -> 5 PDFs -> parquets
+rsynced to droplet -> digest sent -> **user confirmed the email arrived**. That was the
+last unverified link (`_send` and the attachment path had never executed).
+
+### Product rule the user stated — do not violate it
+**Every email covers exactly one whole Mon-Fri work week.** More than that must be
+explicitly asked for. Weekend earnings dates "make no sense" and are excluded.
+- Default: the next COMPLETE work week. Monday run = this week; any other day = next
+  week's Mon-Fri. **Consequence the user accepted:** running Tuesday means Wed-Fri of
+  that week are never emailed or recorded. Argues for keeping Monday the habit.
+- `--current-week`: this week's Mon-Fri whatever day it is run.
+- `--weeks 2`: two whole blocks.
+
+### What was built
+- `utilities/data_utilities.work_week_window(today, weeks, current_week)` — **one helper,
+  imported by BOTH the digest and the predictions snapshot.** They computed windows
+  separately before and drifted, which is the bug below. Do not re-inline it.
+- `analysis/save_predictions.py` and `cron/cron_weekly_digest.py::_select_stocks` both
+  select on it. Digest gained `--weeks` / `--current-week` argparse.
+- save_predictions clamps the lower bound to today, so `--current-week` on a Friday emails
+  the whole week but records only what has not reported — no hindsight in our own backtest.
+- The table stays the WIDER record: all tiers, while the email shows High Alert/Elevated.
+
+### The bug this fixed (found by inspecting the first real run)
+The Friday 2026-09-04 run **emailed ORCL, ADBE, COO, CPRT and recorded none of them.**
+The digest used a rolling today..+7 window; save_predictions used today..Sunday. On a
+Friday that is Sep 4-6, when nothing reports. Silent — the table simply had no rows.
+Verified fixed by simulation: "emailed but not recorded: none".
+
+### View renamed and re-keyed
+`predictions_week_open` -> **`predictions_first_call`**, `DISTINCT ON (stock,
+earnings_date)` instead of including `run_week`. A rolling window lets a Thursday run and
+the following Monday see the same event from two different run weeks, which under the old
+key produced two rows for one call. Old view is explicitly DROPped. `run_week` survives as
+a column recording WHEN the call was made — no longer a grouping key.
+**Backtest against `predictions_first_call`.**
+
+### Backfill's first production run — it worked
+0-14 day events: 100% missing EPS -> **24%**. 15-30 days: 100% -> **2%**.
+**But 31-60 days is still ~85% missing (306 events)** — `EARNINGS_RESULT_BACKFILL_DAYS=30`
+bounds it, so the pre-existing backlog outside 30 days was not swept. It will clear on the
+old slow path over ~2 months, or immediately with one run at 120 then set back.
+
+### Still open
+- `pipeline/incremental.py` — callerless, latent `TypeError` on line 27.
+- dtype experiment (float32, ~734 MB of 1910 MB frame; calibration is the gate).
+- 7 stocks with `earnings_date` >90 days out — **probably NOT a bug**, they are
+  off-calendar fiscal years whose next report is genuinely 97-112 days out. The
+  `export_upcoming_df` warning threshold of 90 days is just tight. Raise it or drop it.
+- Brain: still untouched, still undecided.
+
 ## 2026-09-02 — Slice landed, digest fixed, and the product scope narrowed to weekly
 
 **SCOPE DECISION, made by the user this session — read this before planning anything:**

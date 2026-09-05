@@ -1,0 +1,11 @@
+/* styles.css for Streamlit */
+
+/* Remove Streamlit top header */
+header[data-testid="stHeader"] {
+    display: none;
+}
+
+/* Remove/reduce Streamlit's giant top spacing */
+[data-testid="stMainBlockContainer"] {
+    padding-top: 1.5rem;
+}

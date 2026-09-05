@@ -1,11 +1,13 @@
 # streamlit_dash/app.py
 import streamlit as st, sys, pandas as pd, warnings, duckdb
 from datetime import timedelta, date
+
 # Streamlit page configuration
 st.set_page_config(
     page_title="Breakwater",
     layout="wide"
 )
+
 warnings.filterwarnings('ignore')
 from pathlib import Path
 # Add project root (parent of "streamlit") to Python path
@@ -15,6 +17,14 @@ sys.path.insert(0, str(ROOT))
 # put streamlit_df.parquet in the output folder
 DF_PATH = ROOT / "output/streamlit_df.parquet"
 UPCOMING_PATH = ROOT / "output/upcoming_df.parquet"
+
+css_path = Path(__file__).parent / "styles.css"
+with open(css_path) as f:
+    st.markdown(
+        f"<style>{f.read()}</style>",
+        unsafe_allow_html=True
+    )
+
 from pipeline.pipeline import run_pipeline
 from config import DB_PATH
 

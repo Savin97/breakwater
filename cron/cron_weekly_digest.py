@@ -27,6 +27,7 @@ from email import encoders
 from dotenv import load_dotenv
 
 from utilities.output_utilities import latest_run_output_dir
+from utilities.data_utilities import work_week_window
 
 load_dotenv()
 
@@ -72,9 +73,11 @@ def _load_company_names() -> dict:
     return pd.read_csv(COMPANY_NAMES, usecols=["ticker", "name"]).set_index("ticker")["name"].to_dict()
 
 
-def _select_stocks(df: pd.DataFrame, company_names: dict) -> pd.DataFrame:
-    today  = pd.Timestamp.today().normalize()
-    cutoff = today + pd.Timedelta(days=7)
+def _select_stocks(df: pd.DataFrame, company_names: dict,
+                   weeks: int = 1, current_week: bool = False) -> pd.DataFrame:
+    # Always a whole Mon-Fri work week — see work_week_window. The predictions snapshot
+    # selects on the same window, so the table records exactly what was emailed.
+    today, cutoff = work_week_window(weeks=weeks, current_week=current_week)
     # df is upcoming_df: already one row per stock, and peer_percentile is already
     # computed by export_upcoming_df with the same rank formula this used to apply here.
     # It ranks across the ~496 stocks with an upcoming event rather than all 503, which
@@ -308,7 +311,7 @@ def _send(recipients: list[str], subject: str, html: str, attachments: list[tupl
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def run_weekly_digest():
+def run_weekly_digest(weeks: int = 1, current_week: bool = False):
     if not os.path.exists(PARQUET_PATH):
         print(f"Parquet not found: {PARQUET_PATH} — run the pipeline first.")
         return
@@ -324,11 +327,10 @@ def run_weekly_digest():
 
     df            = pd.read_parquet(PARQUET_PATH)
     company_names = _load_company_names()
-    stocks_df     = _select_stocks(df, company_names)
-    today_dt      = date.today()
-    cutoff_dt     = today_dt + pd.Timedelta(days=7).to_pytimedelta()
-    week_of       = today_dt.strftime("%B %d, %Y")
-    date_range    = f"{today_dt.strftime('%b %d')} – {cutoff_dt.strftime('%b %d, %Y')}"
+    stocks_df     = _select_stocks(df, company_names, weeks=weeks, current_week=current_week)
+    start_dt, end_dt = work_week_window(weeks=weeks, current_week=current_week)
+    week_of       = start_dt.strftime("%B %d, %Y")
+    date_range    = f"{start_dt.strftime('%b %d')} – {end_dt.strftime('%b %d, %Y')}"
     subject       = f"Breakwater Monday Earnings Risk Radar — {date_range}"
     html          = _build_html(stocks_df, week_of, date_range=date_range)
     recipients    = _load_subscribers()
@@ -345,4 +347,12 @@ def run_weekly_digest():
 
 
 if __name__ == "__main__":
-    run_weekly_digest()
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--weeks", type=int, default=1, choices=(1, 2),
+                    help="how many whole work weeks to cover (default 1)")
+    ap.add_argument("--current-week", action="store_true",
+                    help="cover THIS week's Mon-Fri whatever day it is run, instead of "
+                         "the next complete work week")
+    args = ap.parse_args()
+    run_weekly_digest(weeks=args.weeks, current_week=args.current_week)

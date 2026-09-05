@@ -111,12 +111,13 @@ def create_iv_table_if_not_exists(con):
 
 def create_predictions_table_if_not_exists(con):
     """The calls we published, one row per stock per earnings event per run day.
-    Scoped to the run week only (see save_predictions.py) — this table is the product
-    record, not a dump of every scored event. Two week columns, easy to confuse:
+    Scoped to one whole Mon-Fri work week (see save_predictions.py and
+    work_week_window) — the same window the digest emails, so this is the product
+    record rather than a dump of every scored event. Two week columns, easy to confuse:
       week_start — Monday of the week the COMPANY REPORTS (derived from earnings_date)
       run_week   — Monday of the week WE MADE THE CALL (derived from prediction_asof_date)
-    Backtest the product against predictions_week_open (the view below); use this table
-    directly only to study how a call drifted between the Monday call and the event.
+    Backtest against predictions_first_call (the view below); use this table directly
+    only to study how a call drifted between the first call and the event.
     """
     con.execute("""
         CREATE TABLE IF NOT EXISTS predictions (
@@ -153,14 +154,18 @@ def create_predictions_table_if_not_exists(con):
         ON predictions(stock, earnings_date, prediction_asof_date);
     """)
 
-    # The product-of-record: the earliest surviving call per event per run week, i.e. what
-    # we published on Monday. Query this for hit rates — reading the raw table instead
-    # double-counts any event that happened to be scored on several days that week.
+    # The product-of-record: the FIRST call we ever made on each event. Query this for
+    # hit rates — reading the raw table instead counts an event once per day it was
+    # scored. Keyed on the event, not on run_week: a rolling work-week window can cover
+    # the same event from two different run weeks (a Thursday run and the following
+    # Monday both see an event 4 days out), which under the old (stock, earnings_date,
+    # run_week) key produced two rows for one call.
+    con.execute("DROP VIEW IF EXISTS predictions_week_open")
     con.execute("""
-        CREATE OR REPLACE VIEW predictions_week_open AS
-        SELECT DISTINCT ON (stock, earnings_date, run_week) *
+        CREATE OR REPLACE VIEW predictions_first_call AS
+        SELECT DISTINCT ON (stock, earnings_date) *
         FROM predictions
-        ORDER BY stock, earnings_date, run_week, prediction_asof_date;
+        ORDER BY stock, earnings_date, prediction_asof_date;
     """)
 
 def merge_tables(con):
