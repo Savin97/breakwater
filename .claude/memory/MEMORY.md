@@ -8,6 +8,40 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## 2026-09-05 — PHASE 2 REVIEW FIX #3: timezone convention (commit `a3bd276`)
+
+**Third external review of `a4475a9` found one remaining Phase 2 correctness bug: the
+observation timestamp had no fixed timezone convention. Fixed and committed, NOT yet
+pushed. Still awaiting re-review; do not start Phase 3.**
+
+The bug: `announce_ts_ny` is naive NY wall clock, `announce_ts_observed_at` was
+`datetime.now()` — the HOST's clock. This machine runs UTC+3 (Israel), 7h ahead of NY, so
+a schedule observed hours before an announcement read as LATER than it, was classified
+post-event, and would have been frozen into the historical record forever.
+
+- New `utilities/time_utilities.py`: `now_ny()` (zoneinfo America/New_York, naive),
+  `to_ny_wall_clock`, `utc_to_ny_wall_clock`, `MAX_HOST_CLOCK_AHEAD_OF_NY_HOURS = 19`.
+- `fetch_one_earnings_dates` stamps observed_at with `now_ny()`. `ingested_at` keeps its
+  legacy machine-local convention deliberately (operational column, not in the comparison).
+- The `ingested_at` fallback is no longer compared raw: widened by 19h (UTC+14 vs EST)
+  into a host-independent lower bound, so a row freezes only if it was post-event under
+  EVERY host tz. Error runs only toward "still a schedule" — recoverable; a false
+  post-event classification is not.
+- +78 tests (263 total). Host tz simulated for real via `TZ` env + `time.tzset()`, five
+  zones x pre/post-event x both US DST transitions; the old host-local stamp is pinned as
+  the regression; static test forbids `datetime.now()` for observed_at.
+
+**No data repair needed** — all 12,068 stored observed_at values came from the backfill's
+fixed pull date (2026-09-05), never from a host clock. `audit.phase2_diagnostics` output
+byte-identical; no anchoring/target/score/threshold change.
+
+Still open from the previous round (unchanged): the 24 ingestion-gap events, 25.0%
+timestamp coverage, and `get_next_earnings_dates()` line ~560 labels `datetime.now()` as
+tz-aware NY — same bug class, but it is a dead-ish legacy helper feeding no timing column,
+so it was left alone to keep the diff to the reviewed defect.
+
+---
+
 ## 2026-09-05 — PHASE 2 REVIEW FIXES (commit `a4475a9`, branch `methodology-rebuild`)
 
 **External review of `0ecec2c` found two target-integrity issues. All four items are
