@@ -11,8 +11,9 @@ Entries are updated at the end of each session. Most recent first.
 ## 2026-09-05 — PHASE 2 REVIEW FIXES (commit `a4475a9`, branch `methodology-rebuild`)
 
 **External review of `0ecec2c` found two target-integrity issues. All four items are
-implemented and committed. Still NOT merged to master; still pending re-review. Do not
-start Phase 3.**
+implemented, committed and PUSHED (`d300a89..9d52648` -> `origin/methodology-rebuild`).
+Still NOT merged to master; awaiting re-review of these fixes. Do not start Phase 3 and do
+not touch model/scoring parameters until it clears.**
 
 Nothing in scoring moved: no threshold, weight, lift gate, legacy reaction column,
 BMO/AMC definition, intraday rule or entropy change. `assert_completed_parity` clean.
@@ -44,6 +45,36 @@ BMO/AMC definition, intraday rule or entropy change. `assert_completed_parity` c
 
 Tests: 185 pass across test_announcement_timing / test_event_frame / test_pipeline.
 `audit/PHASE2_DIAGNOSTICS.md` regenerated. `output/events_df.parquet` rebuilt.
+
+### Files touched (9)
+`feature_engineering/announcement_timing.py` (rewritten resolver + gate),
+`pipeline/events.py` (carries `announce_ts_observed_at`),
+`utilities/db_utilities.py` (new column + loader prefers newest observation),
+`ingestion/fetch_earnings_dates.py` (`refresh_announcement_timestamp`,
+`EARNINGS_INSERT_COLS` +1), `scripts/backfill_announcement_timestamps.py` (stamps +
+self-migrates observed_at), `audit/phase2_diagnostics.py`, `audit/PHASE2_DIAGNOSTICS.md`,
+`CLAUDE.md`, `testing/test_announcement_timing.py` (+38 tests, 78 total).
+
+### To resume
+```bash
+.venv/bin/python -m pytest testing/test_announcement_timing.py testing/test_event_frame.py testing/test_pipeline.py -q
+PYTHONPATH=. .venv/bin/python -m audit.phase2_diagnostics
+# rebuild events_df without re-ingesting or re-running stage5's reports:
+PYTHONPATH=. .venv/bin/python -c "import pandas as pd; from pipeline.events import build_and_score_event_frame, load_pipeline_announcement_timing; ev=build_and_score_event_frame(pd.read_parquet('output/full_df.parquet'), load_pipeline_announcement_timing()); ev.to_parquet('output/events_df.parquet', index=False)"
+```
+
+### Open, NOT fixed here (deliberately out of scope)
+- **24 events sit on a session the market traded but the ticker has no price row for**
+  (diagnostics §7). Mostly one three-session ingestion hole, 2026-05-19..21, plus
+  2026-06-16/24/25 and two 2006/2008 SPGI rows. This is an INGESTION bug, not a timing
+  bug. It is counted, never rolled. Fixing the price feed would restore the 3 anchored
+  outcomes withdrawn by the grid fix and add ~24 events to the frame.
+- Timestamp coverage is 25.0% of completed events and effectively zero before 2020
+  (95%+ from 2021). That is the binding constraint on any Phase 3 walk-forward re-fit —
+  it cannot claim a window the timestamps do not cover.
+- `announce_ts_observed_at` refresh is keyed on (stock, earnings_date), so it corrects
+  the TIME of an event whose calendar date is unchanged. A provider correction that moves
+  the DATE is a different row, handled by the existing placeholder-clearing DELETE.
 
 ---
 
