@@ -370,3 +370,85 @@ def test_build_and_score_asserts_parity(daily_df):
     """The pipeline-level entry point must fail loudly if a completed event ever moves."""
     ev = build_and_score_event_frame(daily_df)
     assert not ev.empty
+
+
+# ── Pending drift flag: the legacy 1-60 day eligibility rule ──────────────────
+#
+# On the daily frame `engineer_pre_earnings_drift_flag` only wrote a flag onto a
+# pre-earnings row when `days_to_earnings.between(1, 60)`; further out the flag stayed
+# blank. The event frame must reproduce that exactly on pending rows — the Phase 1
+# staleness fix is about WHICH event a score describes, not about widening the window
+# a flag is emitted in.
+
+GOLDEN_UPCOMING_PATH = "audit/phase1_golden/upcoming_df.parquet"
+
+
+@pytest.fixture(scope="module")
+def golden_upcoming():
+    if not os.path.exists(GOLDEN_UPCOMING_PATH):
+        pytest.skip(f"{GOLDEN_UPCOMING_PATH} not present")
+    return pd.read_parquet(GOLDEN_UPCOMING_PATH).set_index("stock")
+
+
+def test_pending_drift_flag_blank_beyond_60_days(real_events_df):
+    """No pending event more than 60 days out may carry a drift flag."""
+    pend = real_events_df[real_events_df["is_pending"]]
+    far = pend[~pend["days_to_earnings"].between(1, 60)]
+    assert len(far) > 0, "no pending event beyond 60 days — test is vacuous"
+    assert (far["pre_earnings_drift_flag"].fillna("") == "").all(), (
+        "pending events beyond the legacy 1-60 day window carry a drift flag: "
+        f"{far.loc[far['pre_earnings_drift_flag'].fillna('') != '', 'stock'].tolist()}"
+    )
+
+
+def test_pending_drift_flag_still_fires_inside_60_days(real_events_df):
+    """Non-vacuity guard for the test above: the window still produces flags."""
+    pend = real_events_df[real_events_df["is_pending"]]
+    near = pend[pend["days_to_earnings"].between(1, 60)]
+    assert (near["pre_earnings_drift_flag"].fillna("") != "").any(), (
+        "the 1-60 day gate blanked every pending drift flag"
+    )
+
+
+def test_pending_drift_flag_matches_legacy_golden(real_events_df, golden_upcoming):
+    """Regression against the pre-refactor baseline: every pending drift flag must be
+    the value the legacy daily path shipped for that stock. `pre_earnings_drift_flag`
+    was never NaN on the daily frame, so the old `groupby('stock').last()` export read
+    it from the true final row — it is the one upcoming field that was NOT stale, and
+    Phase 1 must therefore leave it exactly as it was."""
+    pend = real_events_df[real_events_df["is_pending"]].set_index("stock")
+    common = pend.index.intersection(golden_upcoming.index)
+    assert len(common) > 400, f"only {len(common)} stocks shared with the golden baseline"
+    got = pend.loc[common, "pre_earnings_drift_flag"].fillna("")
+    want = golden_upcoming.loc[common, "pre_earnings_drift_flag"].fillna("")
+    mismatched = common[got.values != want.values]
+    assert len(mismatched) == 0, (
+        "pending drift flag differs from legacy for "
+        f"{len(mismatched)} stocks: "
+        + ", ".join(
+            f"{s}({want.loc[s]!r}->{got.loc[s]!r}, dte={pend.at[s, 'days_to_earnings']:.0f})"
+            for s in mismatched[:10]
+        )
+    )
+
+
+def test_pending_high_conviction_matches_legacy_golden(real_events_df, golden_upcoming):
+    """`is_high_conviction` = High Alert AND a drift flag. The tier half is corrected by
+    Phase 1, the flag half must not be — so any HC change has to trace to a tier change
+    on a stock that already carried a flag, never to a flag appearing out of window."""
+    pend = real_events_df[real_events_df["is_pending"]].set_index("stock")
+    common = pend.index.intersection(golden_upcoming.index)
+    got = pend.loc[common, "is_high_conviction"].fillna(False).astype(bool)
+    want = golden_upcoming.loc[common, "is_high_conviction"].fillna(False).astype(bool)
+    changed = common[got.values != want.values]
+    # Every HC change must be explained by the corrected tier, with the drift flag
+    # identical to legacy on both sides.
+    for stock in changed:
+        assert (
+            pend.at[stock, "pre_earnings_drift_flag"]
+            == golden_upcoming.at[stock, "pre_earnings_drift_flag"]
+        ), f"{stock}: high conviction moved because its drift flag moved"
+        assert (
+            pend.at[stock, "earnings_explosiveness_bucket"]
+            != golden_upcoming.at[stock, "earnings_explosiveness_bucket"]
+        ), f"{stock}: high conviction moved with neither tier nor flag changing"

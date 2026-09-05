@@ -200,8 +200,15 @@ def score_event_frame(events: pd.DataFrame) -> pd.DataFrame:
     events["surprise_momentum_flag"] = surprise_momentum_flag_values(
         events["surprise_streak"], events["surprise_mean_5"], events["surprise_std_5"], all_rows
     )
+    # Legacy eligibility, preserved verbatim: on the daily frame a pre-earnings row only
+    # received a drift flag inside `days_to_earnings.between(1, 60)`
+    # (scoring.scoring_features.engineer_pre_earnings_drift_flag); outside that window the
+    # flag stayed blank. Completed events are earnings-day rows and are always eligible.
+    # Without this gate a pending event >60 days out picks up a flag it never had before,
+    # which is a behaviour change unrelated to the staleness fix.
+    drift_eligible = ~events["is_pending"] | events["days_to_earnings"].between(1, 60)
     events["pre_earnings_drift_flag"] = pre_earnings_drift_flag_values(
-        events["pre_earnings_drift_z"], all_rows
+        events["pre_earnings_drift_z"], drift_eligible
     )
     events["risk_score"] = events["earnings_explosiveness_score"]
     events = event_high_conviction(events, events["earnings_explosiveness_bucket"])
