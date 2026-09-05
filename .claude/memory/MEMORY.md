@@ -10,8 +10,10 @@ Entries are updated at the end of each session. Most recent first.
 
 ## 2026-09-05 — PHASE 2: verified announcement timing + parallel anchored target
 
-**Branch `methodology-rebuild` (renamed from `methodology-rebuild-phase-1`, pushed, old
-remote deleted). Phase 1 approved through `8ce659c`. NOT merged to master.**
+**Branch `methodology-rebuild` (renamed from `methodology-rebuild-phase-1`, old remote
+deleted). Phase 1 approved through `8ce659c`; Phase 2 is commit `0ecec2c`. Both pushed to
+`origin/methodology-rebuild`. NOT merged to master — Phase 2 is awaiting external review,
+same posture Phase 1 had. Do not start Phase 3 until it clears.**
 
 ### What Phase 2 does — and deliberately does NOT do
 Adds a **parallel** corrected outcome. `reaction_{1,3,5}d` / `abs_reaction_3d` are
