@@ -190,3 +190,51 @@ def work_week_window(today=None, weeks: int = 1, current_week: bool = False):
         start = today + timedelta(days=7 - today.weekday())      # Monday of next week
     end = start + timedelta(days=4 + 7 * (max(weeks, 1) - 1))    # Friday of the last block
     return start, end
+
+
+def week_block_window(weeks_back: int | None = None, weeks_forward: int | None = None,
+                      monday=None, weeks: int = 1, today=None):
+    """
+    Return (start, end) for N whole Mon-Fri work weeks, looking backward, forward, or
+    from an explicit Monday. The block arithmetic every week-windowed reader needs, in
+    one place — analysis/last_week_results.py and save_predictions.py each grew their
+    own before this.
+
+    Exactly one of weeks_back / weeks_forward / monday must be given.
+
+      weeks_back=12    the 12 COMPLETE work weeks ending last Friday. The current week
+                       is excluded whatever day it is run, because it is part-spent —
+                       the same rule work_week_window applies going forward. Run on a
+                       Saturday or Sunday the just-finished Mon-Fri counts as complete
+                       and is the last block (matching last_week_results._week_bounds).
+      weeks_forward=4  delegates to work_week_window(weeks=4), so a forward window is
+                       byte-identical to the one the weekly digest and the predictions
+                       snapshot publish on.
+      monday=D         D must be a Monday; the window is `weeks` blocks starting there.
+                       Rejected rather than snapped: a caller passing a Wednesday means
+                       something we would have to guess at.
+    """
+    given = [x is not None for x in (weeks_back, weeks_forward, monday)]
+    if sum(given) != 1:
+        raise ValueError("week_block_window: pass exactly one of weeks_back, "
+                         "weeks_forward, monday")
+
+    if monday is not None:
+        start = pd.Timestamp(monday).normalize()
+        if start.weekday() != 0:
+            raise ValueError(f"monday={start.date()} is a "
+                             f"{start.day_name()}, not a Monday")
+        return start, start + timedelta(days=4 + 7 * (max(weeks, 1) - 1))
+
+    if weeks_forward is not None:
+        if weeks_forward < 1:
+            raise ValueError("weeks_forward must be >= 1")
+        return work_week_window(today=today, weeks=weeks_forward)
+
+    if weeks_back < 1:
+        raise ValueError("weeks_back must be >= 1")
+    today = pd.Timestamp(today if today is not None else date.today()).normalize()
+    if today.weekday() >= 5:                       # Sat/Sun: this week's Mon-Fri is done
+        today = today + timedelta(days=7 - today.weekday())
+    this_monday = today - timedelta(days=today.weekday())
+    return this_monday - timedelta(days=7 * weeks_back), this_monday - timedelta(days=3)

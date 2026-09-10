@@ -40,6 +40,11 @@ python -m testing.calibration
 # Launch the Streamlit dashboard
 streamlit run streamlit_dash/app.py
 
+# Predictions for a range of whole Mon-Fri work weeks (reads output/events_df.parquet)
+python -m analysis.predictions_range --weeks-back 12
+python -m analysis.predictions_range --weeks-forward 4
+python -m analysis.predictions_range --monday 2026-06-01 --weeks 3
+
 # Ad-hoc feature/score testing
 python -m testing.testing
 
@@ -173,6 +178,40 @@ PYTHONPATH=. .venv/bin/python scripts/backfill_announcement_timestamps.py [--dry
 # dataset diagnostics — window mix, coverage by year, legacy vs anchored, unresolved reasons
 PYTHONPATH=. .venv/bin/python -m audit.phase2_diagnostics
 ```
+
+## Multi-Week Predictions (`analysis/predictions_range.py`)
+
+Predictions for N whole Mon-Fri work weeks, backward or forward, on the shipped 0.3.1
+model — legacy `abs_reaction_3d` target, `config.py` floors and lift gates. The Phase 2
+`*_anchored` columns are deliberately **not** reported here; no threshold has been re-fit
+against them, and putting them on a predictions sheet invites reading them as model
+output. Writes `output/predictions/predictions_<start>_<end>.{csv,txt}` — its own
+directory, never `get_run_output_dir()`, which wipes today's run folder on first call.
+
+Week arithmetic is `utilities/data_utilities.week_block_window()`, next to
+`work_week_window()`; a forward window is asserted identical to the one the weekly digest
+and the predictions snapshot publish on.
+
+The two halves are **not the same kind of number**:
+
+- **History** (`is_pending == 0`) is a **retro-score, not an archive**. Event-level stats
+  are causal (expanding/`shift(1)` over prior events only), but a few carried daily
+  columns — per-date cross-sectional ranks, the global quantile in
+  `score_momentum_fragility` — are computed over the whole frame. Where the real
+  published call exists it appears as `published_tier`; that archive starts 2026-08-31.
+  Phase 1 changed nothing here — `assert_completed_parity` proves completed events are
+  identical to the pre-audit daily pipeline's output.
+- **Upcoming** (`is_pending == 1`) is reported **twice**. `earnings_explosiveness_bucket`
+  / `risk_score` come from the event frame's pending row; the parallel
+  `*_pre_audit` columns reproduce
+  master's `df.sort_values("date").groupby("stock").last()`, whose per-column NaN
+  skipping reaches back to the stock's last **completed** event — the one-event-stale
+  call that was actually published before Phase 1 (§Q4). `pre_audit_differs` marks the
+  disagreements. The NaN skipping is the behaviour being measured; do not "fix" it.
+
+There is no pre-audit column on history rows: reproducing what `.last()` returned in a
+past week needs the daily frame as it stood then, and today's frame would answer with an
+event that has since completed.
 
 ## Feature Engineering Conventions
 
