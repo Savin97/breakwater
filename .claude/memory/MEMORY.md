@@ -8,6 +8,116 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## 2026-09-10 — BENZINGA SOURCE EVALUATION (`research/massive/`) — ACCEPT WITH CONDITIONS
+
+**Evaluation only. Nothing ingested, no reaction rebuilt, no model fitted. Phase 3 still
+not started. Pushed to `origin/methodology-rebuild`, awaiting external review.**
+
+Full write-up: `audit/BENZINGA_EARNINGS_AUDIT.md`. Snapshot
+`earnings_20260910T180412Z`, `snapshot_sha256 17a5e76693c0c232…`.
+
+### What was acquired
+296,334 records, 9,873 tickers, 2010-04-30 → 2028-09-01, in 6 requests / 33s. Raw pages
+gzipped verbatim under `vendor/` (**gitignored**), immutable + read-only + per-page
+SHA-256. Normalized research parquet, 42 cols, every vendor field preserved.
+
+### The four findings that matter
+1. **The vendor's `date.desc` cursor silently loses 39% of the data.** It returns 180,033
+   of 296,334 records in 4 responses, reports no further cursor, no error, and still
+   spans the full date range so a date-coverage check sees nothing wrong. Completeness was
+   proved instead by re-acquiring one calendar year at a time: **296,334 ids, identical
+   set, 0 missing, 0 extra.** Never paginate this API descending.
+2. **`time` is New York LOCAL wall clock, not the documented "EST".** Tested, not assumed:
+   as-published agrees with the independent yfinance timestamps 0.9874 in EDT vs 0.9690
+   for a fixed-UTC-5 reading, and the two are identical (0.9688) in EST. A fixed-EST
+   reading would move every summer event across the 16:00 cut.
+3. **The yardstick is hour-rounded — all 12,269 of it.** Every yfinance timestamp has
+   minute=second=0; only 36% of vendor ones do. So exact-minute agreement (27.9%) measures
+   the REFERENCE's rounding. Window agreement is the real number: **99.63% on 11,865
+   BMO/AMC pairs, 99.42% anchor agreement, and only 17 events (0.14%) are genuine
+   contradictions about which session the news preceded.** 174 of the 222 "disagreements"
+   are the reference's own 15:00 scheduling placeholder.
+4. **Ticker joins are unsafe.** `BF-B` exists only as `BF.B` (54) + `BFB` (4); `BRK-B` has
+   29 records vs `BRK.B` 62. `company_name` is NOT point-in-time (GEN's "Gen Digital" span
+   starts 2011). `SNDK` is a reused symbol across a 3,297-day hole under the same name.
+
+### Numbers a successor will want
+- `00:00:00` filler on 22,328 records (7.5%) → classified UNKNOWN, never BMO.
+- Window mix: AMC 144,995 / BMO 125,358 / INTRADAY 3,653 / UNKNOWN 22,328.
+- 0 duplicate `benzinga_id`; 825 records share (ticker, date); 246,017 confirmed /
+  50,317 projected.
+- Usable-timing share by year: 50% 2012, 56% 2013, **91% 2015**, 96%+ from 2016, 99.8%+
+  from 2019. "History starts 2010" is one record; 2011 is 175.
+- Universe coverage 502/503 exact (503 with spelling map); ≥80% of the universe reaches
+  **28 prior timed events only at year end 2019** — the binding Phase 3 constraint.
+
+### Structure / guards
+`research/massive/{paths,client,acquire,normalize,validate,completeness,identity,crosscheck,report}.py`.
+Static tests: no DB driver or `.duckdb` path anywhere in `research/`; no production module
+mentions `vendor/`/`benzinga`/`MASSIVE_API_KEY`; the window classifier is imported from
+`feature_engineering.announcement_timing`, never re-implemented; no price-derived name in
+the package. Key is header-only, never stored — a test writes a fake key through a real
+acquisition and greps every produced file. **48 tests** in `testing/test_massive_earnings.py`.
+
+### Still red, NOT from this work
+`test_2/3/7_on_real_history` in `test_announcement_timing.py` — the same 3 pre-existing
+failures recorded on 2026-09-06: `output/events_df.parquet` on disk was built against a DB
+whose `announce_ts_ny` is mostly NULL (207 resolved events, tests expect >5000). Re-run the
+backfill + rebuild the event frame before trusting anchored numbers from that parquet.
+
+---
+
+## 2026-09-06 — MULTI-WEEK PREDICTIONS RANGE (`analysis/predictions_range.py`)
+
+**New, uncommitted. Additive only — no pipeline, scoring, threshold or Phase 2 file was
+touched. Does NOT affect the Phase 2 re-review; Phase 3 still not started.**
+
+Produce predictions for N whole Mon-Fri work weeks, backward or forward:
+
+```bash
+.venv/bin/python -m analysis.predictions_range --weeks-back 12
+.venv/bin/python -m analysis.predictions_range --weeks-forward 4
+.venv/bin/python -m analysis.predictions_range --monday 2026-06-01 --weeks 3
+```
+
+Reads `output/events_df.parquet`; writes `output/predictions/predictions_<start>_<end>.{csv,txt}`.
+
+- **Model is 0.3.1 as shipped** (user's explicit ask: "how it used to run before the
+  audit"). Legacy `abs_reaction_3d` target only; the Phase 2 `*_anchored` columns are
+  excluded by design and a test asserts they never appear.
+- **History = retro-score, NOT an archive.** Causal at event level, but carried daily
+  columns (per-date cross-sectional ranks, the global quantile in
+  `score_momentum_fragility`) see the whole frame. `published_tier` overlays the real
+  archived call where one exists — `db/predictions.duckdb` starts 2026-08-31, 15 rows,
+  so it is empty for anything older.
+- **Upcoming is reported twice, side by side** (user chose this over either alone).
+  `earnings_explosiveness_bucket` = the event frame's pending row; `*_pre_audit` =
+  master's `sort_values("date").groupby("stock").last()`, whose per-column NaN skipping
+  reaches back to the last COMPLETED event — the one-event-stale published call (§Q4).
+  `pre_audit_differs` marks disagreements. Verified live: ADBE Sep 10 reads pre-audit
+  Elevated (= its Jun 11 event) vs current Normal. 1 of 20 upcoming events disagreed.
+  **The NaN skipping IS the behaviour being reproduced — never "fix" it.**
+- No pre-audit column on history rows: it would need the daily frame as it stood that
+  week; today's frame answers with an event that has since completed.
+- Week math extracted to `utilities/data_utilities.week_block_window()` next to
+  `work_week_window()`. A forward window is asserted byte-identical to the digest's.
+  `weeks_back` always excludes the part-spent current week; a weekend counts the
+  just-finished Mon-Fri (matches `last_week_results._week_bounds`).
+- Writes to `output/predictions/`, **never `get_run_output_dir()`** — that rmtree's
+  today's run folder on first call in a process and would have deleted the pipeline run's
+  reports.
+
+Tests: `testing/test_predictions_range.py`, 53 pass.
+
+**Pre-existing failure, NOT from this work** (confirmed by stashing): 3 tests in
+`testing/test_announcement_timing.py` (`test_2/3/7_on_real_history`) fail — only 207
+resolved events in `output/events_df.parquet` where the tests expect >5000. The parquet
+on disk was produced against a DB whose `announce_ts_ny` is mostly NULL (likely a
+droplet sync overwriting the backfilled DB). Re-run the backfill + pipeline before
+trusting any anchored numbers from that parquet.
+
+---
+
 ## 2026-09-05 — PHASE 2 REVIEW FIX #3: timezone convention (commit `a3bd276`)
 
 **Third external review of `a4475a9` found one remaining Phase 2 correctness bug: the

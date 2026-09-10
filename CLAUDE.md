@@ -179,6 +179,56 @@ PYTHONPATH=. .venv/bin/python scripts/backfill_announcement_timestamps.py [--dry
 PYTHONPATH=. .venv/bin/python -m audit.phase2_diagnostics
 ```
 
+## Candidate Timing Source: Massive / Benzinga (`research/massive/`, evaluation only)
+
+An evaluation of the Benzinga Earnings API as Breakwater's **historical announcement-timing
+source**. It is not ingested, not wired to any pipeline stage, and not a decision that has
+been taken — the verdict is **ACCEPT WITH CONDITIONS** in `audit/BENZINGA_EARNINGS_AUDIT.md`,
+which is the artifact to read before doing anything with it.
+
+```bash
+PYTHONPATH=. .venv/bin/python -m research.massive.acquire      # immutable raw snapshot
+PYTHONPATH=. .venv/bin/python -m research.massive.crosscheck   # completeness re-derivation
+PYTHONPATH=. .venv/bin/python -m research.massive.report       # regenerate the audit report
+```
+
+Rules this package is built around, none of which may be relaxed:
+
+- **Raw vendor data lives in `vendor/`, which is gitignored.** Licensed third-party data in
+  a public repo, and a raw vendor file must never become a production input by accident.
+  `testing/test_massive_earnings.py` asserts statically that no `pipeline/`,
+  `feature_engineering/`, `ingestion/`, `scoring/`, `utilities/` or `analysis/` module
+  mentions it, and that `research/` imports no database driver and names no `.duckdb` file.
+- **Snapshots are immutable.** Acquisition runs into a `.partial` directory, resumes from a
+  stored cursor if interrupted, and only becomes a snapshot by an atomic rename, after
+  which every file is read-only. The manifest carries a per-page SHA-256 and a
+  `snapshot_sha256` over them. An analysis you cannot pin to a snapshot digest is not
+  evidence.
+- **Never `sort=date.desc` against this vendor.** Its descending cursor returns 180,033 of
+  296,334 records and then reports itself finished, with no error and with the full date
+  range apparently covered — a silent 39% loss. Forward or date-partitioned pagination
+  only, and verify the count.
+- **`time` is New York local wall clock, despite being documented as "EST".** Established
+  empirically in §2 of the audit against the EST/EDT split of the independent yfinance
+  timestamps, not assumed. A fixed UTC-5 reading would move every EDT event an hour across
+  the 16:00 cut.
+- **`00:00:00` is the vendor's filler for "time unknown", not a BMO announcement.** 7.5% of
+  records carry it. `normalize()` classifies it UNKNOWN;
+  `normalize(..., midnight_is_real=True)` reproduces the literal reading so the sensitivity
+  stays measurable.
+- **The window classifier is the production one.** `research/massive/normalize.py` imports
+  `classify_announce_window` from `feature_engineering/announcement_timing.py`; a test
+  forbids a second, divergent set of cut points and forbids any price-derived name
+  anywhere in the package.
+- **Do not join on today's ticker string.** `BF-B` exists in the vendor only as `BF.B` and
+  `BFB`; `BRK-B` holds 29 records while `BRK.B` holds 62. `company_name` is not
+  point-in-time (the current name is backfilled onto historical rows), and `SNDK` is a
+  reused symbol across a 3,297-day hole under the *same* name.
+
+The binding constraint on any future use: usable timing does not reach a steady state
+until 2015, and ≥80% of today's universe does not carry 28 prior timed events until year
+end **2019**.
+
 ## Multi-Week Predictions (`analysis/predictions_range.py`)
 
 Predictions for N whole Mon-Fri work weeks, backward or forward, on the shipped 0.3.1
