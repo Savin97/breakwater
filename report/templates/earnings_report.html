@@ -84,7 +84,8 @@
         <div style="margin-top:4px;">
           <span class="badge" style="background:#6c3483; color:#fff;">&#9733; High Conviction</span>
         </div>
-        <div style="font-size:7.5pt; color:#666; margin-top:4px;">High Alert + pre-earnings drift signal &mdash; 4.78&times; OOS lift</div>
+        <div style="font-size:7.5pt; color:#666; margin-top:4px;">High Alert + pre-earnings drift signal &mdash; 58.6% of such events moved &ge;8% (n=162, 95% CI 50.9&ndash;65.9); 2.46&times; lift stratified by announcement window</div>
+        <div style="font-size:6.5pt; color:#999; margin-top:2px;">Measured on 11,496 earnings events with verified announcement timestamps. Not an out-of-sample figure; the model is being re-fit.</div>
       </div>
       {% endif %}
       {% if surprise_flag %}
@@ -149,6 +150,12 @@
     <p class="explainer">
       An "extreme reaction" is a 3-day post-earnings price move of 8% or more in either direction.
     </p>
+    <p class="explainer" style="color:#888;">
+      Measured on the legacy 3-day target, which mismeasures before-open announcements
+      (audit/PHASE0_AUDIT_REV2.md &sect;Q1&ndash;Q2). On 11,496 events with verified announcement
+      timestamps the market-wide rate is 20.4% (95% CI 19.7&ndash;21.1) once correctly anchored.
+      Treat the figures below as provisional until the Phase 3 rebuild.
+    </p>
     <table class="stats-table">
       <tr>
         <td class="stat-label">Historical probability for this stock (Bayesian)</td>
@@ -158,6 +165,25 @@
         <td class="stat-label">Global baseline (all stocks)</td>
         <td class="stat-value">{{ (base_extreme_prob | float * 100) | round(1) }}%</td>
       </tr>
+      <!--
+        SUPPRESSED pending the Phase 3 rebuild of `stock_bucket_lift`.
+
+        Both rows below are per stock values built in report/report_builder.py from
+        `is_extreme_reaction` over this stock's own events, grouped by
+        `earnings_explosiveness_bucket` and divided by the global extreme rate.
+        BOTH inputs sit in the corrupted chain: `is_extreme_reaction` is derived from
+        the legacy target, which mismeasures before open announcements, and the bucket
+        is the lift promoted one, downstream of `stock_bucket_lift`.
+
+        audit/PHASE0_AUDIT_REV2.md (Q3, "What is NOT yet established") establishes that
+        every BMO event's abs_reaction_p75_rolling, _p75, _median, reaction_entropy,
+        reaction_std, directional_bias, is_extreme_reaction, stock_bucket_lift and hence
+        its score and bucket were computed from mismeasured prior outcomes. Q4 adds that
+        `stock_bucket_lift` is stale on 100% of shipped rows (max delta 2.52). The
+        remediation plan item P4.1 is "Retire every published lift figure until P3.3."
+
+        Restore verbatim once the chain is rebuilt on anchored outcomes (audit Phase 3,
+        P3.1 through P3.3) and the thresholds are re-fit.
       <tr class="highlight-row">
         <td class="stat-label">Lift vs. global baseline</td>
         <td class="stat-value">{{ current_lift_vs_baseline }}x</td>
@@ -166,6 +192,7 @@
         <td class="stat-label">Lift vs. same-bucket peers</td>
         <td class="stat-value">{{ current_lift_vs_same_bucket_global }}x</td>
       </tr>
+      -->
     </table>
   </div>
 
@@ -175,6 +202,18 @@
       Probability of an extreme reaction by risk bucket, based on this stock's earnings history.
       Shrunk toward the global average using a Bayesian prior (strength = 20 events).
     </p>
+    <p class="explainer" style="color:#888;">
+      Provisional. Computed on the legacy 3-day target, which mismeasures before-open
+      announcements (audit/PHASE0_AUDIT_REV2.md &sect;Q1&ndash;Q3), pending the Phase 3 rebuild.
+    </p>
+    <!--
+      KNOWN GAP, needs a change in report/report_builder.py (not owned by this file).
+      `bucket_table` is rendered from the same frame as the two suppressed rows above and
+      still carries its "Lift vs Baseline" and "Lift vs Peers" columns, so the retracted
+      lift reaches the customer PDF through this table even though the rows above are
+      commented out. Fix by dropping those two columns in report_builder.py's
+      `bucket_table_html` .drop(columns=[...]) until P3.3.
+    -->
     {{ bucket_table | safe }}
   </div>
 

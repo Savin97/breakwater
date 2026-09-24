@@ -20,6 +20,42 @@ Before doing architecture work, research synthesis, model-evaluation planning, o
 
 Breakwater is an earnings tail-risk model for S&P 500 stocks. It ingests price/earnings/sector data, engineers features, scores each stock's upcoming earnings event on a risk scale, and produces reports and a Streamlit dashboard.
 
+## Performance Claims — `audit/PHASE0_AUDIT_REV2.md` Is The Authority
+
+**Read it before writing, quoting or restoring any performance number, anywhere in this repo
+or in any customer-facing or marketing surface.** Every figure published before it was derived
+from a target that mismeasured before-open (BMO) announcements and was overstated by roughly
+3x. Remediation item **P4.1 is "Retire every published lift figure until P3.3."**
+
+Verified figures (audit §Q2, n=11,496 events with provider announcement timestamps):
+
+| quantity | verified | retracted value it replaces |
+|---|---|---|
+| market baseline P(\|reaction\| ≥ 8%) | **0.204** [0.197, 0.211] | 6.9% |
+| High Alert hit rate | **0.455** [0.429, 0.482] | 40% |
+| Elevated hit rate | **0.293** [0.265, 0.321] | ~18% |
+| Normal hit rate | **0.157** [0.149, 0.164] | ~4% |
+| High Conviction hit rate | **0.586** [0.509, 0.659], n=162 | 52% |
+| High Alert lift | **1.91x stratified** (2.23x crude) | 3.70x / 5.8x |
+| High Conviction lift | **2.46x stratified** (2.88x crude) | 4.78x / 4.83x |
+| capture of ≥8% moves, High Alert + Elevated | **0.390** [0.371, 0.410] | 42% |
+
+Rules that follow from it:
+
+- **Quote the stratified lift, never the crude one.** The crude-vs-stratified gap is
+  composition, not model skill (audit §Q2). Reporting AMC alone is worth 1.42x with no model.
+- **There is no 15-year and no 2015–2025 out-of-sample record.** Verified timestamps cover
+  25.4% of scored events and reach back only to ~2020 for most tickers (audit §Q3 coverage
+  constraint). Nothing above is out-of-sample: the 73/79 cuts were selected on this
+  distribution and are being re-fit.
+- **The demonstrated edge is 1.87x within AMC and unestablished within BMO** (audit §Q3). On
+  BMO, 96.0% of events are `Normal` and `Normal` lift is 0.94x.
+- **Anything downstream of `stock_bucket_lift` is suppressed, not printed.** The whole feature
+  chain was computed from mismeasured prior outcomes (audit §Q3), so per stock lift is
+  commented out of `report/templates/earnings_report.html` pending the Phase 3 rebuild.
+- The pre-audit archived predictions are void for track-record purposes and
+  `marketing/generate_public_track_record.py` is paused (P4.2, P4.3).
+
 ## Commands
 
 ```bash
@@ -294,10 +330,20 @@ Stage 4 produces these component scores (all in `scoring/scoring_features.py`):
 score + lift) while `risk_score` carries only the first, so a lift-promoted event can sit in a
 higher tier than a higher-scoring event. That is deliberate: it means "mild structural profile,
 violent personal history." Do not "fix" it by flooring the score to the tier boundary or by
-multiplying the score by the lift — the latter was measured and drops top-decile lift from
-3.70x to 2.98x, because lift is ~0.79 rank-correlated with the score and corrupts its ordering
-when blended. As a conditional gate the same signal is strongly additive: capture of ≥8% moves
-goes 43.9% → 57.0% with `High Alert` purity unchanged at 0.409.
+multiplying the score by the lift — the latter was measured and degrades top-decile lift,
+because lift is ~0.79 rank-correlated with the score and corrupts its ordering when blended. As
+a conditional gate the same signal is additive: it raises capture of ≥8% moves with `High
+Alert` purity roughly unchanged.
+
+> **Figures retracted.** This rationale used to cite "3.70x → 2.98x" and "capture 43.9% →
+> 57.0%, purity 0.409". All four were measured on the legacy target, which mismeasures BMO
+> events, and `audit/PHASE0_AUDIT_REV2.md` §Q3 establishes that the entire feature chain
+> feeding `stock_bucket_lift` was computed from mismeasured prior outcomes. The **direction**
+> of the comparison is the reason for the design and is kept; the **magnitudes are not
+> publishable and are not restated**. The audit has no re-derived analogue of the
+> blend-vs-gate comparison — do not substitute the verified 1.91x or 39.0% for them, which are
+> different quantities. Re-measure under Phase 3 (P3.1–P3.3) before quoting a number here
+> again.
 
 Thresholds are in `config.py`: `LARGE_EARNINGS_REACTION_THRESHOLD = 0.05`,
 `EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08`, bucket cut points
@@ -323,3 +369,9 @@ an absolute hit rate: the 73/79 cut points were themselves selected on this same
 absolute numbers are optimistically biased.
 
 The train/test split convention used in `testing/testing.py`: pre-2015 = train, post-2015 = OOS test.
+
+**This split does not license an out-of-sample performance claim.** It runs on the legacy
+`abs_reaction_3d` target for all years, and verified announcement timestamps — the only basis
+on which the target is known to be correctly anchored — reach back only to about 2020 for most
+tickers (audit §Q3, "Coverage constraint"). The retired "consistent 2015–2025 OOS" line in
+`readme.md` came from reading this convention as a published record. Do not do that again.

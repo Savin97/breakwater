@@ -108,18 +108,31 @@ def _pre_audit_upcoming(daily_df: pd.DataFrame | None = None) -> pd.DataFrame:
 
 def _published_calls() -> pd.DataFrame:
     """The archived first call per event, where one exists. Missing DB is not an error —
-    the archive only starts 2026-08-31 and most windows predate it."""
+    the archive only starts 2026-08-31 and most windows predate it.
+
+    `published_void` carries the P4.2 void flag through to the sheet. These rows are
+    still shown, because they are what was actually published and the history must stay
+    readable — but anything that adds calls up must drop `published_void`. The archive's
+    own `predictions_track_record` view (utilities/db_utilities.py) is the pre-filtered
+    equivalent. See audit/PHASE0_AUDIT_REV2.md P4.2.
+    """
     empty = pd.DataFrame(columns=["stock", "earnings_date", "published_tier",
-                                  "published_risk_score", "published_asof"])
+                                  "published_risk_score", "published_asof",
+                                  "published_void"])
     if not os.path.exists(PREDICTIONS_DB_PATH):
         return empty
     con = duckdb.connect(PREDICTIONS_DB_PATH, read_only=True)
     try:
-        out = con.execute("""
+        # A DB predating the P4.2 migration has no void column. Read what is there
+        # rather than failing closed, which would hide every archived call.
+        cols = {r[0] for r in con.execute("DESCRIBE predictions_first_call").fetchall()}
+        void = ("void_for_track_record" if "void_for_track_record" in cols else "FALSE")
+        out = con.execute(f"""
             SELECT stock, earnings_date,
                    tier                 AS published_tier,
                    risk_score           AS published_risk_score,
-                   prediction_asof_date AS published_asof
+                   prediction_asof_date AS published_asof,
+                   COALESCE({void}, FALSE) AS published_void
             FROM predictions_first_call
         """).df()
     except duckdb.Error:
@@ -287,6 +300,11 @@ def format_report(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> s
             lines.append(f"    {label:<24} n={n:<4}  ≥5%: {m5:>3}/{n:<4} ({m5/n*100:4.0f}%)"
                          f"   ≥8%: {m8:>3}/{n:<4} ({m8/n*100:4.0f}%)")
         pub = hist[hist["published_tier"].notna()]
+        voided = int(pub["published_void"].fillna(False).astype(bool).sum()) if len(pub) else 0
+        if voided:
+            lines.append(f"    {voided} of them are VOID for track-record purposes "
+                         f"(pre-audit model; audit/PHASE0_AUDIT_REV2.md P4.2) — shown as "
+                         f"history, excluded from any published record.")
         lines.append(f"    Archived published calls in window: {len(pub)} of {len(hist)} "
                      f"(the predictions DB starts 2026-08-31)")
         lines.append("    Retro-scored, not an archive — see the module docstring.")

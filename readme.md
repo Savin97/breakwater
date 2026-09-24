@@ -1,6 +1,8 @@
 # Breakwater
 
-Earnings tail-risk model for S&P 500 stocks. Scores each upcoming earnings event on a risk scale (0–100) and surfaces the ~15–20 events per week most likely to produce large moves. High Alert stocks move ≥8% on earnings 40% of the time vs. 7% base rate (5.8x lift, consistent 2015–2025 OOS).
+Earnings tail-risk model for S&P 500 stocks. Scores each upcoming earnings event on a risk scale (0–100) and surfaces the ~15–20 events per week most likely to produce large moves. On 11,496 events with verified announcement timestamps, High Alert stocks move ≥8% on earnings **45.5%** of the time [42.9, 48.2] vs. a **20.4%** base rate [19.7, 21.1] — a **1.91x lift, stratified by announcement window**.
+
+> **Performance figures: `audit/PHASE0_AUDIT_REV2.md` is the authority.** Every number in this file traces to it. The previously published figures (40% vs 6.9%, 5.8x lift, a consistent 2015–2025 OOS record) were derived from a target that mismeasured before-open announcements; they were overstated by roughly 3x and are retracted. **Do not reintroduce them, and do not add a performance figure that is not stated in that audit.** Quote the stratified lift, never the crude one: the crude-vs-stratified gap is composition, not model skill (audit §Q2).
 
 Live at **harbor-markets.com/breakwater** (Streamlit dashboard). Weekly email digest sent Monday mornings.
 
@@ -153,11 +155,29 @@ breakwater/
 
 ## Key Model Numbers
 
-| Tier | P(move ≥8%) | vs Base (6.9%) | Events/year |
-|---|---|---|---|
-| Normal | ~4% | 0.6x | — |
-| Elevated | ~18% | 2.6x | — |
-| High Alert | 40% | 5.8x | ~60 |
-| High Conviction (HA + drift flag) | 52% | 7.5x | ~12 |
+All figures from `audit/PHASE0_AUDIT_REV2.md` §Q2, measured on **n=11,496 events with verified
+provider announcement timestamps**. Hit rates are timestamp-anchored; lift is **stratified by
+announcement window** (observed rate ÷ the rate the tier's BMO/AMC mix alone would produce with
+zero within-window skill). Market baseline over the same events: **20.4%** [19.7, 21.1].
 
-12% of earnings events selected → 42% of all ≥8% moves captured.
+| Tier | n | P(move ≥8%) [95% CI] | Stratified lift | Crude lift |
+|---|---:|---|---:|---:|
+| Normal | 9,120 | 15.7% [14.9, 16.4] | 0.80x | 0.77x |
+| Elevated | 1,022 | 29.3% [26.5, 32.1] | 1.23x | 1.43x |
+| High Alert | 1,354 | 45.5% [42.9, 48.2] | **1.91x** | 2.23x |
+| High Conviction (HA + drift flag) | 162 | 58.6% [50.9, 65.9] | **2.46x** | 2.88x |
+
+High Alert and Elevated together capture **39.0%** [37.1, 41.0] of all ≥8% moves.
+
+**Scope, which must travel with these numbers:**
+
+- The sample is dated 2008–2026, but verified timestamps reach back only to about 2020 for
+  most tickers, and cover 25.4% of all scored events. **There is no 15-year or 2015–2025
+  out-of-sample record.** Nothing above is out-of-sample: the 73/79 cut points were selected
+  on this distribution and are being re-fit (audit §Q3).
+- The edge is concentrated in after-close reporters. Capture is **67.8%** on AMC events and
+  **9.3%** [7.8, 11.1] on BMO. Within AMC — the half that was never mismeasured — High Alert
+  lift is **1.87x**. On BMO, 96.0% of events are `Normal` and `Normal` lift is **0.94x**, i.e.
+  no discrimination; the model's value on BMO is **unestablished** pending Phase 3 (audit §Q3).
+- Knowing only that a company reports after the close is worth **1.42x** with no model at all.
+  That is why the headline must be stratified.

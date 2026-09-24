@@ -216,6 +216,32 @@ def create_predictions_table_if_not_exists(con):
     # a later audit has to infer. Rows written before it exists stay NULL — those are
     # the pre-rebuild calls, whose score came from the previous completed event.
     con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS score_asof_date DATE")
+
+    # ---- Audit remediation P4.2 (audit/PHASE0_AUDIT_REV2.md) --------------------
+    # void_for_track_record: this call may be read as history, but must NEVER accrue
+    # into a published track record. It is a fact about the call, not about the row's
+    # age, so every consumer filters on the flag instead of hard-coding a date.
+    # Kept here, in the self-migration, so the marking survives a DB that is recreated,
+    # restored or re-synced; the UPDATE below is idempotent.
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS "
+                "void_for_track_record BOOLEAN DEFAULT FALSE")
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS void_reason TEXT")
+    con.execute("UPDATE predictions SET void_for_track_record = FALSE "
+                "WHERE void_for_track_record IS NULL")
+    # The 10 pre-audit calls (prediction_asof_date 2026-08-31, commit f3dd1e2). Their
+    # tier/risk_score came from the stock's PREVIOUS completed event (Issue 2), scored
+    # off a chain built on mismeasured before-open reactions (Issue 1). Preserved in
+    # full as history; stamped 0.3.1-preaudit and voided for track-record purposes.
+    con.execute("""
+        UPDATE predictions
+        SET model_version         = '0.3.1-preaudit',
+            void_for_track_record = TRUE,
+            void_reason           = 'Pre-audit feature chain (mismeasured BMO outcomes; '
+                                    'score inherited from the previous completed event). '
+                                    'Void for track record per audit/PHASE0_AUDIT_REV2.md P4.2.'
+        WHERE prediction_asof_date <= DATE '2026-08-31'
+          AND model_version IN ('0.3.1', '0.3.1-preaudit')
+    """)
     con.execute("""
         UPDATE predictions
         SET run_week = date_trunc('week', prediction_asof_date)
@@ -242,6 +268,16 @@ def create_predictions_table_if_not_exists(con):
         SELECT DISTINCT ON (stock, earnings_date) *
         FROM predictions
         ORDER BY stock, earnings_date, prediction_asof_date;
+    """)
+
+    # The track-record-safe slice: first call per event, minus everything voided by
+    # P4.2. ANY published/marketing number must come from this view, never from
+    # `predictions` or `predictions_first_call` directly. Re-created on every call, so
+    # a newly voided row drops out of it without anyone remembering to do anything.
+    con.execute("""
+        CREATE OR REPLACE VIEW predictions_track_record AS
+        SELECT * FROM predictions_first_call
+        WHERE NOT COALESCE(void_for_track_record, FALSE);
     """)
 
 def merge_tables(con):

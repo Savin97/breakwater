@@ -20,6 +20,8 @@ backtesting/artifacts/
 testing/testing_results/
 testing/testing_results/**
 data/subscribers.txt
+data/benzinga_earnings/**
+data/benzinga_features/**
 
 # misc stuff
 .DS_Store
@@ -36,3 +38,12 @@ audit/phase1_golden/daily_df_pre.parquet
 # research/massive/paths.py and the static guards in testing/test_massive_earnings.py.
 vendor/
 **/vendor/
+
+# Benzinga acquisition tooling and its vendor data. Same rule as vendor/ above: licensed
+# third-party data must not land in a public repo, and the tooling is Phase 3 audit
+# scaffolding rather than part of the product. data/benzinga_earnings/ alone is ~201 MB.
+benzinga_tools/
+benzinga_integration/
+benzinga_features/
+data/benzinga_earnings/
+data/benzinga_features/
