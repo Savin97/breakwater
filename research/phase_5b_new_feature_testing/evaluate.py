@@ -35,8 +35,8 @@ from research.phase5_event_signal import (
     univariate_signal,
     walk_forward_predictions,
 )
-from phase_5b_new_feature_testing import registry as R
-from phase_5b_new_feature_testing.build import FEATURE_CACHE, PHASE3_EVENTS_PATH, RESULTS_DIR
+from research.phase_5b_new_feature_testing import registry as R
+from research.phase_5b_new_feature_testing.build import FEATURE_CACHE, PHASE3_EVENTS_PATH, RESULTS_DIR
 
 DEFAULT_START = "2019-01-01"
 DEFAULT_END = "2025-12-31"
@@ -380,7 +380,7 @@ def run(*, results_dir: Path = RESULTS_DIR, start: str = DEFAULT_START, end: str
             "useful_to_breakwater"]
     summary = {
         "phase": "phase5b_free_features",
-        "preregistration": "phase_5b_new_feature_testing/PREREGISTRATION.md",
+        "preregistration": "research/phase_5b_new_feature_testing/PREREGISTRATION.md",
         "evaluation_window": {"start": start, "end": end},
         "incumbent": INCUMBENT,
         "samples": {k: int(len(v)) for k, v in S.items()},

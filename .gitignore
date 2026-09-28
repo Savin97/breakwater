@@ -36,7 +36,7 @@ audit/phase1_golden/daily_df_pre.parquet
 # Raw + normalized third-party vendor data (Massive / Benzinga). Licensed data in a
 # public repo, and nothing under here may ever become a production input — see
 # research/massive/paths.py and the static guards in testing/test_massive_earnings.py.
-vendor/
+data/vendor/
 **/vendor/
 
 # Benzinga acquisition tooling and its vendor data. Same rule as vendor/ above: licensed

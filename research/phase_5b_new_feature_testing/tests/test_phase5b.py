@@ -1,7 +1,7 @@
 """Phase 5B invariants: causality, leave-one-out, peer availability, evaluation hygiene,
 and synthetic recovery / null behaviour.
 
-Run from the repo root:  .venv/bin/python -m pytest phase_5b_new_feature_testing/tests -q
+Run from the repo root:  .venv/bin/python -m pytest research/phase_5b_new_feature_testing/tests -q
 """
 import numpy as np
 import pandas as pd
@@ -12,18 +12,18 @@ from feature_engineering.announcement_timing import TARGET_AVAILABLE
 from research.phase3_target_rebuild import CORRECTED_TARGET, PHASE3_PREFIX
 from research.phase4_baselines import prepare_analysis_frame
 from research.phase5_event_signal import STRUCTURAL, walk_forward_predictions
-from phase_5b_new_feature_testing import evaluate as ev
-from phase_5b_new_feature_testing.panel import (
+from research.phase_5b_new_feature_testing import evaluate as ev
+from research.phase_5b_new_feature_testing.panel import (
     build_panel,
     event_cutoff_index,
     issuer_of,
 )
-from phase_5b_new_feature_testing.peer_features import compute_peer_features
-from phase_5b_new_feature_testing.price_features import (
+from research.phase_5b_new_feature_testing.peer_features import compute_peer_features
+from research.phase_5b_new_feature_testing.price_features import (
     compute_price_features,
     rolling_vol_frames,
 )
-from phase_5b_new_feature_testing import registry as R
+from research.phase_5b_new_feature_testing import registry as R
 
 GRID = pd.bdate_range("2015-01-01", "2024-12-31")
 

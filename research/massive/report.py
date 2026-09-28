@@ -2,12 +2,12 @@
 
     PYTHONPATH=. .venv/bin/python -m research.massive.report
 
-Reads the newest finished snapshot under `vendor/`, normalizes it, validates it against
+Reads the newest finished snapshot under `data/vendor/`, normalizes it, validates it against
 `audit/provider_timestamps.parquet`, profiles completeness and identity hazards, and emits
-one markdown report plus full-size CSVs (under `vendor/massive/reports/`, gitignored — the
+one markdown report plus full-size CSVs (under `data/vendor/massive/reports/`, gitignored — the
 report carries a bounded excerpt of each so the committed artifact stands on its own).
 
-Writes nothing to `db/`, `output/` or `data/`.
+Writes nothing to `db/`, `output/`, or to `data/` outside `data/vendor/`.
 """
 import argparse
 import json

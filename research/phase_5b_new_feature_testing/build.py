@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from phase_5b_new_feature_testing.panel import build_panel
-from phase_5b_new_feature_testing.peer_features import compute_peer_features
-from phase_5b_new_feature_testing.price_features import compute_price_features
+from research.phase_5b_new_feature_testing.panel import build_panel
+from research.phase_5b_new_feature_testing.peer_features import compute_peer_features
+from research.phase_5b_new_feature_testing.price_features import compute_price_features
 
 FULL_DF_PATH = Path("output/full_df.parquet")
 PHASE3_EVENTS_PATH = Path("output/phase3_target_rebuild/phase3_events.parquet")

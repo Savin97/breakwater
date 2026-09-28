@@ -19,8 +19,8 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from research.phase5_event_signal import score_predictions, walk_forward_predictions
-from phase_5b_new_feature_testing.build import FEATURE_CACHE, PHASE3_EVENTS_PATH, RESULTS_DIR
-from phase_5b_new_feature_testing.evaluate import (
+from research.phase_5b_new_feature_testing.build import FEATURE_CACHE, PHASE3_EVENTS_PATH, RESULTS_DIR
+from research.phase_5b_new_feature_testing.evaluate import (
     INCUMBENT,
     MIN_POSITIVE_YEARS,
     assemble,

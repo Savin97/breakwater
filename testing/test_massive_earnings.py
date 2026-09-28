@@ -373,6 +373,7 @@ def test_a_reused_ticker_is_caught_by_the_gap_even_when_the_name_never_changes()
 
 # ─────────────────────── structural guards: production must stay untouched ───────────────
 RESEARCH_DIR = REPO / "research"
+MASSIVE_DIR = RESEARCH_DIR / "massive"
 PRODUCTION_DIRS = ["pipeline", "feature_engineering", "scoring", "ingestion", "utilities",
                    "analysis", "streamlit_dash", "report", "cron"]
 
@@ -437,14 +438,14 @@ def test_this_tooling_cannot_modify_the_breakwater_database():
 
 
 def test_this_tooling_writes_only_under_vendor_and_audit():
-    """Every output root in the package resolves under `vendor/` (gitignored raw data),
+    """Every output root in the package resolves under `data/vendor/` (gitignored raw data),
     except the single committed audit report. No module hardcodes a production directory."""
     for name in ("MASSIVE_ROOT", "EARNINGS_SNAPSHOT_ROOT", "NORMALIZED_ROOT",
                  "REPORT_DATA_ROOT"):
         assert getattr(paths, name).is_relative_to(paths.VENDOR_ROOT)
-    assert paths.VENDOR_ROOT.parent == REPO
+    assert paths.VENDOR_ROOT.parent == REPO / "data"
     assert paths.AUDIT_REPORT_PATH.parent == REPO / "audit"
-    for f in _python_files(RESEARCH_DIR):
+    for f in _python_files(MASSIVE_DIR):
         tree = ast.parse(_code_only(f), filename=str(f))
         for literal in _string_constants(tree):
             assert not literal.startswith(("db/", "output/", "data/", "/home", "~")), \
@@ -452,7 +453,7 @@ def test_this_tooling_writes_only_under_vendor_and_audit():
 
 
 def test_no_production_module_depends_on_a_raw_vendor_file():
-    """The whole point of keeping `vendor/` outside the repo is that production cannot come
+    """The whole point of keeping `data/vendor/` out of git is that production cannot come
     to depend on it. This is the same guard `test_announcement_timing` puts on
     `audit/provider_timestamps.parquet`."""
     needles = ["vendor/", "research.massive", "research/massive", "massive.com",
@@ -465,7 +466,7 @@ def test_no_production_module_depends_on_a_raw_vendor_file():
 
 def test_the_vendor_directory_is_gitignored():
     ignored = (REPO / ".gitignore").read_text()
-    assert "vendor/" in ignored
+    assert "data/vendor/" in ignored
 
 
 def test_the_window_classifier_is_the_reviewed_production_one():
@@ -480,7 +481,7 @@ def test_nothing_in_the_package_infers_timing_from_price():
     'corrected' number it produced was circular. Enforced statically here too."""
     price_names = {"price", "close", "reaction", "return", "daily_ret", "abs_reaction_3d",
                    "risk_score", "vol_10d", "vol_30d"}
-    for f in _python_files(RESEARCH_DIR):
+    for f in _python_files(MASSIVE_DIR):
         tree = ast.parse(_code_only(f), filename=str(f))
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):

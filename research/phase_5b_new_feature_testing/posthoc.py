@@ -25,10 +25,10 @@ import numpy as np
 import pandas as pd
 
 from research.phase5_event_signal import score_predictions, walk_forward_predictions
-from phase_5b_new_feature_testing.build import FEATURE_CACHE, PHASE3_EVENTS_PATH, RESULTS_DIR, load_daily
-from phase_5b_new_feature_testing.evaluate import INCUMBENT, assemble, bootstrap_delta, samples
-from phase_5b_new_feature_testing.panel import event_cutoff_index, issuer_of
-from phase_5b_new_feature_testing.peer_features import peer_event_table
+from research.phase_5b_new_feature_testing.build import FEATURE_CACHE, PHASE3_EVENTS_PATH, RESULTS_DIR, load_daily
+from research.phase_5b_new_feature_testing.evaluate import INCUMBENT, assemble, bootstrap_delta, samples
+from research.phase_5b_new_feature_testing.panel import event_cutoff_index, issuer_of
+from research.phase_5b_new_feature_testing.peer_features import peer_event_table
 
 W = 20
 

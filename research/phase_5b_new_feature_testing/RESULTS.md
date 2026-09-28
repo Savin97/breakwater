@@ -5,10 +5,10 @@ touched. Definitions were fixed in `PREREGISTRATION.md` before any outcome was r
 Artifacts: `output/phase5b_free_features/`. Reproduce:
 
 ```bash
-.venv/bin/python -m phase_5b_new_feature_testing.build      # features, ~30 s
-.venv/bin/python -m phase_5b_new_feature_testing.evaluate   # models + bootstrap, ~20 min
-.venv/bin/python -m phase_5b_new_feature_testing.posthoc    # POST HOC decomposition
-.venv/bin/python -m pytest phase_5b_new_feature_testing/tests -q   # 26 tests
+.venv/bin/python -m research.phase_5b_new_feature_testing.build      # features, ~30 s
+.venv/bin/python -m research.phase_5b_new_feature_testing.evaluate   # models + bootstrap, ~20 min
+.venv/bin/python -m research.phase_5b_new_feature_testing.posthoc    # POST HOC decomposition
+.venv/bin/python -m pytest research/phase_5b_new_feature_testing/tests -q   # 26 tests
 ```
 
 ## Setup
@@ -134,7 +134,7 @@ revisions are the obvious untested sources of genuinely event-specific informati
 
 Before buying, one data check is needed: confirm that point-in-time history exists
 (snapshot timestamps before each announcement), not latest-vintage.
-`testing/score_validity_and_deviation_features.py` already documents the vintage problem
+`research/score_validity_and_deviation_features.py` already documents the vintage problem
 in the Benzinga estimates.
 
 If anything from this phase is kept, it should be a single feature,

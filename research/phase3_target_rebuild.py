@@ -7,7 +7,7 @@ or the production database. It answers the narrow first Phase-3 question:
     historical reaction inputs are rebuilt from those corrected reactions, does the
     structural signal survive?
 
-The Benzinga/Massive snapshot remains under gitignored ``vendor/``. This module reads it
+The Benzinga/Massive snapshot remains under gitignored ``data/vendor/``. This module reads it
 as research input, matches it to Breakwater events without using prices/returns to infer
 timing, computes timing-aware outcomes in parallel, and compares three variants on the
 same rows:

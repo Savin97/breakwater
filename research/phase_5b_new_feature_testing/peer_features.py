@@ -25,7 +25,7 @@ import pandas as pd
 
 from config import EXTREME_EARNINGS_REACTION_THRESHOLD, LARGE_EARNINGS_REACTION_THRESHOLD
 from feature_engineering.announcement_timing import TARGET_AVAILABLE
-from phase_5b_new_feature_testing.panel import (
+from research.phase_5b_new_feature_testing.panel import (
     event_cutoff_date,
     event_cutoff_index,
     issuer_of,

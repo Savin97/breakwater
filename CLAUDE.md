@@ -230,7 +230,7 @@ PYTHONPATH=. .venv/bin/python -m research.massive.report       # regenerate the 
 
 Rules this package is built around, none of which may be relaxed:
 
-- **Raw vendor data lives in `vendor/`, which is gitignored.** Licensed third-party data in
+- **Raw vendor data lives in `data/vendor/`, which is gitignored.** Licensed third-party data in
   a public repo, and a raw vendor file must never become a production input by accident.
   `testing/test_massive_earnings.py` asserts statically that no `pipeline/`,
   `feature_engineering/`, `ingestion/`, `scoring/`, `utilities/` or `analysis/` module

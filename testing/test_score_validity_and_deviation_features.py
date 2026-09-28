@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from research.phase3_target_rebuild import CORRECTED_TARGET, PHASE3_PREFIX
-from testing.score_validity_and_deviation_features import (
+from research.score_validity_and_deviation_features import (
     DEVIATION_FEATURES,
     ENTROPY,
     HISTORICAL_REFERENCE,
@@ -248,7 +248,7 @@ def test_a_fixed_predictor_takes_its_threshold_from_completed_history_only():
 
 
 def test_a_fixed_predictor_is_scored_on_the_same_years_as_a_trained_one():
-    from testing.benzinga_feature_value import walk_forward
+    from research.benzinga_feature_value import walk_forward
     d = _dataset()
     s = fixed_predictor_predictions(d, SCORE, "S", "y_primary")
     m0 = walk_forward(d, [SCORE], "M0", "y_primary")
@@ -261,7 +261,7 @@ def test_common_events_is_what_every_comparison_runs_on():
     d = _dataset()
     partial = d.copy()
     partial.loc[partial.index[:500], DEVIATION_FEATURES[0]] = np.nan
-    from testing.benzinga_feature_value import walk_forward
+    from research.benzinga_feature_value import walk_forward
     s = fixed_predictor_predictions(d, SCORE, "S", "y_primary")
     m1 = walk_forward(partial, [SCORE, *DEVIATION_FEATURES], "M1", "y_primary")
     shared = common_events({"S": s, "M1": m1})

@@ -11,7 +11,7 @@ ways and the `benzinga_id` sets are compared.
     reverse       the same walk with the sort order flipped.
 
 Both are checks, not evidence about the world, so neither is persisted as a snapshot. The
-results are written to `vendor/massive/crosscheck_<snapshot>.json` so the audit report can
+results are written to `data/vendor/massive/crosscheck_<snapshot>.json` so the audit report can
 quote them without re-running them.
 
     PYTHONPATH=. .venv/bin/python -m research.massive.crosscheck

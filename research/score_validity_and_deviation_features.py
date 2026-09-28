@@ -70,7 +70,7 @@ from config import (
     MODEL_VERSION,
 )
 from research.phase3_target_rebuild import CORRECTED_TARGET, PHASE3_PREFIX
-from testing.benzinga_feature_value import (
+from research.benzinga_feature_value import (
     ALERT_QUANTILE,
     BOOTSTRAP_REPS,
     BOOTSTRAP_SEED,
@@ -669,8 +669,8 @@ def run(*, results_dir: Path = RESULTS_DIR, bootstrap_reps: int = BOOTSTRAP_REPS
         },
         "code_provenance": {
             str(p): _sha256(p) for p in
-            (Path("testing/score_validity_and_deviation_features.py"),
-             Path("testing/benzinga_feature_value.py"),
+            (Path("research/score_validity_and_deviation_features.py"),
+             Path("research/benzinga_feature_value.py"),
              Path("research/phase3_target_rebuild.py"),
              Path("research/phase4_baselines.py")) if p.exists()
         },

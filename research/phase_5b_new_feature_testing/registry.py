@@ -9,9 +9,9 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-_PRICE = "phase_5b_new_feature_testing/price_features.py"
-_PEER = "phase_5b_new_feature_testing/peer_features.py"
-_EVAL = "phase_5b_new_feature_testing/evaluate.py"
+_PRICE = "research/phase_5b_new_feature_testing/price_features.py"
+_PEER = "research/phase_5b_new_feature_testing/peer_features.py"
+_EVAL = "research/phase_5b_new_feature_testing/evaluate.py"
 _PRICES = "full_df.parquet prices on the market-session grid"
 _PRICES_LOO = _PRICES + " + LOO(issuer) market/sector benchmarks"
 _PEERS = "phase3_events.parquet reaction_1d_anchored + anchor_date; stock_data sector/sub_sector"

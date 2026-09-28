@@ -2,7 +2,7 @@
 
 What a snapshot is
 ------------------
-    vendor/massive/earnings/<snapshot_id>/
+    data/vendor/massive/earnings/<snapshot_id>/
         pages/page_00001.json.gz ...   the vendor payloads, byte-for-byte as received
         manifest.json                  acquisition metadata + per-page SHA-256
         SHA256SUMS                     the same digests in `sha256sum -c` format

@@ -2,25 +2,25 @@
 
 Raw vendor payloads are kept COMPLETELY SEPARATE from Breakwater production data:
 
-    vendor/massive/earnings/<snapshot_id>/   immutable raw snapshot (pages + manifest)
-    vendor/massive/normalized/               normalized research parquet
-    vendor/massive/reports/                  full-size analysis tables (CSV)
+    data/vendor/massive/earnings/<snapshot_id>/   immutable raw snapshot (pages + manifest)
+    data/vendor/massive/normalized/               normalized research parquet
+    data/vendor/massive/reports/                  full-size analysis tables (CSV)
 
-`vendor/` is gitignored in its entirety. Two reasons, both binding:
+`data/vendor/` is gitignored in its entirety. Two reasons, both binding:
 
 1. It is licensed third-party data and this repository is public.
 2. A raw vendor file must never become a production input by accident. Production reads
-   `db/breakwater.duckdb` and `output/*.parquet`; nothing under `vendor/` is on that path,
+   `db/breakwater.duckdb` and `output/*.parquet`; nothing under `data/vendor/` is on that path,
    and `testing/test_massive_earnings.py` asserts statically that no pipeline module
    mentions it.
 
-Nothing in this package writes to `db/`, `output/` or `data/`.
+Nothing in this package writes to `db/` or `output/`, or anywhere in `data/` outside `data/vendor/`.
 """
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-VENDOR_ROOT = REPO_ROOT / "vendor"
+VENDOR_ROOT = REPO_ROOT / "data" / "vendor"
 MASSIVE_ROOT = VENDOR_ROOT / "massive"
 
 EARNINGS_SNAPSHOT_ROOT = MASSIVE_ROOT / "earnings"

@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from feature_engineering.announcement_timing import TARGET_AVAILABLE
-from testing.benzinga_feature_value import (
+from research.benzinga_feature_value import (
     ALERT_QUANTILE,
     AVAILABILITY_SUFFIX,
     BZ_BINARY,
@@ -196,7 +196,7 @@ def _walk_frame(n_years: int = 10, stocks: int = 40, seed: int = 5) -> pd.DataFr
 
 def test_walk_forward_never_trains_on_an_outcome_from_the_test_year_or_later(monkeypatch):
     seen = {}
-    import testing.benzinga_feature_value as mod
+    import research.benzinga_feature_value as mod
     real = mod.fit_predict
 
     def spy(train, test, features, label):
