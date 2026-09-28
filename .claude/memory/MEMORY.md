@@ -8,6 +8,148 @@ Entries are updated at the end of each session. Most recent first.
 - [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
 - [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
 
+## HOW TO WRITE FOR THIS USER — read before replying
+
+**No consultant jargon. Say the plain thing.** Corrected 2026-09-28: "scope it" and
+"park it" were both used and neither landed. Write "plan out what it involves before
+starting" and "leave it for now".
+
+The same rule covers anything that sounds like management vocabulary rather than the
+actual action — deliverable, workstream, bandwidth, circle back, align on, surface it.
+If a word describes a *process* rather than a *thing being done*, replace it with the
+thing being done.
+
+Two related corrections from the same week, both worth keeping:
+- **Do not invent categories.** "Phase 3 deliverable" was made up; the real list is
+  P3.1-P3.5 in `audit/PHASE0_AUDIT_REV2.md`. Check the source before naming something.
+- **Lead with the concrete artifact, not the statistics.** A table of real events
+  (tickers, scores, outcomes) explained the score-ceiling problem instantly after
+  several paragraphs of AUCs and confidence intervals had not.
+
+---
+
+## 2026-09-24 — PHASE 5B: FREE PRICE/PEER FEATURES — EXHAUSTED (uncommitted, awaiting review)
+
+`phase_5b_new_feature_testing/` (all code + 26 tests) → `output/phase5b_free_features/`.
+Write-up: `phase_5b_new_feature_testing/RESULTS.md`; definitions frozen in
+`PREREGISTRATION.md` before results. NOT committed — user asked to review first.
+
+- Same common sample as Phase 5 (10,934 ev / 8,410 OOF); incumbent structural+vol_30d
+  reproduced at 0.7097.
+- 29 primary features / 7 families. "Robust beat" (AUC CI>0, 4/5 yrs): only single
+  features — sector peer earnings reaction LEVEL (peer_sec_rw_mean_abs_1d_20 +0.0060
+  [+0.0020,+0.0102]), sub-sector level +0.0032, idio_vol_30d +0.0011, idio_share +0.0010.
+  **None improves top-10%/top-20% capture.** Every family model and all-29 are flat/worse.
+- Peer "shock" (vs peer's own norm) is null; post-hoc: level ≈ half sector phenotype,
+  half weak season effect (realized|expected +0.0023, CI crosses 0). Market-wide control null.
+- Idio vol does not beat vol_30d as a replacement (+0.0006, ns). Sub-sector < sector;
+  sub-sector peer vol (family 6) hurts (−0.0054).
+- Interaction gate failed → not run (as pre-registered).
+- POST HOC pair (`pair.py`): inc + peer_sec_rw + idio_vol_30d = 0.7167, +0.0070
+  [+0.0027,+0.0116], 4/5 yrs (2022 negative, 2025 +0.014); top-10% capture +0.009 CI
+  crosses 0 → still not product-relevant. User asked for pair only, no cohort extension.
+- Verdict: free data exhausted (~0.006 AUC left vs ~0.054 from the timing fix). Next
+  rational step = point-in-time historical options/analyst data; verify vintage first.
+- Gotcha: `vol_30d` on 14 BMO window events includes the reaction day (vendor date one
+  session before stored earnings_date); `vol_30d_cut` control shows it is immaterial.
+
+## 2026-09-24 — PHASES 3-5: THE MODEL DOES NOT BEAT A ONE-LINE BASELINE
+
+**Research only. Nothing in production changed. Findings recorded here deliberately
+instead of in the research files, which are removable.**
+
+### The data got better, and that is the real asset
+- Corrected anchoring moves P(|reaction| >= 8%) from 0.118 to 0.189. **16% of BMO
+  events flip their extreme label**; 0.25% of AMC events do. The legacy target was
+  wrong exactly where Phase 2 predicted.
+- Benzinga timing matched 25,593 of 45,706 events (~56%, up from ~25% and near-zero
+  before 2020). 1,560 excluded as identity hazards.
+- **The same baseline built from free data scores 0.648; built from corrected history
+  it scores 0.702.** That +0.054 gap is the timing correction and is ~5x larger than
+  any feature effect found anywhere in this project. The moat is Phase 2/3, not stage 4.
+
+### The score adds nothing over its own input
+- **rho = 0.9997 between phase3_risk_score and its own raw prior p75.** The score is a
+  rank-preserving rescaling of p75; the cap, the 85/15 weights and entropy do not
+  reorder events, and AUC is rank-based, so it cannot differ. Locked by construction.
+- Entropy clips to 1.0 on **97.1%** of events — a flat +15 offset, not a signal. So
+  for almost every event: `score ~= 85 * min(p75/0.12, 1) + 15`.
+- Tier cuts in p75 terms: **score 73 <-> p75 ~8.2%, score 79 <-> ~9.0%.**
+- vs the shrunk prior-extreme-rate baseline: **0.7022 vs 0.7023**, CI [-0.0054,
+  0.0049], better in 4 of 8 years. Indistinguishable. Plain expanding mean of prior
+  |reaction| is best of all at 0.7078.
+- **Within a stock the score is below chance: 0.4296** (438 stocks, 13,379 events). It
+  ranks companies, not quarters. Caveat: expanding statistics of the outcome are
+  mechanically anti-predictive within stock — proven on synthetic data — so ~0.43 is
+  close to the null for this estimator family, not evidence of mean reversion.
+
+### Why the original backtest said otherwise — it was not wrong
+It compared scoring features against **each other** and explosiveness won, correctly:
+vol_expansion 0.518, momentum_pressure 0.544, momentum_fragility disqualified for
+look-ahead. The null hypothesis — the raw history the feature is computed from — was
+never in the bake-off. Different question, not a flawed test.
+
+### BMO is fixed; BMO coverage is not
+Measured on corrected target + corrected history, 2019-2025:
+
+| | BMO before | BMO after | AMC after |
+|---|---|---|---|
+| base rate | 0.039 | 0.161 | 0.225 |
+| share in Normal | 96.6% | **86.4%** | 66.3% |
+| High Alert events | 126 | **566** | 1,284 |
+| High Alert hit rate | 13.5% | **36.2%** | 42.6% |
+| High Alert lift | 3.46x | 2.25x | 1.90x |
+| capture of >=8% | 12.1% | **26.9%** | 56.1% |
+| score AUC | 0.662 | 0.671 | 0.715 |
+
+**The audit line "unestablished within BMO, 96.0% Normal, 0.94x lift" now has a
+measured successor: 2.25x on 566 events.** AMC barely moves (0.712 -> 0.715), which is
+the control working. But BMO still flags 3x fewer events and catches half as many
+extreme moves — that is a **threshold** problem, not a measurement one: 73/79 were fit
+on the legacy distribution and never re-fit. This is P3.2 + P3.3.
+
+### Other findings worth keeping
+- **The 0.12 ceiling flattens 649 events (5%, a third of High Alert) onto score
+  100.0.** Split them at their own median p75: 42.3% vs 52.6% extreme rate. Selecting
+  the top 5% or tighter is currently decided by frame order, not by the model. P3.2
+  already names this ceiling.
+- **Validity defect (research score):** the entropy fallback `ffill`s in frame order,
+  and the frame is sorted by (stock, earnings_date), so 99.8% of chain-fed rows read a
+  FUTURE event of a DIFFERENT ticker. Concentrated pre-2015; only 13 held-out events
+  move, AUC delta -0.00002. Structurally real, numerically nil for 2018-2025, NOT nil
+  for anyone scoring pre-2015.
+- **Tier-only defect:** `_missing_aware_lift` advances its global prior with shift(1)
+  by ROW, so an event sees same-day outcomes of other companies (97.8% of events share
+  a date). Affects phase3_bucket, never phase3_risk_score.
+- **Wrapping the score in a GBM loses information** (-0.011 AUC). "Train a model on the
+  score" is a lossy baseline, not a neutral one.
+- **Phase 5:** the only event-specific signal in the repo is pre-event realized
+  volatility, +0.011 AUC walk-forward. Everything else is null or negative once the
+  phenotype is controlled.
+- **IV, expected move, analyst dispersion and revisions have ZERO historical
+  coverage** — forward-only snapshots starting 2026. The features most likely to carry
+  quarter-level signal cannot be tested at all.
+- **Benzinga expectation features: negative.** -0.018 AUC vs the raw score, 0 of 8
+  years better, CIs excluding zero on the negative side. Estimates are latest-vintage,
+  a limitation of unknown sign, so not a proven upper bound either.
+
+### Phase 3 status (audit P3.1-P3.5)
+| item | status |
+|---|---|
+| P3.1 rebuild the chain | done in RESEARCH only, nothing in production |
+| P3.2 re-fit 73/79, LIFT_TO_*, LIFT_PRIOR_STRENGTH, 0.12 ceiling, 0.85/0.15 | **not started** — evidence exists for the ceiling only |
+| P3.3 calibration stratified by window | **not started** — the BMO table above is a first look, not the deliverable |
+| P3.4 is BMO modellable | partly answered: yes, 2.25x on 566 events |
+| P3.5 pre-2020 policy | informed — usable timing from 2015, 80% of universe mature by 2019 |
+
+### Next
+**P3.2 + P3.3 together**: re-fit the cuts and the ceiling on the corrected
+distribution, walk-forward so the thresholds are not fitted on the window they are
+scored on, stratified by announcement window, and decide whether BMO needs its own cut
+set. This is the first work that would change a production number.
+
+---
+
 ## 2026-09-10 — BENZINGA SOURCE EVALUATION (`research/massive/`) — ACCEPT WITH CONDITIONS
 
 **Evaluation only. Nothing ingested, no reaction rebuilt, no model fitted. Phase 3 still
