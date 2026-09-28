@@ -7,6 +7,7 @@ from utilities.db_utilities import get_max_dates_by_stock
 from utilities.api_functions import (get_earnings_data_from_api)
 from utilities.data_utilities import to_float_or_none, get_alpha_vantage_api_key, read_stocks_to_fetch
 from utilities.output_utilities import get_run_logs_dir
+from utilities.time_utilities import now_ny, MAX_HOST_CLOCK_AHEAD_OF_NY_HOURS
 from config import (
     STOCKS_START_DATE,
     ALPHAVANTAGE_CALLS_PER_MINUTE,
@@ -20,6 +21,97 @@ from config import (
 import os
 
 logger = logging.getLogger(__name__)
+
+# Physical column order of the `earnings` table. Both writers below name their columns
+# explicitly rather than `SELECT *`, so adding a column (Phase 2 added two) can never
+# silently shift values into the wrong slot.
+EARNINGS_INSERT_COLS = ["stock", "earnings_date", "fiscal_end_date",
+                        "reported_eps", "estimated_eps", "surprise_percentage",
+                        "ingested_at", "announce_ts_ny", "announce_ts_source",
+                        "announce_ts_observed_at"]
+_INSERT_COL_SQL = ", ".join(EARNINGS_INSERT_COLS)
+
+ANNOUNCE_TS_SOURCE_YFINANCE = "yfinance_earnings_dates"
+
+# A stored announcement timestamp is REFRESHABLE while it is still a schedule and frozen
+# once it has been observed after the fact.
+#
+#   observed_at <= announce_ts_ny   the provider told us this BEFORE the announcement.
+#                                   That is a SCHEDULE. Issuers move them, and providers
+#                                   correct them, so it must not become the permanent
+#                                   historical record.
+#   observed_at >  announce_ts_ny   the provider told us this AFTER the announcement. It
+#                                   is an observation of what happened and is never
+#                                   overwritten.
+#
+# Both sides of that comparison are naive NEW YORK wall clock (utilities.time_utilities).
+# The classification is a statement about the New York event clock and must not change
+# with the timezone of the host running the pipeline: `datetime.now()` on a UTC or
+# Israeli box reads hours ahead of NY, which would make a pre-event observation look
+# post-event and freeze a schedule into the historical record forever.
+#
+# `ingested_at` stands in where `announce_ts_observed_at` is NULL (rows written before
+# the column existed). It is a legacy operational column written in MACHINE-LOCAL time by
+# whichever host ran that ingestion, and its convention is not recorded, so it is never
+# compared against announce_ts_ny directly. It is first widened into a guaranteed lower
+# bound on the same instant in NY terms — a host clock can lead New York by at most
+# MAX_HOST_CLOCK_AHEAD_OF_NY_HOURS — so the row is frozen only when it was observed after
+# the announcement under EVERY possible host timezone. The residual error therefore only
+# ever goes one way: an ambiguous legacy row can be treated as a schedule when it was
+# really an observation, and is then replaced by a strictly newer, correctly-stamped
+# observation of the same event. That is the conservative direction. The opposite error —
+# a false post-event classification — is the one that is unrecoverable, because it welds a
+# time that never happened onto the historical record. If both columns are NULL the
+# comparison is NULL, the row does not match, and nothing is overwritten.
+#
+# The refresh also requires the incoming observation to be strictly newer than the one it
+# replaces, so re-running ingestion is idempotent and an older observation can never
+# clobber a newer one. Against a legacy row that bound is the widened one too, for the
+# same reason; a row only takes the widened path once, because the refresh writes a real
+# NY-convention `announce_ts_observed_at` and every later comparison is exact.
+
+# Naive NY wall clock if we have it; otherwise the legacy machine-local `ingested_at`
+# widened into a lower bound that holds for any host timezone.
+_OBSERVED_AT_NY = (f"COALESCE(announce_ts_observed_at, "
+                   f"ingested_at - INTERVAL {MAX_HOST_CLOCK_AHEAD_OF_NY_HOURS} HOUR)")
+
+_REFRESH_ANNOUNCE_TS_SQL = f"""
+    UPDATE earnings
+       SET announce_ts_ny = ?,
+           announce_ts_source = ?,
+           announce_ts_observed_at = ?
+     WHERE stock = ? AND earnings_date = ?
+       AND (announce_ts_ny IS NULL
+            OR ({_OBSERVED_AT_NY} <= announce_ts_ny
+                AND ? > {_OBSERVED_AT_NY}))
+"""
+
+
+def refresh_announcement_timestamp(con, stock, earnings_date, announce_ts_ny,
+                                   source, observed_at) -> int:
+    """Store an observed announcement timestamp, refreshing a stale pre-event schedule.
+
+    Returns the number of rows changed. See `_REFRESH_ANNOUNCE_TS_SQL` for the rule; the
+    short version is fill-if-empty, replace-if-still-a-schedule, never touch a
+    post-event observation.
+
+    `announce_ts_ny` and `observed_at` are both naive NEW YORK wall clock; pass
+    `utilities.time_utilities.now_ny()` for an observation made right now, never
+    `datetime.now()`.
+
+    Keyed on (stock, earnings_date), so it corrects the TIME of an event whose calendar
+    date is unchanged. A provider correction that moves the date itself is a different
+    row and is handled by the placeholder-clearing DELETE in the caller.
+    """
+    def _py(v):
+        return v.to_pydatetime() if hasattr(v, "to_pydatetime") else v
+
+    ts, obs = _py(announce_ts_ny), _py(observed_at)
+    if ts is None or pd.isna(ts):
+        return 0
+    changed = con.execute(_REFRESH_ANNOUNCE_TS_SQL,
+                          [ts, source, obs, stock, earnings_date, obs]).fetchone()
+    return int(changed[0]) if changed else 0
 
 def fetch_one_earnings_dates(stock: str):
     """Network fetch + pandas reshape only — no DB access. Mirrors the fetch/reshape
@@ -43,18 +135,38 @@ def fetch_one_earnings_dates(stock: str):
             "Reported EPS":   "reported_eps",
             "Surprise(%)":    "surprise_percentage",
         })
-        earnings_dates_df["earnings_date"] = (
+        # yfinance's index is tz-aware America/New_York and carries the ANNOUNCEMENT TIME.
+        # Phase 2: keep it. Discarding it with .dt.date is what forced every timing
+        # analysis to infer BMO/AMC from price behavior, which is circular
+        # (audit/PHASE0_AUDIT_REV2.md Q1). The calendar date is still stored exactly as
+        # before — announce_ts_ny is additive, nothing downstream of earnings_date moves.
+        announce_ts_ny = (
             pd.to_datetime(earnings_dates_df["earnings_date"])
-            .dt.tz_localize(None)
-            .dt.date
+            .dt.tz_localize(None)          # tz-aware -> NY LOCAL wall clock, kept verbatim
         )
+        earnings_dates_df["announce_ts_ny"]      = announce_ts_ny
+        earnings_dates_df["announce_ts_source"]  = ANNOUNCE_TS_SOURCE_YFINANCE
+        earnings_dates_df["earnings_date"]       = announce_ts_ny.dt.date
         earnings_dates_df["stock"]               = stock
         earnings_dates_df["fiscal_end_date"]     = None
         earnings_dates_df["surprise_percentage"] = earnings_dates_df["surprise_percentage"] / 100
         earnings_dates_df["ingested_at"]         = datetime.now()
-        earnings_dates_df = earnings_dates_df[["stock", "earnings_date", "fiscal_end_date",
-                                               "reported_eps", "estimated_eps",
-                                               "surprise_percentage", "ingested_at"]]
+        # WHEN the provider was observed saying this. A row fetched while the event is
+        # still upcoming is a schedule; one fetched afterwards is an observation. Only
+        # this column can tell them apart later, so it is written at the moment of the
+        # fetch and never inferred.
+        #
+        # In naive NEW YORK wall clock, the same convention as `announce_ts_ny`, because
+        # the refresh rule compares the two directly. `datetime.now()` would put the
+        # host's timezone into that comparison: on a UTC or Israeli box a schedule
+        # fetched hours before the announcement would read as later than it and be frozen
+        # into the historical record. `ingested_at` above keeps its own legacy
+        # machine-local convention — it is an operational column, not part of the
+        # announcement-timing comparison.
+        earnings_dates_df["announce_ts_observed_at"] = now_ny()
+        earnings_dates_df.loc[earnings_dates_df["announce_ts_ny"].isna(),
+                              "announce_ts_observed_at"] = pd.NaT
+        earnings_dates_df = earnings_dates_df[EARNINGS_INSERT_COLS]
 
         return {"stock": stock, "earnings_dates_df": earnings_dates_df, "error": None}
     except Exception as e:
@@ -130,10 +242,17 @@ def ingest_all_earnings_dates(con):
 
             df["surprise_percentage"] = df["surprise_percentage"] / 100
             df["ingested_at"] = datetime.now()
+            # AlphaVantage returns a reported DATE and no time. Left NULL — inventing a
+            # plausible hour here would put a fabricated timestamp behind a column whose
+            # whole purpose is that it was independently observed.
+            df["announce_ts_ny"] = pd.NaT
+            df["announce_ts_source"] = None
+            df["announce_ts_observed_at"] = pd.NaT
+            df = df[EARNINGS_INSERT_COLS]
 
             count_before = con.execute("SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]).fetchone()[0] #type:ignore
             con.register("tmp_earnings_df", df)
-            con.execute("INSERT OR IGNORE INTO earnings SELECT * FROM tmp_earnings_df")
+            con.execute(f"INSERT OR IGNORE INTO earnings ({_INSERT_COL_SQL}) SELECT {_INSERT_COL_SQL} FROM tmp_earnings_df")
             con.unregister("tmp_earnings_df")
             count_after = con.execute("SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]).fetchone()[0]#type:ignore
             added = count_after - count_before
@@ -245,6 +364,24 @@ def incremental_ingest_all_earnings_dates_yf(con):
                 """, [row.reported_eps, row.estimated_eps, row.surprise_percentage,
                       stock, row.earnings_date])
 
+            # Store the announcement timestamp on rows we already hold. The dedup filter
+            # below drops any date already in the DB, so without this an event ingested
+            # before Phase 2 would stay timestamp-less forever and remain permanently
+            # unresolved.
+            #
+            # This used to fill NULLs only, which froze a pre-event SCHEDULE into the
+            # historical record permanently: a date fetched while the event was upcoming
+            # kept whatever hour the provider had pencilled in, even after the provider
+            # published the real one. `refresh_announcement_timestamp` replaces a stored
+            # schedule with a later observation and still never overwrites a timestamp
+            # that was already observed after the fact.
+            for row in earnings_dates_df.itertuples(index=False):
+                if pd.isna(row.announce_ts_ny):
+                    continue
+                refresh_announcement_timestamp(
+                    con, stock, row.earnings_date, row.announce_ts_ny,
+                    row.announce_ts_source, row.announce_ts_observed_at)
+
             # fiscal_end_date is None so the DB unique index can't deduplicate — filter manually
             existing = {
                 row[0] for row in
@@ -272,7 +409,7 @@ def incremental_ingest_all_earnings_dates_yf(con):
                 "SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]
             ).fetchone()[0]
             con.register("tmp_earnings_df", earnings_dates_df)
-            con.execute("INSERT INTO earnings SELECT * FROM tmp_earnings_df")
+            con.execute(f"INSERT INTO earnings ({_INSERT_COL_SQL}) SELECT {_INSERT_COL_SQL} FROM tmp_earnings_df")
             con.unregister("tmp_earnings_df")
             count_after = con.execute(
                 "SELECT COUNT(*) FROM earnings WHERE stock = ?", [stock]

@@ -41,6 +41,18 @@ def create_earnings_table_if_not_exists(con):
         CREATE UNIQUE INDEX IF NOT EXISTS earnings_unique
         ON earnings(stock, earnings_date, fiscal_end_date);
     """)
+    # The observed announcement time, so the BMO/AMC window is a recorded fact rather
+    # than something a later analysis infers from price behavior (audit/PHASE0_AUDIT_REV2.md
+    # Q1). Naive NY LOCAL time. announce_ts_source records where it came from. NULL means
+    # "not observed" — never a default, never a guess; AlphaVantage history is date-only
+    # and stays NULL.
+    con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_ny TIMESTAMP")
+    con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_source TEXT")
+    # WHEN the provider was observed saying that time, in naive NY LOCAL time (write it
+    # with utilities.time_utilities.now_ny(), never datetime.now()). observed_at <=
+    # announce_ts_ny means the row is still a schedule and ingestion may refresh it;
+    # observed_at > announce_ts_ny means it was observed after the event and is frozen.
+    con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_observed_at TIMESTAMP")
 
 def create_sectors_data_table_if_not_exists(con):
     con.execute("""
