@@ -26,13 +26,17 @@ done*, replace it with the thing being done.
 - Production is still **0.3.1 on the legacy target**; no research result has been ported.
 - Everything is committed. Full suite: all pass, 2 Phase 1 golden tests skip (their
   snapshot predates the data).
-- Timestamp history is in both DBs: droplet 26,657 / 47,503 rows. Date corrections and the
-  IV collection fix are live on the droplet. Local DB has neither until the next sync.
-- Next, in order: sync down + rebuild the event frame → choose model B vs C → port the
+- Timestamp history is in both DBs: 26,657 / 47,503 rows. Date corrections and the IV
+  collection fix are live on the droplet and in the local DB (synced 2026-09-29 13:36 UTC;
+  full_df + events_df rebuilt: 25,987 of 45,715 completed events anchored, 56.8%).
+- The 18 "stale feed" pending events (DAY, HOLX, BK, EQR, BLDR, TTD, ...) are all
+  `inactive` in stock_data (left the index / BK renamed BNY) — not an ingest bug, but
+  they still get a pending row in the event frame.
+- Next, in order: choose model B vs C → port the
   refit (file list in `research/phase3_refit/RESULTS.md` §10) → historical options data
   for an implied-move baseline (ORATS the lead candidate; Leung & Santoli note in the brain).
-- Still open from the IV health check: live price instead of prior close; no primary key
-  on `iv_snapshots` / `eps_estimates`.
+- Still open from the IV health check: live price instead of prior close. TMO and WAT still
+  skipped for a reason other than the strike; read the new "Skipped because:" line in iv.log.
 - Housekeeping: delete the droplet `.bak_before_*` files and stray `next_earnings_df.csv`;
   the local `db/breakwater.duckdb.bak_before_timing` is a copy of the live DB, safe to delete.
 
@@ -96,8 +100,9 @@ verified replacements.
      an expiry BEFORE the real date, so that IV does not cover the event. EPS: 433 rows.
   4. 28 stocks never get an IV row (TMO, EA, BIIB, NVR, ECL, WAT, AVB, IEX, ...): no
      expiries, or a thin chain with no matching ATM put. Skip reasons are not logged.
-  5. `iv_snapshots` / `eps_estimates` have no primary key, so `ON CONFLICT DO NOTHING`
-     does nothing; idempotence relies only on the already-fetched check.
+  5. WRONG, retracted same day: both tables DO have unique indexes (`iv_snapshots_uq`,
+     `eps_estimates_uq`; they show in duckdb_indexes(), not duckdb_constraints()), so
+     `ON CONFLICT DO NOTHING` works.
 
 ## 2026-09-28 — Announcement times loaded into the droplet DB
 
