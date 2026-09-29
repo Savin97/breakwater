@@ -384,10 +384,19 @@ GOLDEN_UPCOMING_PATH = "audit/phase1_golden/upcoming_df.parquet"
 
 
 @pytest.fixture(scope="module")
-def golden_upcoming():
+def golden_upcoming(real_daily_df):
     if not os.path.exists(GOLDEN_UPCOMING_PATH):
         pytest.skip(f"{GOLDEN_UPCOMING_PATH} not present")
-    return pd.read_parquet(GOLDEN_UPCOMING_PATH).set_index("stock")
+    golden = pd.read_parquet(GOLDEN_UPCOMING_PATH)
+    # The golden is a snapshot of one day's upcoming calls. Once full_df has moved past
+    # that day, new prices legitimately change the pending flags, so the comparison only
+    # means something on the data the golden was taken from.
+    golden_asof = (pd.to_datetime(golden["earnings_date"])
+                   - pd.to_timedelta(golden["days_to_earnings"], unit="D")).max()
+    data_asof = pd.to_datetime(real_daily_df["date"]).max()
+    if data_asof.normalize() > golden_asof.normalize():
+        pytest.skip(f"golden is from {golden_asof.date()}, data runs to {data_asof.date()}")
+    return golden.set_index("stock")
 
 
 def test_pending_drift_flag_blank_beyond_60_days(real_events_df):

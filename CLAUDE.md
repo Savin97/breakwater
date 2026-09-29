@@ -8,6 +8,14 @@ At the start of every conversation, read `.claude/memory/MEMORY.md` to restore c
 
 **Memory location:** All session memory lives in `.claude/memory/` inside this repo. It syncs via git across machines and is the single source of truth. Do NOT write to the Claude harness auto-memory location (`~/.claude/projects/*/memory/`) — that path is not used for this project and will diverge.
 
+## Branches and Folders
+
+Two branches: `master` (production — the droplet runs it) and `methodology-rebuild` (the
+audit rebuild, merged into master only when the user says it is ready). One folder: this
+one. **Do not create other branches, worktrees or copies of the repo without asking.**
+Small fixes go on master; afterwards master is merged into methodology-rebuild, never the
+other way round until the rebuild is ready. The user commits; give them the `-m` message.
+
 ## External Brain
 
 Durable cross-project knowledge lives at `/home/Michael/projects/brain`.
