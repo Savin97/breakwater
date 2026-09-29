@@ -219,17 +219,35 @@ def merge_tables(con):
         """)
 
 
+def _date_evidence(announce_ts_source) -> int:
+    """How strongly a row's DATE is backed by an observed announcement.
+
+    A timestamp is only ever attached to a row whose date the provider agreed with
+    (ingestion and the seed loader both match on the exact date), so a row carrying one
+    has its date confirmed by that provider. Benzinga's confirmed dates are the most
+    reliable (audit/BENZINGA_EARNINGS_AUDIT.md); yfinance's older dates are occasionally
+    a day off. A row with no timestamp — typically AlphaVantage history, whose recent
+    report dates often run days to weeks late — has no independent backing at all.
+    """
+    if announce_ts_source is None:
+        return 0
+    return 2 if str(announce_ts_source).startswith("massive_benzinga:") else 1
+
+
 def clean_duplicate_earnings_from_db(con, window_days=30):
     """Delete duplicate earnings rows from the DB where two dates for the same stock
     fall within window_days of each other and at least one has reported_eps (confirmed
-    past event). Keeps the higher-quality row: prefers reported_eps not null, then
-    later date. Pairs where both are NULL are left alone — those are upcoming/unconfirmed
-    events handled by validate_upcoming_earnings_dates.
+    past event). Keeps the higher-quality row: prefers reported_eps not null, then —
+    when both are confirmed — the row whose date is backed by an observed announcement
+    time (see `_date_evidence`), then the later date. Pairs where both are NULL are left
+    alone — those are upcoming/unconfirmed events handled by
+    validate_upcoming_earnings_dates.
     """
     pairs = con.execute("""
         SELECT e1.stock,
                e1.earnings_date AS date1, e1.reported_eps AS eps1,
-               e2.earnings_date AS date2, e2.reported_eps AS eps2
+               e2.earnings_date AS date2, e2.reported_eps AS eps2,
+               e1.announce_ts_source AS src1, e2.announce_ts_source AS src2
         FROM earnings e1
         JOIN earnings e2
           ON e1.stock = e2.stock
@@ -242,14 +260,18 @@ def clean_duplicate_earnings_from_db(con, window_days=30):
         return
 
     to_delete = []
-    for stock, date1, eps1, date2, eps2 in pairs:
+    for stock, date1, eps1, date2, eps2, src1, src2 in pairs:
         has1, has2 = eps1 is not None, eps2 is not None
         if has1 and not has2:
             to_delete.append((stock, date2))
         elif has2 and not has1:
             to_delete.append((stock, date1))
+        elif _date_evidence(src1) > _date_evidence(src2):
+            to_delete.append((stock, date2))
+        elif _date_evidence(src2) > _date_evidence(src1):
+            to_delete.append((stock, date1))
         else:
-            to_delete.append((stock, date1))  # both confirmed — keep later date
+            to_delete.append((stock, date1))  # equal evidence — keep later date
 
     for stock, drop_date in to_delete:
         con.execute(
