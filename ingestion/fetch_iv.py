@@ -18,7 +18,8 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime, date, timedelta
-from config import DB_PATH, IV_MAX_ATM_STRIKE_DISTANCE
+from config import (DB_PATH, IV_MAX_ATM_STRIKE_DISTANCE, IV_LIVE_PRICE_RETRIES,
+                    IV_LIVE_PRICE_RETRY_WAIT_SECS)
 from utilities.time_utilities import nyse_is_open
 
 
@@ -48,13 +49,32 @@ def _already_fetched_this_hour(con) -> set:
     return set(rows["stock"].tolist())
 
 
-def _get_current_price(con, stock: str) -> float | None:
-    """Pull latest price from prices table (already updated by cron_ingest)."""
-    row = con.execute(
-        "SELECT price FROM prices WHERE stock = ? ORDER BY date DESC LIMIT 1",
-        [stock]
-    ).fetchone()
-    return float(row[0]) if row else None
+def _usable_price(price) -> float | None:
+    if price is None or pd.isna(price) or price <= 0:
+        return None
+    return float(price)
+
+
+def _live_price(ticker, chain, retries: int = IV_LIVE_PRICE_RETRIES,
+                wait_secs: float = IV_LIVE_PRICE_RETRY_WAIT_SECS) -> float | None:
+    """The stock's live price, or None if Yahoo will not give one.
+
+    First from the chain Yahoo already returned (no extra request); if that lacks it,
+    from ticker.fast_info, up to `retries` times. This used to be the last close in the
+    prices table, i.e. the PRIOR day's close for all four runs: on a day the stock
+    gapped, the ATM strike was picked off a stale price and the straddle was divided
+    by it. So there is deliberately no fallback to the stored close.
+    """
+    price = _usable_price((getattr(chain, "underlying", None) or {}).get("regularMarketPrice"))
+    for _ in range(retries):
+        if price is not None:
+            break
+        time.sleep(wait_secs)
+        try:
+            price = _usable_price(ticker.fast_info.last_price)
+        except Exception:
+            price = None
+    return price
 
 
 def _pick_atm_strike(calls: pd.DataFrame, puts: pd.DataFrame, price: float,
@@ -119,13 +139,6 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
             continue
 
         try:
-            # ── Price (from DB, no extra API call) ───────────────────────────
-            price = _get_current_price(con, stock)
-            if not price or price <= 0:
-                skipped += 1
-                skip_reasons["no_price"] += 1
-                continue
-
             # ── Options chain ────────────────────────────────────────────────
             ticker  = yf.Ticker(stock)
             expiries = ticker.options          # tuple of 'YYYY-MM-DD' strings
@@ -152,6 +165,13 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
             if calls.empty or puts.empty:
                 skipped += 1
                 skip_reasons["empty_chain"] += 1
+                continue
+
+            # ── Live price ───────────────────────────────────────────────────
+            price = _live_price(ticker, chain)
+            if price is None:
+                skipped += 1
+                skip_reasons["no_live_price"] += 1
                 continue
 
             # ── ATM strike ───────────────────────────────────────────────────

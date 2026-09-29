@@ -13,7 +13,9 @@ import duckdb
 import pandas as pd
 import pytest
 
-from ingestion.fetch_iv import _pick_atm_strike
+from types import SimpleNamespace
+
+from ingestion.fetch_iv import _live_price, _pick_atm_strike
 from utilities.db_utilities import create_iv_table_if_not_exists, join_iv
 from utilities.time_utilities import nyse_is_open
 
@@ -66,6 +68,47 @@ def test_strike_too_far_from_price_is_not_at_the_money():
 
 def test_no_common_strike():
     assert _pick_atm_strike(_chain([100.0]), _chain([110.0]), price=100.0) is None
+
+
+# ── Live price ────────────────────────────────────────────────────────────────
+
+class _Ticker:
+    """Stands in for yf.Ticker: fast_info.last_price answers from a list, one per call."""
+    def __init__(self, answers):
+        self.answers, self.calls = list(answers), 0
+
+    @property
+    def fast_info(self):
+        self.calls += 1
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return SimpleNamespace(last_price=answer)
+
+
+def test_price_is_the_chains_live_price():
+    # TMO 2026-09-29 11:00 EDT: live 672.12 while the stored prior close was 678.60.
+    chain = SimpleNamespace(underlying={"regularMarketPrice": 672.12,
+                                        "regularMarketPreviousClose": 678.6})
+    ticker = _Ticker([])
+    assert _live_price(ticker, chain, wait_secs=0) == 672.12
+    assert ticker.calls == 0  # no extra request when the chain has it
+
+
+@pytest.mark.parametrize("underlying", [None, {}, {"regularMarketPrice": None},
+                                        {"regularMarketPrice": 0.0},
+                                        {"regularMarketPrice": float("nan")}])
+def test_chain_without_a_price_is_retried(underlying):
+    ticker = _Ticker([ConnectionError("reset"), 671.5])
+    assert _live_price(ticker, SimpleNamespace(underlying=underlying),
+                       retries=2, wait_secs=0) == 671.5
+    assert ticker.calls == 2
+
+
+def test_gives_up_after_the_retries_and_never_uses_a_stale_price():
+    ticker = _Ticker([None, 0.0, 999.0])
+    assert _live_price(ticker, SimpleNamespace(underlying={}), retries=2, wait_secs=0) is None
+    assert ticker.calls == 2
 
 
 # ── Read filter: expiry must cover the real earnings date ─────────────────────
