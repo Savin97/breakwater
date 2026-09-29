@@ -16,13 +16,13 @@ one. **Do not create other branches, worktrees or copies of the repo without ask
 Small fixes go on master; afterwards master is merged into methodology-rebuild, never the
 other way round until the rebuild is ready. The user commits; give them the `-m` message.
 
-## External Brain
+## Brain
 
-Durable cross-project knowledge lives at `/home/Michael/projects/brain`.
-
-Use the external brain for source-backed research notes, durable decisions, project maps, and concepts that should persist across Breakwater, Polymarket, and musicology work. Keep `.claude/memory/` for Breakwater session continuity and immediate handoff notes.
-
-Before doing architecture work, research synthesis, model-evaluation planning, or durable documentation, check `/home/Michael/projects/brain/projects/breakwater.md` and relevant notes under `/home/Michael/projects/brain/wiki/`.
+`/home/Michael/projects/brain`: the user's cross-project research notes (papers, finance
+concepts). When reading or adding to it would help (a research question, a paper or
+finding worth keeping), suggest it to the user — don't use it unasked. Example: it holds
+Leung & Santoli (2014) on the options-implied earnings jump, relevant to testing Breakwater
+against the implied move.
 
 ## What This Is
 
@@ -70,7 +70,7 @@ Rules that follow from it:
 ## Commands
 
 ```bash
-# Run the full pipeline (see the incremental note under Stage 1 before running)
+# Run the full pipeline (ingests via yfinance, then scores and writes reports)
 python main.py
 
 # Re-score WITHOUT re-ingesting — no API calls, uses the existing DuckDB.
@@ -95,8 +95,8 @@ python -m analysis.predictions_range --monday 2026-06-01 --weeks 3
 # Ad-hoc feature/score testing
 python -m testing.testing
 
-# Run tests
-pytest testing/test_pipeline.py
+# Run the whole test suite
+pytest testing
 ```
 
 The project uses a `.venv` (Python 3.14). Activate with `source .venv/bin/activate` or prefix commands with `.venv/bin/python`.
@@ -107,18 +107,18 @@ The project uses a `.venv` (Python 3.14). Activate with `source .venv/bin/activa
 
 | Stage | File | What it does |
 |---|---|---|
-| 1 | `pipeline/stage1.py` | Creates/updates DuckDB at `db/breakwater.duckdb`. **Both settings ingest — the flag picks the provider.** `incremental=True` uses the free yfinance fetchers (`incremental_ingest_all_prices_yf`, `incremental_ingest_all_earnings_dates_yf`). `incremental=False` uses the legacy AlphaVantage full-history fetchers, which **require a paid AlphaVantage key**. `main.py` currently passes `incremental=False`. To re-score without ingesting at all, skip stage 1 entirely (see Commands). |
+| 1 | `pipeline/stage1.py` | Creates/updates DuckDB at `db/breakwater.duckdb`. **Both settings ingest — the flag picks the provider.** `incremental=True` uses the free yfinance fetchers (`incremental_ingest_all_prices_yf`, `incremental_ingest_all_earnings_dates_yf`). `incremental=False` uses the legacy AlphaVantage full-history fetchers, which **require a paid AlphaVantage key**. `main.py` passes `incremental=True`. To re-score without ingesting at all, skip stage 1 entirely (see Commands). |
 | 2 | `pipeline/stage2.py` | Reads `prices`, `earnings`, `stock_data` tables from DB; merges into a single DataFrame. Also dedups earnings and asserts data freshness. |
-| 3 | `pipeline/stage3.py` | Calls ~20 feature-engineering functions in sequence; each appends columns and returns the df. `incremental=True` recomputes only price-dependent rolling features and reads expanding earnings stats from `config.INCREMENTAL_CACHED_COLS`. |
-| 4 | `pipeline/stage4.py` | Calls the risk-scoring functions; produces `risk_score` (0–100), `earnings_explosiveness_bucket`, and component scores. `incremental=True` skips everything needing `abs_reaction_3d`. |
+| 3 | `pipeline/stage3.py` | Calls ~20 feature-engineering functions in sequence; each appends columns and returns the df. Its `incremental=True` mode (price features only, earnings stats from `config.INCREMENTAL_CACHED_COLS`) is dead code: `run_pipeline` never passes the flag past stage 1. |
+| 4 | `pipeline/stage4.py` | Calls the risk-scoring functions; produces `risk_score` (0–100), `earnings_explosiveness_bucket`, and component scores. Its `incremental=True` mode is likewise never called. |
 | 4b | `pipeline/events.py` | Builds the **event frame** — one row per earnings event, every completed event plus one pending row per stock — attaches verified announcement timing, and asserts completed-event parity against the daily frame. Written to `output/events_df.parquet`. |
-| 5 | `pipeline/stage5.py` | Writes `output/full_df.parquet`, then generates PDF reports, the weekly calendar, charts, the public track record, the Streamlit export, and a predictions snapshot. |
+| 5 | `pipeline/stage5.py` | Writes `output/full_df.parquet`, then generates PDF reports, the weekly calendar, charts, the public track record (paused under P4.3 — it returns without writing), the Streamlit export, and a predictions snapshot. |
 
-The intermediate output between stages is a pandas DataFrame. Stage 3 and 4 functions all follow the same pattern: accept `input_df`, copy it, add columns, return it — never mutate in place.
+The intermediate output between stages is a pandas DataFrame. Stage 3 and 4 functions all follow the same pattern: accept `input_df`, add columns, return it. The copy happens once at each stage's entry (`stage3_df = stage2_df.copy()`), not per function, so a function must never be called on a frame another stage still needs.
 
 ## Data Storage
 
-- **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price)`, `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage, announce_ts_ny, announce_ts_source)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
+- **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price)`, `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage, ingested_at, announce_ts_ny, announce_ts_source, announce_ts_observed_at)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
 - **Parquet** (`output/full_df.parquet`): the fully engineered + scored DataFrame, written at the top of stage 5. This is the source of truth for backtesting, calibration, and reporting.
 - **Parquet** (`output/streamlit_df.parquet`, `output/upcoming_df.parquet`): produced by `streamlit_dash/streamlit_export.py`; consumed by the Streamlit app.
 - **Parquet** (`output/events_df.parquet`, ~15 MB): the event frame. One row per earnings event; `is_pending == 0` is history, `is_pending == 1` is the upcoming call. Every forward-looking consumer reads this, never `groupby("stock").last()`.
@@ -171,8 +171,8 @@ window, and a BMO event missing its D−1 row anchors to D−2 — and the arith
 returns a number. The legacy columns do exactly this and are deliberately left alone; the
 corrected target refuses and says which session it was missing. So an AMC anchored
 reaction is bit-identical to the legacy one **wherever the ticker has a row on every
-session in the window** (4,832 of 4,842 AMC events); the 10 that differ are all missing
-sessions and are enumerated in `audit/PHASE2_DIAGNOSTICS.md` §5. That equality is the
+session in the window**; the AMC events that differ are all missing sessions, enumerated
+in `audit/PHASE2_DIAGNOSTICS.md` §5 (10 of 4,842 on the Phase 2 data). That equality is the
 control.
 
 Rules that must not be relaxed:
@@ -189,10 +189,9 @@ Rules that must not be relaxed:
 - **Only `resolved_events()` may feed a corrected calibration**, and "anchor resolved" is
   not "target available". `anchor_resolved_events()` is the anchoring control slice;
   `resolved_events(events, target=...)` additionally requires that anchored outcome to be
-  non-null and defaults to `abs_reaction_3d_anchored`. On the Phase 2 data that was
-  11,417 resolved anchors → 11,412 with a 3d target → 11,410 also carrying the legacy
-  column for a paired comparison; after the Benzinga seed it is 25,883 anchors → 25,879
-  with a 3d target. The diagnostics §3 accounts for every step on whatever DB it is run on.
+  non-null and defaults to `abs_reaction_3d_anchored`. After the Benzinga seed that is
+  25,883 resolved anchors → 25,879 with a 3d target. The diagnostics §3 accounts for every
+  step on whatever DB it is run on.
 - **A pre-event timestamp is a schedule, not a record.** A timestamp observed while the
   event was still upcoming may be corrected later, so ingestion refreshes it when a newer
   observation arrives (`refresh_announcement_timestamp`). A timestamp observed *after* the
@@ -240,7 +239,7 @@ is the artifact to read before doing anything with it.
 `backfills/build_announcement_seed.py` turned snapshot `earnings_20260910T180412Z` into
 `data/vendor/announcement_seed_earnings_20260910T180412Z.parquet` (25,515 Benzinga
 exact-date rows + 1,028 audit/yfinance fallback; skips 214 off-by-one dates and 21
-identity-hazard tickers), and `backfills/load_announcement_seed.py` (on master) loaded it
+identity-hazard tickers), and `backfills/load_announcement_seed.py` loaded it
 into the **droplet** DB, which then syncs down. The loader is idempotent. No pipeline stage
 calls Benzinga or reads the vendor files; ingestion keeps timestamps current from yfinance.
 Load on the droplet, never locally — `full_workflow.sh` overwrites the local DB with the
@@ -380,7 +379,7 @@ Thresholds are in `config.py`: `LARGE_EARNINGS_REACTION_THRESHOLD = 0.05`,
 - `STOCKS_START_DATE / STOCKS_END_DATE`: date range for price data
 - `DEFAULT_REACTION_WINDOW`: `"reaction_3d"` — the primary reaction metric
 - `PRICES_PROVIDER`: `"ALPHAVANTAGE"` — only used by the legacy `incremental=False` ingestion path, which needs a paid key. The yfinance path (`incremental=True`) ignores it and is the one in routine use; its knobs are `YFINANCE_MAX_WORKERS` and the jitter settings.
-- `INCREMENTAL_CACHED_COLS`: expanding earnings stats read from the previous `full_df.parquet` in incremental mode instead of recomputed. Anything needing `abs_reaction_3d` must be listed here, or it will be silently missing on incremental runs.
+- `INCREMENTAL_CACHED_COLS`: expanding earnings stats the (currently uncalled) incremental scoring path reads from the previous `full_df.parquet`. If that path is ever revived: anything aggregating over a stock's earnings history must be listed, or it will be silently missing — the drift flag broke exactly this way.
 
 ## Backtesting
 

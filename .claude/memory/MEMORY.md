@@ -276,7 +276,8 @@ in CLAUDE.md. Things a successor must not undo:
 - Parallel fetches: network work in a thread pool, DB writes stay sequential (DuckDB
   connections aren't thread-safe). 11.7x faster. If SSL resets cluster, drop
   `YFINANCE_MAX_WORKERS` to 4-5.
-- **Gotcha:** `main.py` runs `incremental=False` = the paid AlphaVantage path.
+- The note here that `main.py` runs `incremental=False` (the paid path) was already wrong:
+  it has passed `incremental=True` (yfinance) since `117ee16`, 2026-08-15. Corrected 2026-09-29.
 - User preference: constants go in config.py with clear names.
 
 ## 2026-08-02 → 08-28 — Droplet cron incidents (from infra notes)
