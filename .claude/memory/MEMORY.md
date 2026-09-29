@@ -18,21 +18,23 @@ done*, replace it with the thing being done.
   (tickers, scores, outcomes) explained the score-ceiling problem instantly after
   several paragraphs of AUCs and confidence intervals had not.
 
-## Current state — updated 2026-09-29
+## Current state — updated 2026-09-29 (end of session)
 
-- Branch `methodology-rebuild`. Production is still **0.3.1 on the legacy target**; no
-  research result has been ported.
-- **Uncommitted here:** `backfills/` (build_announcement_seed.py, build_date_corrections.py),
-  `research/phase3_refit/`, `testing/test_build_announcement_seed.py`,
-  `testing/test_build_date_corrections.py`, `testing/test_phase3_refit.py`. All 33 tests pass.
-- Timestamp history is in both DBs: droplet 26,657 / 47,503 rows (2026-09-29).
-- Date corrections DONE on the droplet (master 83b9fbe). Local DB still has the old
-  dates until the next sync.
-- Next, in order: commit the tooling → sync down + rebuild event frame
-  → choose model B vs C → port the refit (file list in `research/phase3_refit/RESULTS.md` §10)
-  → historical options data for an implied-move baseline (ORATS is the lead candidate).
-- Housekeeping: delete the droplet `.bak_before_*` files; the local
-  `db/breakwater.duckdb.bak_before_timing` is byte-identical to the live DB, not a real backup.
+- Two branches, one folder: `master` (production, droplet) and `methodology-rebuild` (the
+  rebuild, NOT ready to merge — user's call). Master was merged into the rebuild on
+  2026-09-29 (`fc5c2d2`); keep doing that after fixes on master, never the reverse yet.
+- Production is still **0.3.1 on the legacy target**; no research result has been ported.
+- Everything is committed. Full suite: all pass, 2 Phase 1 golden tests skip (their
+  snapshot predates the data).
+- Timestamp history is in both DBs: droplet 26,657 / 47,503 rows. Date corrections and the
+  IV collection fix are live on the droplet. Local DB has neither until the next sync.
+- Next, in order: sync down + rebuild the event frame → choose model B vs C → port the
+  refit (file list in `research/phase3_refit/RESULTS.md` §10) → historical options data
+  for an implied-move baseline (ORATS the lead candidate; Leung & Santoli note in the brain).
+- Still open from the IV health check: live price instead of prior close; no primary key
+  on `iv_snapshots` / `eps_estimates`.
+- Housekeeping: delete the droplet `.bak_before_*` files and stray `next_earnings_df.csv`;
+  the local `db/breakwater.duckdb.bak_before_timing` is a copy of the live DB, safe to delete.
 
 ## Retracted figures — do not reuse
 
@@ -43,6 +45,22 @@ history reads straight. `audit/PHASE0_AUDIT_REV2.md` is the authority; CLAUDE.md
 verified replacements.
 
 ---
+
+## 2026-09-29 — Repo cleanup: memory, branches, IV fix
+
+- Memory folded from 1,304 lines + 7 side files into this one file (dated entries kept).
+- Deleted branches `announce-timing-on-master`, `fix-earnings-dates` and the
+  `breakwater-ivfix` worktree. CLAUDE.md now has the two-branch rule and makes the brain
+  suggest-only.
+- IV fix on master (`26b9ef8`): no runs when NYSE is closed, ATM strike quoted on both
+  sides within 10% of price, skip reasons logged, `join_iv` drops snapshots whose expiry
+  precedes the current earnings date (745 of 21,331 rows). Deleted 408 Labor Day rows on
+  the droplet (backup parquet in its `backfills/`); it had no Juneteenth rows.
+- Merge conflict notes: kept the rebuild's `load_announcement_timing`; the vendor guard
+  test now allows exactly the `'massive_benzinga:'` provenance label (master's date
+  cleanup compares it).
+- CLAUDE.md corrections: `main.py` runs `incremental=True` (since 2026-08-15); stage 3/4
+  incremental modes are dead code; functions don't copy their input.
 
 ## 2026-09-29 — Late earnings dates corrected on the droplet
 
