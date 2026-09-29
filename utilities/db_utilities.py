@@ -442,13 +442,24 @@ def join_iv(df, con):
     """Join implied-volatility readings onto df by stock and date.
 
     NaN for rows dated before IV collection began.
+
+    Only snapshots whose option expiry falls after the stock's next earnings date as
+    the earnings table records it NOW. A snapshot picks the first expiry after the
+    earnings date known on the day; when that date later moves (MU was collected
+    against Sep 23 with a Sep 25 expiry, then reported Sep 30), the snapshot priced
+    ordinary volatility rather than the earnings event. Checking against the current
+    table drops those automatically once the date is corrected.
     """
     iv_df = con.execute("""
-        SELECT DISTINCT ON (stock, snapshot_date)
-               stock, expected_move_pct, atm_iv,
-               snapshot_date AS iv_snapshot_date
-        FROM iv_snapshots
-        ORDER BY stock, snapshot_date, snapshot_hour DESC
+        SELECT DISTINCT ON (i.stock, i.snapshot_date)
+               i.stock, i.expected_move_pct, i.atm_iv,
+               i.snapshot_date AS iv_snapshot_date
+        FROM iv_snapshots i
+        WHERE i.expiry_used > (
+            SELECT MIN(e.earnings_date) FROM earnings e
+            WHERE e.stock = i.stock AND e.earnings_date > i.snapshot_date
+        )
+        ORDER BY i.stock, i.snapshot_date, i.snapshot_hour DESC
     """).fetch_df()
     return join_dfs_by_stock_and_date(
         df, iv_df, "iv_snapshot_date", ["expected_move_pct", "atm_iv"]

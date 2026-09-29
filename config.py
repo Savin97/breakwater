@@ -50,6 +50,10 @@ BUCKET_HIGH_ALERT_FLOOR = 79
 LIFT_PRIOR_STRENGTH     = 20
 LIFT_TO_ELEVATED        = 1.5
 LIFT_TO_HIGH_ALERT      = 3.0
+# IV snapshots: the strike used as "at the money" must be within this fraction of the price.
+# Yahoo sometimes returns a thin chain (a handful of strikes), and the nearest strike it
+# offers can be far from the money — SPGI at $404 was recorded against a $445 strike.
+IV_MAX_ATM_STRIKE_DISTANCE = 0.10
 EARNINGS_DATE_VALIDATION_WINDOW_DAYS = 20 # How far ahead to cross-check unconfirmed earnings dates against ticker.calendar
 EARNINGS_RECHECK_WINDOW_DAYS = 14 # Stocks reporting within this many days are always re-fetched, so a wrong estimated date can still self-correct
 # A stock is normally skipped once its next earnings date is far out. That also stopped us
