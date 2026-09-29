@@ -54,6 +54,10 @@ LIFT_TO_HIGH_ALERT      = 3.0
 # Yahoo sometimes returns a thin chain (a handful of strikes), and the nearest strike it
 # offers can be far from the money — SPGI at $404 was recorded against a $445 strike.
 IV_MAX_ATM_STRIKE_DISTANCE = 0.10
+# IV snapshots: when the options chain comes back without the stock's live price, ask Yahoo
+# for it separately this many times, waiting this long before each try, before skipping.
+IV_LIVE_PRICE_RETRIES = 2
+IV_LIVE_PRICE_RETRY_WAIT_SECS = 2.0
 EARNINGS_DATE_VALIDATION_WINDOW_DAYS = 20 # How far ahead to cross-check unconfirmed earnings dates against ticker.calendar
 EARNINGS_RECHECK_WINDOW_DAYS = 14 # Stocks reporting within this many days are always re-fetched, so a wrong estimated date can still self-correct
 # A stock is normally skipped once its next earnings date is far out. That also stopped us
