@@ -35,8 +35,7 @@ done*, replace it with the thing being done.
 - Next, in order: choose model B vs C → port the
   refit (file list in `research/phase3_refit/RESULTS.md` §10) → historical options data
   for an implied-move baseline (ORATS the lead candidate; Leung & Santoli note in the brain).
-- Still open from the IV health check: live price instead of prior close. TMO and WAT still
-  skipped for a reason other than the strike; read the new "Skipped because:" line in iv.log.
+- IV live-price fix (`8fcf3b7`): check it's pulled on the droplet and that iv.log looks right.
 - Housekeeping DONE 2026-09-29: droplet .bak files, stray CSV and local bak deleted; Labor
   Day IV backup moved to droplet /root/iv_rows_on_closed_days_20260929_130616.parquet.
 
@@ -49,6 +48,12 @@ history reads straight. `audit/PHASE0_AUDIT_REV2.md` is the authority; CLAUDE.md
 verified replacements.
 
 ---
+
+## 2026-09-29 — IV snapshots use the live price (master 8fcf3b7)
+
+- Was using the prior close all day. Now the live price from the options chain, retried
+  via `fast_info`, else skip. **Never fall back to the stored close.**
+- TMO/WAT were skipped by the old strike rule (holes in Yahoo's put list); fixed.
 
 ## 2026-09-29 — Repo cleanup: memory, branches, IV fix
 
