@@ -71,3 +71,25 @@ def to_ny_wall_clock(dt: datetime) -> datetime:
 def utc_to_ny_wall_clock(dt: datetime) -> datetime:
     """Render a naive UTC instant as naive New York wall clock."""
     return dt.replace(tzinfo=timezone.utc).astimezone(NY_TZ).replace(tzinfo=None)
+
+
+def nyse_is_open(at: datetime | None = None) -> bool:
+    """True if the NYSE regular session is open at instant `at` (tz-aware; default now).
+
+    Uses the exchange calendar, so holidays (Labor Day 2026-09-07 was collected as if it
+    were a trading day) and early closes (13:00 ET the day after Thanksgiving, when an
+    18:00 UTC run would read post-close quotes) both count as closed. The comparison is
+    between absolute instants, so the host's timezone plays no part.
+    """
+    import pandas as pd
+    import pandas_market_calendars as mcal
+
+    ts = pd.Timestamp(at if at is not None else datetime.now(timezone.utc))
+    if ts.tzinfo is None:
+        raise ValueError("nyse_is_open needs a tz-aware instant")
+    ts = ts.tz_convert("UTC")
+    day = ts.tz_convert(NY_TZ).date()
+    schedule = mcal.get_calendar("NYSE").schedule(start_date=day, end_date=day)
+    if schedule.empty:
+        return False
+    return bool(schedule["market_open"].iloc[0] <= ts < schedule["market_close"].iloc[0])

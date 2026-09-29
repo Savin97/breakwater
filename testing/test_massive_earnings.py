@@ -458,8 +458,12 @@ def test_no_production_module_depends_on_a_raw_vendor_file():
     `audit/provider_timestamps.parquet`."""
     needles = ["vendor/", "research.massive", "research/massive", "massive.com",
                "benzinga", "MASSIVE_API_KEY"]
+    # The one sanctioned mention: the `announce_ts_source` value the seed wrote into the
+    # earnings table. Comparing a stored provenance label reads the DB, not a vendor file
+    # (the duplicate-date cleanup prefers Benzinga-timed rows this way).
+    provenance_label = "'massive_benzinga:'"  # ast.unparse quotes strings with '
     for f in _python_files(*(REPO / d for d in PRODUCTION_DIRS if (REPO / d).is_dir())):
-        source = _code_only(f).lower()
+        source = _code_only(f).lower().replace(provenance_label, "")
         for needle in needles:
             assert needle.lower() not in source, f"{f} references {needle!r}"
 

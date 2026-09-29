@@ -13,11 +13,13 @@ Not wired into stage1 — run separately via cron/cron_iv.py.
 """
 import time
 import warnings
+from collections import Counter
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime, date, timedelta
-from config import DB_PATH
+from config import DB_PATH, IV_MAX_ATM_STRIKE_DISTANCE
+from utilities.time_utilities import nyse_is_open
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -55,6 +57,24 @@ def _get_current_price(con, stock: str) -> float | None:
     return float(row[0]) if row else None
 
 
+def _pick_atm_strike(calls: pd.DataFrame, puts: pd.DataFrame, price: float,
+                     max_distance: float = IV_MAX_ATM_STRIKE_DISTANCE) -> float | None:
+    """The strike nearest the price among strikes quoted on BOTH sides, or None.
+
+    Picking from calls alone skipped the stock whenever Yahoo's put list lacked that
+    exact strike, which on a thin chain was most of the time (TMO, BIIB, WAT, ... never
+    got a row). None also when even the best common strike is more than max_distance
+    from the price: that is not an at-the-money reading.
+    """
+    common = pd.Series(sorted(set(calls["strike"]) & set(puts["strike"])), dtype=float)
+    if common.empty:
+        return None
+    strike = float(common.iloc[(common - price).abs().idxmin()])
+    if abs(strike / price - 1) > max_distance:
+        return None
+    return strike
+
+
 # ── Main ingestion ────────────────────────────────────────────────────────────
 
 def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
@@ -62,6 +82,11 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
     Fetch IV snapshots for all stocks with earnings within days_ahead days.
     Idempotent: skips stocks already fetched today.
     """
+    if not nyse_is_open():
+        print("NYSE is closed right now (holiday, weekend, early close or outside hours) "
+              "— quotes would be stale, so no IV snapshot is taken.")
+        return
+
     today   = date.today()
     now     = datetime.now()
     hour    = now.hour
@@ -78,6 +103,7 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
     print(f"Already fetched today: {len(done)}  |  To fetch: {len(todo)}")
 
     inserted, skipped, failed = 0, 0, 0
+    skip_reasons = Counter()
     rows = []
 
     warnings.filterwarnings("ignore")
@@ -89,6 +115,7 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
 
         if days_to_earn == 0:
             skipped += 1
+            skip_reasons["reports_today"] += 1
             continue
 
         try:
@@ -96,6 +123,7 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
             price = _get_current_price(con, stock)
             if not price or price <= 0:
                 skipped += 1
+                skip_reasons["no_price"] += 1
                 continue
 
             # ── Options chain ────────────────────────────────────────────────
@@ -103,6 +131,7 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
             expiries = ticker.options          # tuple of 'YYYY-MM-DD' strings
             if not expiries:
                 skipped += 1
+                skip_reasons["no_expiries"] += 1
                 continue
 
             expiry_dates = pd.to_datetime(list(expiries))
@@ -110,6 +139,7 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
             valid = expiry_dates[expiry_dates > pd.Timestamp(earnings_date)]
             if valid.empty:
                 skipped += 1
+                skip_reasons["no_expiry_after_earnings"] += 1
                 continue
 
             expiry     = valid.min()
@@ -121,18 +151,18 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
 
             if calls.empty or puts.empty:
                 skipped += 1
+                skip_reasons["empty_chain"] += 1
                 continue
 
             # ── ATM strike ───────────────────────────────────────────────────
-            atm_idx    = (calls["strike"] - price).abs().idxmin()
-            atm_strike = float(calls.loc[atm_idx, "strike"])
+            atm_strike = _pick_atm_strike(calls, puts, price)
+            if atm_strike is None:
+                skipped += 1
+                skip_reasons["no_atm_strike"] += 1
+                continue
 
             atm_call = calls[calls["strike"] == atm_strike]
             atm_put  = puts[puts["strike"] == atm_strike]
-
-            if atm_call.empty or atm_put.empty:
-                skipped += 1
-                continue
 
             # ── IVs ──────────────────────────────────────────────────────────
             call_iv = atm_call["impliedVolatility"].values[0]
@@ -140,6 +170,7 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
 
             if pd.isna(call_iv) or pd.isna(put_iv):
                 skipped += 1
+                skip_reasons["no_iv"] += 1
                 continue
 
             atm_iv = (call_iv + put_iv) / 2.0
@@ -153,6 +184,7 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
             # Guard against stale/zero quotes
             if call_ask <= 0 or put_ask <= 0:
                 skipped += 1
+                skip_reasons["zero_ask"] += 1
                 continue
 
             call_mid = (call_bid + call_ask) / 2.0
@@ -198,3 +230,5 @@ def ingest_iv_snapshots(con, days_ahead: int = 45, sleep_secs: float = 0.5):
         con.unregister("tmp_iv")
 
     print(f"\nIV snapshots done.  inserted={inserted}  skipped={skipped}  failed={failed}")
+    if skip_reasons:
+        print("Skipped because: " + ", ".join(f"{k}={v}" for k, v in skip_reasons.most_common()))
