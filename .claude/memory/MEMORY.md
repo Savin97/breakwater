@@ -37,8 +37,8 @@ done*, replace it with the thing being done.
   for an implied-move baseline (ORATS the lead candidate; Leung & Santoli note in the brain).
 - Still open from the IV health check: live price instead of prior close. TMO and WAT still
   skipped for a reason other than the strike; read the new "Skipped because:" line in iv.log.
-- Housekeeping: delete the droplet `.bak_before_*` files and stray `next_earnings_df.csv`;
-  the local `db/breakwater.duckdb.bak_before_timing` is a copy of the live DB, safe to delete.
+- Housekeeping DONE 2026-09-29: droplet .bak files, stray CSV and local bak deleted; Labor
+  Day IV backup moved to droplet /root/iv_rows_on_closed_days_20260929_130616.parquet.
 
 ## Retracted figures — do not reuse
 
