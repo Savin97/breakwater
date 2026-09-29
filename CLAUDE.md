@@ -44,10 +44,13 @@ Rules that follow from it:
 
 - **Quote the stratified lift, never the crude one.** The crude-vs-stratified gap is
   composition, not model skill (audit §Q2). Reporting AMC alone is worth 1.42x with no model.
-- **There is no 15-year and no 2015–2025 out-of-sample record.** Verified timestamps cover
-  25.4% of scored events and reach back only to ~2020 for most tickers (audit §Q3 coverage
-  constraint). Nothing above is out-of-sample: the 73/79 cuts were selected on this
-  distribution and are being re-fit.
+- **There is no 15-year and no 2015–2025 out-of-sample record.** The figures above were
+  measured when verified timestamps covered 25.4% of scored events and reached back only to
+  ~2020 for most tickers (audit §Q3 coverage constraint). Nothing above is out-of-sample: the
+  73/79 cuts were selected on this distribution and are being re-fit. Coverage has since
+  grown (see the Benzinga section), but that does not change these figures or license new
+  ones — a figure measured on the wider history is a Phase 3 result and needs the same
+  scrutiny.
 - **The demonstrated edge is 1.87x within AMC and unestablished within BMO** (audit §Q3). On
   BMO, 96.0% of events are `Normal` and `Normal` lift is 0.94x.
 - **Anything downstream of `stock_bucket_lift` is suppressed, not printed.** The whole feature
@@ -170,16 +173,18 @@ Rules that must not be relaxed:
   because its day-0 move exceeded its day-+1 move) and every "corrected" number it produced
   was circular. `test_6_the_classifier_never_touches_price` enforces this statically.
 - **Never fabricate a timestamp.** The AlphaVantage date-only history stays NULL and its
-  events stay unresolved. 25.0% of completed events are resolved; the rest are counted, not
-  guessed at.
+  events stay unresolved. Since the 2026-09-28 Benzinga seed, 25,883 of 45,713 completed
+  events (56.6%) are resolved — ~90%+ of each year from 2013, none before 2011; the rest are
+  counted, not guessed at.
 - **Never auto-roll a non-trading-day date.** A weekend/holiday date and a date the market
   traded but we failed to ingest have different causes; rolling hides both (§Q6).
 - **Only `resolved_events()` may feed a corrected calibration**, and "anchor resolved" is
   not "target available". `anchor_resolved_events()` is the anchoring control slice;
   `resolved_events(events, target=...)` additionally requires that anchored outcome to be
-  non-null and defaults to `abs_reaction_3d_anchored`. On the current data that is
+  non-null and defaults to `abs_reaction_3d_anchored`. On the Phase 2 data that was
   11,417 resolved anchors → 11,412 with a 3d target → 11,410 also carrying the legacy
-  column for a paired comparison; every step is accounted for in the diagnostics §3.
+  column for a paired comparison; after the Benzinga seed it is 25,883 anchors → 25,879
+  with a 3d target. The diagnostics §3 accounts for every step on whatever DB it is run on.
 - **A pre-event timestamp is a schedule, not a record.** A timestamp observed while the
   event was still upcoming may be corrected later, so ingestion refreshes it when a newer
   observation arrives (`refresh_announcement_timestamp`). A timestamp observed *after* the
@@ -201,11 +206,13 @@ Rules that must not be relaxed:
   holds on any host, and a row is frozen only if it was post-event under *every* possible
   host timezone. The residual error therefore only ever runs toward "still a schedule",
   which a later correctly-stamped observation repairs; a false post-event classification
-  would be permanent. Every `announce_ts_observed_at` currently in the DB came from the
-  backfill's fixed pull date, so no stored row carries a host-local stamp.
-- `audit/provider_timestamps.parquet` is **evidence, not a runtime input**. It seeded
-  `earnings.announce_ts_ny` once via `scripts/backfill_announcement_timestamps.py`;
-  ingestion keeps the column current from there. A test asserts no `pipeline/` module reads it.
+  would be permanent. Every `announce_ts_observed_at` currently in the DB came from a
+  seed's fixed pull date (2026-09-05 audit, 2026-09-10 Benzinga) or from `now_ny()`, so no
+  stored row carries a host-local stamp.
+- **Seeds are evidence, not runtime inputs.** `audit/provider_timestamps.parquet` seeded
+  `earnings.announce_ts_ny` first via `scripts/backfill_announcement_timestamps.py`; the
+  Benzinga seed (below) superseded most of it. Ingestion keeps the column current from
+  there. A test asserts no `pipeline/` module reads either file.
 
 ```bash
 # one-time seed of the audit timestamps into the DB (idempotent)
@@ -215,12 +222,21 @@ PYTHONPATH=. .venv/bin/python scripts/backfill_announcement_timestamps.py [--dry
 PYTHONPATH=. .venv/bin/python -m audit.phase2_diagnostics
 ```
 
-## Candidate Timing Source: Massive / Benzinga (`research/massive/`, evaluation only)
+## Historical Timing Source: Massive / Benzinga (`research/massive/`, `backfills/`)
 
-An evaluation of the Benzinga Earnings API as Breakwater's **historical announcement-timing
-source**. It is not ingested, not wired to any pipeline stage, and not a decision that has
-been taken — the verdict is **ACCEPT WITH CONDITIONS** in `audit/BENZINGA_EARNINGS_AUDIT.md`,
-which is the artifact to read before doing anything with it.
+The Benzinga Earnings API is Breakwater's **historical announcement-timing source**. The
+evaluation verdict is **ACCEPT WITH CONDITIONS** in `audit/BENZINGA_EARNINGS_AUDIT.md`, which
+is the artifact to read before doing anything with it.
+
+**How it reaches production — once, as a seed, never as a feed.** On 2026-09-28
+`backfills/build_announcement_seed.py` turned snapshot `earnings_20260910T180412Z` into
+`data/vendor/announcement_seed_earnings_20260910T180412Z.parquet` (25,515 Benzinga
+exact-date rows + 1,028 audit/yfinance fallback; skips 214 off-by-one dates and 21
+identity-hazard tickers), and `backfills/load_announcement_seed.py` (on master) loaded it
+into the **droplet** DB, which then syncs down. The loader is idempotent. No pipeline stage
+calls Benzinga or reads the vendor files; ingestion keeps timestamps current from yfinance.
+Load on the droplet, never locally — `full_workflow.sh` overwrites the local DB with the
+droplet's.
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m research.massive.acquire      # immutable raw snapshot
@@ -371,7 +387,8 @@ absolute numbers are optimistically biased.
 The train/test split convention used in `testing/testing.py`: pre-2015 = train, post-2015 = OOS test.
 
 **This split does not license an out-of-sample performance claim.** It runs on the legacy
-`abs_reaction_3d` target for all years, and verified announcement timestamps — the only basis
-on which the target is known to be correctly anchored — reach back only to about 2020 for most
-tickers (audit §Q3, "Coverage constraint"). The retired "consistent 2015–2025 OOS" line in
+`abs_reaction_3d` target for all years, which is wrong for BMO events. Verified announcement
+timestamps — the only basis on which the target is known to be correctly anchored — now
+cover ~90% of each year from 2013 (Benzinga seed), but nothing in this module uses the
+anchored target (audit §Q3, "Coverage constraint"). The retired "consistent 2015–2025 OOS" line in
 `readme.md` came from reading this convention as a published record. Do not do that again.
