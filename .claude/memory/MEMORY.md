@@ -18,23 +18,33 @@ done*, replace it with the thing being done.
   (tickers, scores, outcomes) explained the score-ceiling problem instantly after
   several paragraphs of AUCs and confidence intervals had not.
 
-## Current state — updated 2026-09-29 (end of session)
+## Current state — updated 2026-09-30 (end of session)
 
 - Two branches, one folder: `master` (production, droplet) and `methodology-rebuild` (the
   rebuild, NOT ready to merge — user's call). Master was merged into the rebuild on
   2026-09-29 (`fc5c2d2`); keep doing that after fixes on master, never the reverse yet.
 - Production is still **0.3.1 on the legacy target**; no research result has been ported.
-- Everything is committed. Full suite: all pass, 2 Phase 1 golden tests skip (their
-  snapshot predates the data).
+- Options pilot committed 2026-10-01. Full suite with the tree as committed: 651 pass,
+  2 skip (Phase 1 golden tests; their snapshot predates the data).
+- The user deliberately deleted `scripts/backfill_announcement_timestamps.py` and
+  `scripts/delete_iv_rows_on_closed_days.py` (deletions left UNCOMMITTED, user's call).
+  The first is still imported by `backfills/build_announcement_seed.py` (→
+  `build_date_corrections.py`) and `testing/test_announcement_timing.py`: with it gone,
+  5 tests fail/error. CLAUDE.md, `pipeline/events.py` and `utilities/db_utilities.py`
+  still name it.
 - Timestamp history is in both DBs: 26,657 / 47,503 rows. Date corrections and the IV
   collection fix are live on the droplet and in the local DB (synced 2026-09-29 13:36 UTC;
   full_df + events_df rebuilt: 25,987 of 45,715 completed events anchored, 56.8%).
 - The 18 "stale feed" pending events (DAY, HOLX, BK, EQR, BLDR, TTD, ...) are all
   `inactive` in stock_data (left the index / BK renamed BNY) — not an ingest bug, but
   they still get a pending row in the event frame.
-- Next, in order: choose model B vs C → port the
-  refit (file list in `research/phase3_refit/RESULTS.md` §10) → historical options data
-  for an implied-move baseline (ORATS the lead candidate; Leung & Santoli note in the brain).
+- **Plan (corrected 2026-09-30 by the user; the old "B vs C → port → options" order is
+  dead):** Model C is the fixed benchmark → test genuinely new fast/event-specific data
+  against it → decide the final model after those experiments → then port it.
+- Options pilot (free DoltHub data) done, uncommitted: **WEAK / UNCERTAIN VALUE**.
+  Next decision is the user's: buy professional historical options (ORATS lead) for ONE
+  pre-registered test, C vs C + implied earnings move, 2014–2025 (bar in
+  `research/options_pilot/RESULTS.md` §9). Check point-in-time snapshots before paying.
 - IV live-price fix (`8fcf3b7`): check it's pulled on the droplet and that iv.log looks right.
 - Housekeeping DONE 2026-09-29: droplet .bak files, stray CSV and local bak deleted; Labor
   Day IV backup moved to droplet /root/iv_rows_on_closed_days_20260929_130616.parquet.
@@ -48,6 +58,31 @@ history reads straight. `audit/PHASE0_AUDIT_REV2.md` is the authority; CLAUDE.md
 verified replacements.
 
 ---
+
+## 2026-09-30 — Historical options pilot: WEAK / UNCERTAIN VALUE (uncommitted)
+
+`research/options_pilot/` (PREREGISTRATION.md + Amendments 1–2, RESULTS.md), 30 tests in
+`testing/test_options_pilot.py`, outputs `output/options_pilot/`, raw cache in gitignored
+`data/vendor/dolthub_options/`.
+- Source: DoltHub `post-no-preference/options`, pinned `AS OF 1ug5hqta1o786faoh8fv89q7grrd00jj`,
+  CC BY-SA, provenance undocumented (no README). 2019-02 on; 2019 weekly Saturday-dated,
+  2020–mid-2024 Mon/Wed/Fri, then daily. Near-money chains only; nearest covering expiry a
+  median 14 days out. API caps results at 1,000 rows; aggregates time out; only
+  `(date, act_symbol)` lookups and `date > X ORDER BY date LIMIT 1` seeks are fast.
+- Symbols are point-in-time (FB→META etc.; 17 renames mapped, switch = day after the old
+  symbol's last row). The source lags renames by days-months. Class shares dot-spelled.
+- Matched 13,042/14,035 events; ≤1 session stale 80.7%. The vh-date calendar missed
+  option_chain dates 2023-11-16..24 (fixed: union calendar; 20 events re-matched).
+- Main tier ≤1 session, test 2021–2025, 8,241 events. C AUC 0.707 → **C + expected move
+  0.720** (+0.013 [+0.008, +0.020]); **top-20% capture +1.8 pt [+0.5, +3.6]** — first
+  new input in any phase to move top-of-ranking capture with CI > 0. Top-10% +0.7 pt, CI
+  crosses 0. AUC up only 3/5 years; gain mostly BMO. ATM IV adds nothing beyond EM; skew,
+  term structure, IV-vs-own-history add nothing (compact set is worse than EM+IV).
+- Frozen winner C+EM; 2026 holdout (1,326): same sign on every metric (AUC +0.010,
+  top-10% capture +1.5 pt), all CIs cross zero.
+- Covered sample is HARDER for C than uncovered (0.706 vs 0.788 AUC): not selection.
+- Traps: research/ may not import duckdb (vendor guard test); `pkill -f` on a pattern that
+  appears in the same bash command kills that command too — use `pkill -f "a[.]b"`.
 
 ## 2026-09-29 — IV snapshots use the live price (master 8fcf3b7)
 
