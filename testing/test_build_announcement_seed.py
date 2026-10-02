@@ -5,10 +5,10 @@ midnight and identity rules under test are the production ones, not re-implement
 """
 import pandas as pd
 
-from backfills.build_announcement_seed import SEED_COLS, build
+from backfills.build_announcement_seed import (
+    SEED_COLS, YF_OBSERVED_AT, YF_SOURCE_LABEL as YF_LABEL, YF_SOURCE_PARQUET, build,
+    load_yfinance_seed)
 from research.massive import normalize
-from scripts.backfill_announcement_timestamps import (
-    SOURCE_LABEL as YF_LABEL, SOURCE_OBSERVED_AT as YF_OBSERVED_AT)
 
 SNAP = "earnings_20260910T180412Z"
 
@@ -98,3 +98,34 @@ def test_the_seed_satisfies_the_loader_contract():
     assert seed["announce_ts_ny"].dt.tz is None
     assert seed["announce_ts_observed_at"].dt.tz is None
     assert not seed.duplicated(["stock", "earnings_date"]).any()
+
+
+def test_yfinance_seed_provenance_is_fixed():
+    """These values are already stamped on rows in the DB; changing them would split
+    one source into two."""
+    assert YF_SOURCE_PARQUET == "audit/provider_timestamps.parquet"
+    assert YF_LABEL == "audit_provider_timestamps_2026_09_05"
+    assert YF_OBSERVED_AT == pd.Timestamp("2026-09-05")
+
+
+def test_load_yfinance_seed_keeps_ny_wall_clock_and_drops_nulls_and_duplicates(tmp_path):
+    ny = pd.to_datetime(["2024-05-01 06:30", "2024-01-31 16:05", "2024-05-01 16:00",
+                         None]).tz_localize("America/New_York")
+    raw = pd.DataFrame({
+        "stock": ["AAA", "AAA", "AAA", "BBB"],
+        "earnings_date": pd.to_datetime(["2024-05-01", "2024-01-31", "2024-05-01",
+                                         "2024-05-01"]),
+        "announce_ts_ny": ny,
+        "extra": [1, 2, 3, 4],
+    })
+    path = tmp_path / "ts.parquet"
+    raw.to_parquet(path)
+
+    out = load_yfinance_seed(path)
+    assert list(out.columns) == ["stock", "earnings_date", "announce_ts_ny"]
+    assert out["announce_ts_ny"].dt.tz is None
+    # wall clock kept across EST/EDT, the duplicate keeps the first row, the null is gone
+    assert list(out["announce_ts_ny"]) == [pd.Timestamp("2024-05-01 06:30"),
+                                           pd.Timestamp("2024-01-31 16:05")]
+    assert list(out["earnings_date"]) == [pd.Timestamp("2024-05-01").date(),
+                                          pd.Timestamp("2024-01-31").date()]

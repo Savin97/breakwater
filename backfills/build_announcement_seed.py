@@ -56,15 +56,45 @@ from research.phase3_target_rebuild import (
     identity_hazards,
     match_benzinga_timing,
 )
-from scripts.backfill_announcement_timestamps import (
-    SOURCE_LABEL as YF_SOURCE_LABEL,
-    SOURCE_OBSERVED_AT as YF_OBSERVED_AT,
-    SOURCE_PARQUET as YF_SOURCE_PARQUET,
-    load_seed as load_yfinance_seed,
-)
-
 SEED_COLS = ["stock", "earnings_date", "announce_ts_ny", "announce_ts_source",
              "announce_ts_observed_at"]
+
+# The yfinance fallback: event-level announcement times pulled during the Phase 0 audit.
+# These rows were first loaded into the DB by a one-time backfill script (since deleted);
+# the label and pull date below are the provenance those rows already carry, so they
+# must not change.
+YF_SOURCE_PARQUET = "audit/provider_timestamps.parquet"
+YF_SOURCE_LABEL = "audit_provider_timestamps_2026_09_05"
+
+# When the audit actually pulled these timestamps from yfinance, recorded as
+# `announce_ts_observed_at`: a seeded event that had already reported by this date was
+# OBSERVED after the fact and is frozen; one still upcoming was a SCHEDULE and ingestion
+# may refresh it later. It is a fact about the pull, not a guess — do not move it to "now".
+#
+# Naive NY wall clock, like every other announcement-timing value
+# (utilities.time_utilities). Midnight NY on the pull date is a deliberate LOWER BOUND on
+# the moment of the pull: it can only make a seeded row look more like a schedule and so
+# more refreshable, never less, which is the conservative direction under any host
+# timezone.
+YF_OBSERVED_AT = pd.Timestamp("2026-09-05")
+
+
+def load_yfinance_seed(path=YF_SOURCE_PARQUET) -> pd.DataFrame:
+    """The audit parquet, reduced to exactly (stock, earnings_date, announce_ts_ny).
+
+    The parquet's timestamps are tz-aware America/New_York; the DB column is naive NY
+    local time, so the conversion drops the offset and keeps the wall clock. That is the
+    same shape ingestion writes, and the same shape the classifier reads.
+    """
+    ts = pd.read_parquet(path)
+    ts = ts[["stock", "earnings_date", "announce_ts_ny"]].copy()
+    ts["earnings_date"] = pd.to_datetime(ts["earnings_date"]).dt.date
+    ny = pd.to_datetime(ts["announce_ts_ny"])
+    if getattr(ny.dt, "tz", None) is not None:
+        ny = ny.dt.tz_convert("America/New_York").dt.tz_localize(None)
+    ts["announce_ts_ny"] = ny
+    ts = ts.dropna(subset=["announce_ts_ny"])
+    return ts.drop_duplicates(subset=["stock", "earnings_date"], keep="first")
 
 
 def latest_normalized(root: Path = NORMALIZED_ROOT) -> Path:

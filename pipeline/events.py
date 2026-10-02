@@ -108,7 +108,7 @@ def load_pipeline_announcement_timing() -> pd.DataFrame:
     Opens the production DuckDB read-only and returns whatever `earnings.announce_ts_ny`
     holds. This is the ONLY place in `pipeline/` that knows where announcement timing
     lives, and it is a database column — never `audit/provider_timestamps.parquet`. That
-    parquet seeded the column once via scripts/backfill_announcement_timestamps.py and is
+    parquet seeded the column once, via a one-time backfill (since deleted), and is
     not on any runtime path; ordinary ingestion keeps the column current from here on.
     """
     import duckdb

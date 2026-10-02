@@ -75,8 +75,8 @@ def load_announcement_timing(con) -> pd.DataFrame:
 
     The event frame's only source of announcement timing. Reads the `earnings` table and
     nothing else — in particular it never reads audit/provider_timestamps.parquet, which
-    is a one-time seed loaded into this column by
-    scripts/backfill_announcement_timestamps.py, not a runtime input.
+    was a one-time seed loaded into this column by a backfill since deleted, not a
+    runtime input.
 
     `announce_ts_observed_at` rides along as provenance: it says when the provider was
     observed saying that time, which is what separates a still-upcoming SCHEDULE from a

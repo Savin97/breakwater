@@ -217,14 +217,11 @@ Rules that must not be relaxed:
   seed's fixed pull date (2026-09-05 audit, 2026-09-10 Benzinga) or from `now_ny()`, so no
   stored row carries a host-local stamp.
 - **Seeds are evidence, not runtime inputs.** `audit/provider_timestamps.parquet` seeded
-  `earnings.announce_ts_ny` first via `scripts/backfill_announcement_timestamps.py`; the
-  Benzinga seed (below) superseded most of it. Ingestion keeps the column current from
+  `earnings.announce_ts_ny` first, via a one-time backfill (done; the script has been
+  deleted); the Benzinga seed (below) superseded most of it. Ingestion keeps the column current from
   there. A test asserts no `pipeline/` module reads either file.
 
 ```bash
-# one-time seed of the audit timestamps into the DB (idempotent)
-PYTHONPATH=. .venv/bin/python scripts/backfill_announcement_timestamps.py [--dry-run]
-
 # dataset diagnostics — window mix, coverage by year, legacy vs anchored, unresolved reasons
 PYTHONPATH=. .venv/bin/python -m audit.phase2_diagnostics
 ```

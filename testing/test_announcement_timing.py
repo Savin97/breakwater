@@ -109,8 +109,7 @@ def real_events_df():
     finally:
         con.close()
     if timing.empty:
-        pytest.skip("no announcement timestamps in the DB — run "
-                    "scripts/backfill_announcement_timestamps.py")
+        pytest.skip("no announcement timestamps in the DB — sync it from the droplet")
     return build_and_score_event_frame(daily, timing), daily
 
 
@@ -781,8 +780,8 @@ def test_10_scores_are_identical_with_and_without_timing(daily_df, timing_df):
     "utilities/db_utilities.py",
 ])
 def test_no_pipeline_module_reads_the_audit_parquet(path):
-    """audit/provider_timestamps.parquet seeded the DB column ONCE, via
-    scripts/backfill_announcement_timestamps.py. If a production module ever reads it
+    """audit/provider_timestamps.parquet seeded the DB column ONCE, via a one-time
+    backfill (since deleted). If a production module ever reads it
     directly, the pipeline has silently acquired a dependency on an audit artifact."""
     tree = ast.parse(open(path).read())
     literals = [c.value for c in ast.walk(tree)
@@ -875,54 +874,6 @@ def test_load_announcement_timing_degrades_on_a_pre_phase2_database():
     assert out.empty
     assert list(out.columns) == ["stock", "earnings_date", "announce_ts_ny",
                                  "announce_ts_source", "announce_ts_observed_at"]
-
-
-def test_backfill_is_idempotent_and_only_fills_nulls():
-    """The audit parquet is a one-time seed. Re-running must change nothing, and a
-    timestamp already observed must never be overwritten."""
-    from ingestion.fetch_earnings_dates import EARNINGS_INSERT_COLS, _INSERT_COL_SQL
-    from scripts.backfill_announcement_timestamps import backfill
-    con = _fresh_db()
-    try:
-        rows = pd.DataFrame([{
-            "stock": s, "earnings_date": pd.Timestamp("2024-05-01").date(),
-            "fiscal_end_date": None, "reported_eps": 1.0, "estimated_eps": 0.9,
-            "surprise_percentage": 0.1, "ingested_at": pd.Timestamp("2024-05-02"),
-            "announce_ts_ny": ts, "announce_ts_source": src,
-            "announce_ts_observed_at": obs,
-        } for s, ts, src, obs in [
-            ("AAA", pd.NaT, None, pd.NaT),
-            ("BBB", pd.Timestamp("2024-05-01 16:00"), "yfinance_earnings_dates",
-             pd.Timestamp("2024-05-02 03:00")),
-        ]])[EARNINGS_INSERT_COLS]
-        con.register("tmp_earnings_df", rows)
-        con.execute(f"INSERT INTO earnings ({_INSERT_COL_SQL}) "
-                    f"SELECT {_INSERT_COL_SQL} FROM tmp_earnings_df")
-        con.unregister("tmp_earnings_df")
-
-        seed = pd.DataFrame([
-            {"stock": "AAA", "earnings_date": pd.Timestamp("2024-05-01").date(),
-             "announce_ts_ny": pd.Timestamp("2024-05-01 07:00")},
-            {"stock": "BBB", "earnings_date": pd.Timestamp("2024-05-01").date(),
-             "announce_ts_ny": pd.Timestamp("2024-05-01 05:00")},   # must NOT overwrite
-            {"stock": "CCC", "earnings_date": pd.Timestamp("2024-05-01").date(),
-             "announce_ts_ny": pd.Timestamp("2024-05-01 06:00")},   # event we do not hold
-        ])
-        first = backfill(con, seed)
-        assert first["filled"] == 1
-        assert first["seed_events_not_in_db"] == 1
-        second = backfill(con, seed)
-        assert second["filled"] == 0 and second["already_had_timestamp"] == 2
-
-        got = con.execute("SELECT stock, announce_ts_ny, announce_ts_source "
-                          "FROM earnings ORDER BY stock").fetchall()
-    finally:
-        con.close()
-    assert got[0][1] == pd.Timestamp("2024-05-01 07:00")
-    assert got[0][2] == "audit_provider_timestamps_2026_09_05"
-    # the pre-existing observed timestamp survives, with its own provenance
-    assert got[1][1] == pd.Timestamp("2024-05-01 16:00")
-    assert got[1][2] == "yfinance_earnings_dates"
 
 
 def test_yfinance_ingestion_no_longer_discards_the_timestamp(monkeypatch):
@@ -1182,49 +1133,6 @@ def test_yfinance_fetch_records_when_it_observed_the_timestamp(monkeypatch):
     # convention — it is an operational column, not part of the timing comparison, so it
     # equals the observation only on a host that is already on New York time.
     assert out["ingested_at"].notna().all()
-
-
-def test_backfill_stamps_the_seed_pull_date_as_the_observation_time():
-    """The audit seed is evidence pulled on a known day. Recording that day is what lets
-    the rule above tell a seeded post-event observation (frozen) from a seeded schedule
-    for an event that had not happened yet (refreshable)."""
-    from scripts.backfill_announcement_timestamps import (
-        backfill, SOURCE_LABEL, SOURCE_OBSERVED_AT)
-    con = _fresh_db()
-    try:
-        _seed_event(con, pd.NaT, pd.NaT, None, ingested_at=pd.Timestamp("2024-04-01"))
-        backfill(con, pd.DataFrame([{
-            "stock": "AAA", "earnings_date": _E,
-            "announce_ts_ny": pd.Timestamp("2024-05-01 06:30")}]))
-        got = _stored(con)
-    finally:
-        con.close()
-    assert got[1] == SOURCE_LABEL
-    assert got[2] == SOURCE_OBSERVED_AT
-    # the seeded event reported long before the pull, so it is a post-event observation
-    assert got[2] > got[0]
-
-
-def test_backfill_migrates_observed_at_onto_rows_it_seeded_earlier():
-    """The column was added after the seed had already run once. Stamping the pull date
-    on those rows is a one-time, idempotent migration — without it 12,068 rows would be
-    permanently un-classifiable as schedule or observation."""
-    from scripts.backfill_announcement_timestamps import (
-        backfill, SOURCE_LABEL, SOURCE_OBSERVED_AT)
-    con = _fresh_db()
-    try:
-        _seed_event(con, pd.Timestamp("2024-05-01 06:30"), pd.NaT, SOURCE_LABEL,
-                    ingested_at=pd.Timestamp("2024-04-01"))
-        first = backfill(con, pd.DataFrame(columns=["stock", "earnings_date",
-                                                    "announce_ts_ny"]))
-        got = _stored(con)
-        second = backfill(con, pd.DataFrame(columns=["stock", "earnings_date",
-                                                     "announce_ts_ny"]))
-    finally:
-        con.close()
-    assert first["seeded_rows_missing_observed_at"] == 1
-    assert got[2] == SOURCE_OBSERVED_AT
-    assert second["seeded_rows_missing_observed_at"] == 0
 
 
 # ── The observation timestamp has ONE timezone convention ────────────────────

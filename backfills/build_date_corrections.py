@@ -46,16 +46,17 @@ import numpy as np
 import pandas as pd
 
 from config import DB_PATH
-from backfills.build_announcement_seed import latest_normalized, load_vendor
+from backfills.build_announcement_seed import (
+    YF_SOURCE_PARQUET,
+    latest_normalized,
+    load_vendor,
+    load_yfinance_seed,
+)
 from research.massive.paths import VENDOR_ROOT
 from research.phase3_target_rebuild import (
     _map_vendor_tickers,
     _snapshot_observed_at,
     identity_hazards,
-)
-from scripts.backfill_announcement_timestamps import (
-    SOURCE_PARQUET as YF_SOURCE_PARQUET,
-    load_seed as load_yfinance_seed,
 )
 
 MIN_GAP_DAYS = 2

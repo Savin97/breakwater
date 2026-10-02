@@ -27,11 +27,9 @@ done*, replace it with the thing being done.
 - Options pilot committed 2026-10-01. Full suite with the tree as committed: 651 pass,
   2 skip (Phase 1 golden tests; their snapshot predates the data).
 - The user deliberately deleted `scripts/backfill_announcement_timestamps.py` and
-  `scripts/delete_iv_rows_on_closed_days.py` (deletions left UNCOMMITTED, user's call).
-  The first is still imported by `backfills/build_announcement_seed.py` (→
-  `build_date_corrections.py`) and `testing/test_announcement_timing.py`: with it gone,
-  5 tests fail/error. CLAUDE.md, `pipeline/events.py` and `utilities/db_utilities.py`
-  still name it.
+  `scripts/delete_iv_rows_on_closed_days.py`. Dependencies fixed 2026-10-02: the yfinance
+  seed loader + provenance constants now live in `backfills/build_announcement_seed.py`;
+  the 3 tests of the deleted script's DB-write path were removed. Suite: 660 pass, 2 skip.
 - Timestamp history is in both DBs: 26,657 / 47,503 rows. Date corrections and the IV
   collection fix are live on the droplet and in the local DB (synced 2026-09-29 13:36 UTC;
   full_df + events_df rebuilt: 25,987 of 45,715 completed events anchored, 56.8%).
@@ -45,6 +43,12 @@ done*, replace it with the thing being done.
   Next decision is the user's: buy professional historical options (ORATS lead) for ONE
   pre-registered test, C vs C + implied earnings move, 2014–2025 (bar in
   `research/options_pilot/RESULTS.md` §9). Check point-in-time snapshots before paying.
+- Confirmatory test designed, NOT run, uncommitted (2026-10-01):
+  `research/options_confirmatory/` (PREREGISTRATION.md, DATA_SOURCES.md, core.py) +
+  `testing/test_options_confirmatory.py`. C vs C + EM only; primary = Δ top-10% capture,
+  CI > 0. Sample starts 2014 whatever the vendor (≥ 8 prior outcomes): ~20,300 stock-Fridays.
+  Power only ~40% if the true effect is the pilot's +0.7 pt. Waiting on the user: WRDS
+  access? budget? ORATS point-in-time answers. Nothing bought.
 - IV live-price fix (`8fcf3b7`): check it's pulled on the droplet and that iv.log looks right.
 - Housekeeping DONE 2026-09-29: droplet .bak files, stray CSV and local bak deleted; Labor
   Day IV backup moved to droplet /root/iv_rows_on_closed_days_20260929_130616.parquet.
