@@ -63,6 +63,21 @@ verified replacements.
 
 ---
 
+## 2026-10-02 — Confirmatory options test: checked, cannot run yet (uncommitted)
+
+- No professional options data exists (nothing in `data/vendor/` beyond DoltHub/Benzinga),
+  so the test was NOT run. DoltHub must not stand in: the pre-registration forbids reusing
+  the pilot's sample as evidence.
+- Population re-counted: matches PREREGISTRATION.md exactly (2014-2025 = 20,309).
+- Fixed in `core.py` (no data seen): covering expiry was picked from the *cleaned* chain,
+  so an expiry whose quotes all failed silently became a later one (pilot uses the raw
+  chain). Duplicate contracts now raise. +2 tests; suite 662 pass, 2 skip.
+- Still to write once data exists: vendor adapter, population/coverage audit (incl. the
+  ">5% of selected pairs fail filters" check), chain-internal fallback, staleness-3
+  robustness, walk-forward + bootstrap + decision rule (reuse `options_pilot/evaluate.py`).
+- First test year 2015 needs >=1,000 covered training rows of only 1,084 (2013+2014):
+  ~92% coverage of 2014, else it slips to 2016 and power drops.
+
 ## 2026-09-30 — Historical options pilot: WEAK / UNCERTAIN VALUE (uncommitted)
 
 `research/options_pilot/` (PREREGISTRATION.md + Amendments 1–2, RESULTS.md), 30 tests in
