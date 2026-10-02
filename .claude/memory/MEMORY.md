@@ -53,6 +53,16 @@ done*, replace it with the thing being done.
 - Housekeeping DONE 2026-09-29: droplet .bak files, stray CSV and local bak deleted; Labor
   Day IV backup moved to droplet /root/iv_rows_on_closed_days_20260929_130616.parquet.
 
+- **SEC feature test done 2026-10-03, uncommitted: SEC FEATURES ADD NO USEFUL VALUE.**
+  `research/sec_features/` (PREREGISTRATION + Amendment 1, RESULTS), 14 tests. Model C is
+  still the benchmark; next new-data candidate is the user's call (options data still paused).
+  Full suite: 705 pass, 2 skip.
+- **SEC filings pilot done 2026-10-02, uncommitted:** `research/sec_filings_pilot/`
+  (RESULTS.md), 29 tests in `testing/test_sec_filings.py`. Verdict USABLE WITH IMPORTANT
+  LIMITATIONS. Next decision is the user's: whether to run a pre-registered text-feature
+  test against Model C. Options work PAUSED (`research/options_confirmatory/PAUSED.md`).
+  Full suite: 691 pass, 2 skip.
+
 ## Retracted figures — do not reuse
 
 Any lift, hit rate or capture figure in an entry dated **before 2026-09-05** (4.5x, 4.49x,
@@ -62,6 +72,43 @@ history reads straight. `audit/PHASE0_AUDIT_REV2.md` is the authority; CLAUDE.md
 verified replacements.
 
 ---
+
+## 2026-10-03 — SEC features vs Model C: NO USEFUL VALUE (uncommitted)
+
+`research/sec_features/` + `testing/test_sec_features.py`; outputs `output/sec_features/`.
+- **Current corrected frame** = Phase 3's frame rebuilt by Phase 3's own code on the
+  date-corrected full_df (`frame.py` → `output/sec_features/feature_frame_current.parquet`);
+  `sec_filings_pilot/paths.FEATURE_FRAME` now points there. Refresh vs pilot: 0 changed info
+  sets; +110 events (the 103 corrected dates had never matched timing before).
+- Source = previous Breakwater event's Item 2.02 8-K, lowest EX-99 (97.3% of events have
+  both previous and second-prior). 40/40 matched correctly.
+- Gates (before outcomes): guidance_present FAILED twice (rules can't read outlook sections:
+  tables, "±", "raises outlook" beside "high end of guidance") → dropped; widths cover 24%
+  → dropped; uncertainty dictionary 47% noise (passed barely, safe-harbour lists).
+- 2017-2025, 15,777 events: every Δ top-10/20 capture within ±0.4 pt, all CIs cross 0;
+  AUC Δ <= +0.001. 2026 holdout (1,357): C+compact and C+8K pick the SAME top 10% as C.
+  Post hoc: every feature AUC 0.475-0.513 within C deciles; 8-K counts = size echo.
+- Direction source data kept (raise/lower/reaffirm counts, demand/margin/inventory) in
+  `output/sec_features/releases.parquet`, not evaluated.
+- Trap: SECClient now has a thread lock; bulk fetch uses min_interval 0.125 (8/s), 6 threads.
+
+## 2026-10-02 — SEC filings feasibility pilot (uncommitted)
+
+`research/sec_filings_pilot/` + `testing/test_sec_filings.py`; raw SEC data in gitignored
+`data/vendor/sec/` (snapshot `sec_20261002T165536Z`, sha `73ff61a5…`), tables in
+`output/sec_filings_pilot/`. No outcome read, nothing computed from text.
+- **SEC's submissions-JSON `acceptanceDateTime` is wrong for ~22% of filers** (JPM, AAPL:
+  shifted one extra UTC offset; old CIKs: NY time with a Z). Index page "Accepted" and
+  `.hdr.sgml` agree and are NY time. Rule: filing date < cutoff date, or same day with a
+  verified index time <= the NYSE close. Never use the JSON field for eligibility.
+- Population = Phase 3 frame, BMO/AMC, 2014-2026: 22,837 events / 482 stocks. 99.8% have
+  a prior 10-Q/10-K (median 84 days old); ~80% have >=1 8-K after it; 0 release 8-Ks leak.
+- 14 hand-verified CIK chains (GOOGL, MDT, AVGO, STE, DD, CI, DIS, TPL, APA, APO, BG, BLK,
+  XOM — ExxonMobil Holdings 2026-07-01 — and GOOG). The 21 Benzinga hazard tickers are not
+  in the population (no timing); LIN/DOW/DOC would need work.
+- Corpus that events use: ~6 GB gzip / ~10 GB text, ~182k requests (~25 h at the measured
+  ~2 req/s, one connection). All 241 sampled documents parsed; every 2.02 8-K has an EX-99
+  release. Trap: SEC requests need `SEC_USER_AGENT` exported in the shell.
 
 ## 2026-10-02 — Confirmatory options test: checked, cannot run yet (uncommitted)
 

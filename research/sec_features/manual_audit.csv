@@ -1,0 +1,175 @@
+round,kind,id,correct,hits,false_hits,note
+1,release,CBRE|2015-10-27,1,,,Q2 2015 press release
+1,release,RL|2016-05-12,1,,,Q3 FY16 results
+1,release,CRL|2016-05-04,1,,,Q4 2015 results + 2016 guidance
+1,release,IFF|2016-11-07,1,,,Q2 2016 results
+1,release,PGR|2016-10-13,1,,,June 2016 (Q2) earnings news release
+1,release,GPC|2015-02-17,1,,,Q3 2014 results
+1,release,TMUS|2015-07-30,1,,,Q1 2015 results
+1,release,COP|2014-05-01,1,,,Q4 2013 results
+1,release,SNA|2015-07-23,1,,,Q1 2015 results
+1,release,CI|2016-07-29,1,,,Q1 2016 results
+1,release,AES|2019-05-07,1,,,FY2018 results
+1,release,COO|2019-05-30,1,,,Q1 FY19 results
+1,release,WDC|2017-01-25,1,,,Q1 FY17 results
+1,release,XYZ|2017-08-02,1,,,Q1 2017 shareholder letter (Square's release format)
+1,release,WEC|2019-04-25,1,,,2018 results
+1,release,ETN|2018-05-01,1,,,Q4 2017 results
+1,release,DG|2019-08-29,1,,,Q1 2019 results
+1,release,ODFL|2019-07-25,1,,,Q1 2019 results
+1,release,EW|2017-07-26,1,,,Q1 2017 results
+1,release,STZ|2017-06-29,1,,,FY17 results + FY18 outlook
+1,release,ODFL|2022-04-27,1,,,Q4 2021 results
+1,release,IRM|2022-02-24,1,,,Q3 2021 results
+1,release,VICI|2020-07-29,1,,,Q1 2020 results
+1,release,GRMN|2022-04-27,1,,,Q4 2021 results
+1,release,BX|2022-04-21,1,,,Q4 2021 results
+1,release,LDOS|2020-11-02,1,,,Q2 FY20 results
+1,release,PG|2022-10-19,1,,,Q4 FY22 results
+1,release,WELL|2021-07-29,1,,,Q1 2021 results
+1,release,WMB|2020-11-02,1,,,Q2 2020 results
+1,release,EMR|2020-02-04,1,,,Q4 FY19 results + 2020 outlook
+1,release,RTX|2025-01-28,1,,,Q3 2024 results
+1,release,NI|2024-08-07,1,,,Q1 2024 results
+1,release,GILD|2025-10-30,1,,,Q2 2025 results
+1,release,ED|2023-08-03,1,,,Q1 2023 results
+1,release,MCHP|2024-08-01,1,,,Q4 FY24 results
+1,release,SPGI|2024-10-24,1,,,Q2 2024 results
+1,release,CSX|2026-01-22,1,,,Q3 2025 results
+1,release,VTR|2025-07-30,1,,,Q1 2025 results
+1,release,EOG|2026-08-04,1,,,Q1 2026 release; exhibit opens with the supplemental data TOC
+1,release,DAL|2024-07-11,1,,,March quarter 2024 results
+1,guidance_pos,MSCI|2014-10-30,0,,,"""lower"" in a past-results sentence"
+1,guidance_pos,HST|2014-07-31,1,,,2014 capex range
+1,guidance_pos,DE|2016-05-20,1,,,FY16 forecast
+1,guidance_pos,RF|2015-10-20,0,,,"""lower asset yields"" (past)"
+1,guidance_pos,CVS|2016-08-02,1,,,EPS guidance revised
+1,guidance_pos,QCOM|2019-05-01,1,,,financial guidance
+1,guidance_pos,CRL|2017-02-14,1,,,expected rates for 2017
+1,guidance_pos,BKNG|2018-05-09,1,,,expected revenue timing effects 2018
+1,guidance_pos,SHW|2018-01-25,1,,,EPS guidance
+1,guidance_pos,TXT|2019-07-17,1,,,EPS guidance confirmed
+1,guidance_pos,AON|2022-04-29,1,,,expected FX impact
+1,guidance_pos,MTB|2021-04-19,0,,,"""accounting guidance"""
+1,guidance_pos,EFX|2021-07-21,1,,,revenue/EPS guidance raised
+1,guidance_pos,VTR|2020-05-08,1,,,2020 expectations
+1,guidance_pos,RCL|2021-10-29,1,,,capacity expectation
+1,guidance_pos,NWS|2023-08-10,0,,,"""lower revenues"" (past)"
+1,guidance_pos,LEN|2024-03-13,1,,,deliveries / margin guidance
+1,guidance_pos,MS|2024-04-16,0,,,"""lower completed activity"" (past)"
+1,guidance_pos,NUE|2024-10-21,0,,,"""growth projects"" (noun)"
+1,guidance_pos,WSM|2023-11-16,1,,,FY23 revenue/margin outlook
+1,guidance_neg,NKE|2016-03-22,1,,,no guidance in release
+1,guidance_neg,AMP|2016-07-26,1,,,
+1,guidance_neg,WEC|2014-04-30,1,,,
+1,guidance_neg,HAS|2014-04-21,1,,,
+1,guidance_neg,PAYC|2015-11-03,0,,,Financial Outlook ranges on separate lines (missed)
+1,guidance_neg,KLAC|2017-10-26,1,,,
+1,guidance_neg,CAG|2018-03-22,0,,,expects near high end of guidance ranges (no number in sentence)
+1,guidance_neg,DPZ|2018-04-26,1,,,
+1,guidance_neg,LYB|2017-10-27,1,,,qualitative outlook only
+1,guidance_neg,MS|2017-04-19,1,,,
+1,guidance_neg,FDX|2021-03-18,0,,,capex forecast for the year (missed)
+1,guidance_neg,HBAN|2022-07-21,1,,,qualitative
+1,guidance_neg,F|2020-07-30,1,,,guidance suspended
+1,guidance_neg,FDX|2021-12-16,0,,,reducing earnings outlook (missed)
+1,guidance_neg,A|2020-08-18,1,,,
+1,guidance_neg,ELV|2024-01-24,0,,,EPS > $26.40 in 2023 split across lines (missed)
+1,guidance_neg,AMD|2025-05-06,0,,,Current Outlook section split across lines (missed)
+1,guidance_neg,TER|2025-04-28,0,,,likely Q1 guidance missed (conservative)
+1,guidance_neg,GOOG|2024-10-29,1,,,
+1,guidance_neg,MS|2024-07-16,1,,,
+1,width,WMB|2015-04-29,0,,,matched unrelated $ amounts
+1,width,UPS|2015-02-03,1,,,
+1,width,ROP|2015-07-27,1,,,
+1,width,GD|2015-10-28,1,,,
+1,width,DTE|2015-02-13,1,,,
+1,width,CHD|2019-07-31,1,,,
+1,width,CRM|2018-11-27,1,,,
+1,width,CSGP|2017-04-26,1,,,
+1,width,NEE|2017-07-26,1,,,
+1,width,ABT|2017-04-19,1,,,
+1,width,MCHP|2022-08-02,1,,,(previously issued range)
+1,width,PODD|2020-02-25,1,,,
+1,width,APH|2022-01-26,1,,,
+1,width,LNT|2020-11-02,1,,,
+1,width,IQV|2022-10-26,1,,,
+1,width,HII|2026-05-05,1,,,
+1,width,VRTX|2024-05-06,1,,,
+1,width,AME|2025-05-01,1,,,
+1,width,VRTX|2024-11-04,1,,,
+1,width,EPAM|2023-05-05,1,,,
+1,uncertainty,CBRE|2015-10-27,,1,1,visibility into performance
+1,uncertainty,RL|2016-05-12,,2,0,
+1,uncertainty,IFF|2016-11-07,,3,2,FLS list
+1,uncertainty,COO|2019-05-30,,4,4,FLS list
+1,uncertainty,WDC|2017-01-25,,4,4,FLS list
+1,uncertainty,XYZ|2017-08-02,,4,4,risk management / non-GAAP note / FLS
+1,uncertainty,WEC|2019-04-25,,4,4,FLS list
+1,uncertainty,IRM|2022-02-24,,2,0,
+1,uncertainty,VICI|2020-07-29,,3,0,
+1,uncertainty,GRMN|2022-04-27,,4,3,uncertain tax positions; non-GAAP note
+1,uncertainty,BX|2022-04-21,,8,6,FLS
+1,uncertainty,RTX|2025-01-28,,2,1,marketing copy
+1,uncertainty,NI|2024-08-07,,6,6,FLS list
+1,uncertainty,GILD|2025-10-30,,4,3,medical risk
+1,uncertainty,MCHP|2024-08-01,,10,4,FLS list items
+2,guidance_pos,JBL|2015-03-18,1,,,Q2 guidance ranges
+2,guidance_pos,ODFL|2016-10-27,1,,,2016 capex expectation
+2,guidance_pos,VRTX|2016-07-27,1,,,product revenue guidance
+2,guidance_pos,STT|2016-07-27,0,,,buyback plan only; no business outlook
+2,guidance_pos,TEL|2014-10-29,1,,,Q4 sales/EPS outlook
+2,guidance_pos,NUE|2019-07-18,0,,,plant capacity; no guidance
+2,guidance_pos,FDX|2017-03-21,1,,,FY17 earnings/capex forecast
+2,guidance_pos,YUM|2017-08-03,1,,,guidance headline
+2,guidance_pos,INTU|2017-08-22,1,,,Q4 and FY guidance
+2,guidance_pos,BSX|2019-10-23,1,,,EPS guidance ranges
+2,guidance_pos,PNC|2022-10-14,0,,,regulatory capital forecasts (boilerplate)
+2,guidance_pos,EXC|2020-11-03,1,,,"passage is a rate case, but the release affirms EPS guidance (release-level judgement)"
+2,guidance_pos,SBUX|2020-10-29,1,,,Q4/FY guidance
+2,guidance_pos,VLO|2021-04-22,0,,,project timing; no guidance
+2,guidance_pos,EMR|2021-02-02,1,,,2021 outlook section
+2,guidance_pos,JNJ|2024-07-17,1,,,guidance table
+2,guidance_pos,HSY|2024-11-07,1,,,"passages are not guidance, but release reaffirms outlook (release-level)"
+2,guidance_pos,CMS|2025-02-06,1,,,2025 EPS guidance
+2,guidance_pos,UHS|2023-04-25,1,,,2023 guidance
+2,guidance_pos,GLW|2024-04-30,1,,,Q1 outlook
+2,guidance_neg,ADI|2014-11-25,0,,,Outlook section with revenue range (missed)
+2,guidance_neg,FFIV|2016-07-20,1,,,
+2,guidance_neg,BX|2014-10-16,1,,,
+2,guidance_neg,MET|2016-05-04,1,,,
+2,guidance_neg,MA|2016-07-28,1,,,
+2,guidance_neg,ERIE|2019-07-25,1,,,
+2,guidance_neg,VZ|2017-04-20,1,,,qualitative only in shown text
+2,guidance_neg,GD|2019-01-30,1,,,
+2,guidance_neg,SBUX|2019-01-24,0,,,Fiscal 2019 targets (missed)
+2,guidance_neg,WDAY|2017-06-01,1,,,
+2,guidance_neg,FICO|2021-05-05,1,,,
+2,guidance_neg,KEYS|2022-11-17,0,,,raises FY outlook (missed; exclusion window too wide)
+2,guidance_neg,APD|2020-11-11,0,,,likely FY21 EPS guidance missed (conservative)
+2,guidance_neg,ADI|2022-05-18,0,,,"Outlook in +/- form (missed)"
+2,guidance_neg,CINF|2020-02-05,1,,,
+2,guidance_neg,PSX|2025-07-25,1,,,
+2,guidance_neg,KO|2023-07-26,0,,,Outlook section (missed)
+2,guidance_neg,GD|2025-07-23,1,,,
+2,guidance_neg,FIX|2026-04-23,1,,,
+2,guidance_neg,C|2024-04-12,1,,,
+2,uncertainty,GDDY|2016-02-17,,1,1,product name
+2,uncertainty,LUV|2016-07-21,,1,0,
+2,uncertainty,ALL|2016-02-03,,2,0,
+2,uncertainty,GNRC|2015-10-28,,6,1,FLS
+2,uncertainty,GPC|2014-04-22,,8,5,FLS + artefact
+2,uncertainty,GS|2018-01-17,,9,7,FLS + risk management headings
+2,uncertainty,TPR|2018-05-01,,1,1,FLS
+2,uncertainty,DG|2017-06-01,,1,1,FLS
+2,uncertainty,JCI|2019-05-01,,2,0,
+2,uncertainty,GILD|2021-07-29,,3,1,benefit/risk profile
+2,uncertainty,SCHW|2022-07-18,,8,2,FLS; cost fluctuation
+2,uncertainty,LHX|2021-10-29,,15,0,COVID business impacts
+2,uncertainty,MNST|2022-08-04,,9,8,FLS list
+2,uncertainty,WDAY|2022-02-28,,1,1,stock-comp volatility
+2,uncertainty,STLD|2023-04-19,,7,5,FLS numbered list
+2,uncertainty,MDT|2026-02-17,,4,4,blood pressure; mission; tax positions
+2,uncertainty,HSY|2025-07-30,,6,0,
+2,uncertainty,BBY|2024-05-30,,2,1,accounting
+2,uncertainty,EQT|2026-07-21,,5,5,non-GAAP note; system pressure
