@@ -2,8 +2,11 @@
 import pandas as pd
 from datetime import date
 
+from pipeline.events import pending_events
 
-def generate_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit_df.parquet") -> None:
+
+def generate_streamlit_df(df: pd.DataFrame, events_df: pd.DataFrame,
+                          output_path: str = "output/streamlit_df.parquet") -> None:
     earnings_df = df[df["is_earnings_day"] == 1].copy()
 
     P_extreme_global = earnings_df["is_extreme_reaction"].mean()
@@ -20,12 +23,8 @@ def generate_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit
         bucket_stats["extreme_count"] + prior_strength * P_extreme_global
     ) / (bucket_stats["event_count"] + prior_strength)
     bucket_stats["global_hist_prob"] = P_extreme_given_bucket
-    bucket_stats["current_lift_vs_baseline"] = (
-        bucket_stats["hist_extreme_prob"] / P_extreme_global
-    )
-    bucket_stats["current_lift_vs_same_bucket_global"] = (
-        bucket_stats["hist_extreme_prob"] / bucket_stats["global_hist_prob"]
-    )
+    # No lift columns: audit/PHASE0_AUDIT_REV2.md P4.1 retires every lift figure from
+    # customer-facing output, and this parquet is what the public dashboard reads.
 
     out = earnings_df[[
         "stock", "sector", "sub_sector", "earnings_date",
@@ -38,7 +37,6 @@ def generate_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit
     out = out.merge(
         bucket_stats[[
             "hist_extreme_prob", "global_hist_prob",
-            "current_lift_vs_baseline", "current_lift_vs_same_bucket_global",
             "extreme_count",
         ]].reset_index(),
         on="earnings_explosiveness_bucket",
@@ -55,8 +53,6 @@ def generate_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit
 
     out["hist_extreme_prob"] = out["hist_extreme_prob"].round(3)
     out["global_hist_prob"] = out["global_hist_prob"].round(3)
-    out["current_lift_vs_baseline"] = out["current_lift_vs_baseline"].round(3)
-    out["current_lift_vs_same_bucket_global"] = out["current_lift_vs_same_bucket_global"].round(3)
 
     cutoff = pd.Timestamp.today() - pd.DateOffset(years=5)
     out = out[out["earnings_date"] >= cutoff]
@@ -64,14 +60,21 @@ def generate_streamlit_df(df: pd.DataFrame, output_path: str = "output/streamlit
     out.to_parquet(output_path, index=False)
     print(f"Wrote {output_path} ({len(out)} rows)\n--------------------")
 
-    export_upcoming_df(df)
+    export_upcoming_df(events_df)
 
 
-def export_upcoming_df(df: pd.DataFrame, output_path: str = "output/upcoming_df.parquet") -> None:
+def export_upcoming_df(events_df: pd.DataFrame,
+                       output_path: str = "output/upcoming_df.parquet") -> None:
+    """One row per upcoming earnings event, read from the pending rows of the event frame.
+
+    Was `df.sort_values("date").groupby("stock").last()`, whose per-column NaN skipping
+    silently returned the score/tier/lift of the stock's LAST COMPLETED EVENT — every
+    upcoming call shipped one earnings event stale (audit/PHASE0_AUDIT_REV2.md §Q4).
+    A pending row carries state computed through the most recent completed event.
+    """
     today = pd.Timestamp(date.today())
 
-    latest = df.sort_values("date").groupby("stock").last().reset_index()
-    upcoming = latest[latest["earnings_date"] >= today].copy()
+    upcoming = pending_events(events_df, on_or_after=today)
 
     if upcoming.empty:
         print(f"No upcoming earnings events (today={today.date()})")
@@ -81,11 +84,8 @@ def export_upcoming_df(df: pd.DataFrame, output_path: str = "output/upcoming_df.
     _rank_key = upcoming["abs_reaction_p75_rolling"].fillna(upcoming["abs_reaction_p75"])
     upcoming["peer_percentile"] = (_rank_key.rank(pct=True) * 100).fillna(0).astype(int)
 
-    upcoming["is_high_conviction"] = (
-        (upcoming["earnings_explosiveness_bucket"] == "High Alert") &
-        (upcoming["pre_earnings_drift_flag"].fillna("") != "")
-    )
-
+    # is_high_conviction now arrives already computed on the pending row, from the same
+    # event-level function the historical events use.
     upcoming["days_to_earnings"] = (upcoming["earnings_date"] - today).dt.days
     suspicious = upcoming[upcoming["days_to_earnings"] > 90]["stock"].tolist()
     if suspicious:
@@ -102,6 +102,7 @@ def export_upcoming_df(df: pd.DataFrame, output_path: str = "output/upcoming_df.
 
     cols = [
         "stock", "sector", "sub_sector", "earnings_date", "days_to_earnings",
+        "score_asof_date",
         "earnings_explosiveness_bucket", "earnings_explosiveness_score",
         "peer_percentile", "pre_earnings_drift_flag", "surprise_momentum_flag",
         "is_high_conviction", "expected_move_pct", "iv_vs_hist_ratio",

@@ -1,6 +1,12 @@
 def build_recommendation(risk_level, hist_extreme_prob, base_extreme_prob,
                          lift, surprise_flag, drift_flag, high_conviction,
                          stock, earnings_date):
+    """Recommendation text for the PDF.
+
+    `lift` only chooses between two Normal-tier wordings; it is never printed. Audit
+    P4.1 (audit/PHASE0_AUDIT_REV2.md) retires every lift figure from customer output,
+    so the text states the two probabilities and never a multiple of the market rate.
+    """
     hist_pct = round(float(hist_extreme_prob) * 100, 1)
     base_pct = round(float(base_extreme_prob) * 100, 1)
     lift_x   = round(float(lift), 1)
@@ -44,7 +50,7 @@ def build_recommendation(risk_level, hist_extreme_prob, base_extreme_prob,
             body = (
                 f"{stock} is currently in its Normal risk tier — no active timing signals this quarter. "
                 f"Note that its historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
-                f"which is {lift_x}x the {base_pct}% market average. "
+                f"above the {base_pct}% market average. "
                 f"This reflects {stock}'s structural volatility profile, not an elevated signal for this event."
             )
         else:
@@ -60,8 +66,8 @@ def build_recommendation(risk_level, hist_extreme_prob, base_extreme_prob,
         headline = "Elevated Risk — Light Caution Advised"
         body = (
             f"{stock} shows moderately elevated tail risk ahead of earnings on {earnings_date}. "
-            f"The historical probability of an extreme move (>8% in 3 days) is {hist_pct}% — "
-            f"{lift_x}x the market average of {base_pct}%."
+            f"The historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
+            f"against a market average of {base_pct}%."
         )
         action = (
             "Review your position size ahead of earnings. "
@@ -72,8 +78,8 @@ def build_recommendation(risk_level, hist_extreme_prob, base_extreme_prob,
         headline = "High Alert — Heightened Caution Warranted"
         body = (
             f"{stock} has a structurally elevated earnings jump risk. "
-            f"The historical probability of an extreme move (>8% in 3 days) is {hist_pct}% — "
-            f"{lift_x}x the market average of {base_pct}%."
+            f"The historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
+            f"against a market average of {base_pct}%."
         )
         action = (
             "Consider reducing exposure or adding downside protection before earnings. "
@@ -85,7 +91,7 @@ def build_recommendation(risk_level, hist_extreme_prob, base_extreme_prob,
         body = (
             f"{stock} combines a historically explosive earnings profile with active timing signals "
             f"this quarter. The historical probability of an extreme move (>8% in 3 days) is "
-            f"{hist_pct}% — {lift_x}x the market average of {base_pct}%."
+            f"{hist_pct}%, against a market average of {base_pct}%."
         )
         action = (
             "Strong case for hedging or reducing exposure before earnings. "

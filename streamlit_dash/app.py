@@ -62,7 +62,7 @@ def get_dashboard_df(use_cached_eps: bool = True) -> pd.DataFrame:
     Calls your engine and returns the final dashboard dataframe.
 
     Assumes run_pipeline(...) returns a DataFrame with at least:
-        Date, Stock, risk_level, risk_score, hist_xtreme_prob, base_xtreme_prob, risk_lift
+        Date, Stock, risk_level, risk_score, hist_xtreme_prob, base_xtreme_prob
     """
     df = get_full_df()
 
@@ -76,8 +76,6 @@ def get_dashboard_df(use_cached_eps: bool = True) -> pd.DataFrame:
         "is_extreme_reaction",
         "hist_extreme_prob",
         "global_hist_prob",
-        "current_lift_vs_baseline",
-        "current_lift_vs_same_bucket_global",
         "extreme_count",
         "risk_level",
         "risk_score",
@@ -97,8 +95,6 @@ def get_dashboard_df(use_cached_eps: bool = True) -> pd.DataFrame:
         "risk_score",
         "hist_extreme_prob",
         "global_hist_prob",
-        "current_lift_vs_baseline",
-        "current_lift_vs_same_bucket_global",
         "base_extreme_prob",
         "extreme_count",
     ]
@@ -230,7 +226,7 @@ def main():
             "pre_earnings_drift_flag", "surprise_momentum_flag",
             "abs_reaction_3d",
             "is_large_reaction", "is_extreme_reaction",
-            "hist_extreme_prob", "current_lift_vs_baseline",
+            "hist_extreme_prob",
         ] if c in df.columns]
 
         _period_options = {
@@ -272,7 +268,6 @@ def main():
                 "is_large_reaction":        st.column_config.CheckboxColumn("Large"),
                 "is_extreme_reaction":      st.column_config.CheckboxColumn("Extreme"),
                 "hist_extreme_prob":        st.column_config.NumberColumn("P(Extreme)", format="%.3f"),
-                "current_lift_vs_baseline": st.column_config.NumberColumn("Lift", format="%.2fx"),
             }
         )
 
@@ -371,8 +366,6 @@ def main():
                 "is_high_conviction",
                 "hist_extreme_prob",
                 "base_extreme_prob",
-                "current_lift_vs_baseline",
-                "current_lift_vs_same_bucket_global",
                 "is_large_reaction",
                 "is_extreme_reaction",
             ]

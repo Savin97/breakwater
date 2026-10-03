@@ -28,7 +28,19 @@ rsync -avz \
 
 echo ""
 echo "=== [4/5] Pushing recent_calls.json to harbor_webpage ==="
-rsync -avz "$RUN_DIR/recent_calls.json" "$REMOTE:$HARBOR_WEBPAGE/recent_calls.json"
+# The public track record generator is PAUSED (audit item P4.3), so stage 5 writes no
+# recent_calls.json and there is nothing to publish. Skip instead of failing: `set -e`
+# would abort the run here and the weekly digest below would never be sent, which the
+# pause is not supposed to do. When P3.3 lands and the generator is un-paused, the file
+# reappears and this pushes it again with no further change.
+if [ -f "$RUN_DIR/recent_calls.json" ]; then
+  rsync -avz "$RUN_DIR/recent_calls.json" "$REMOTE:$HARBOR_WEBPAGE/recent_calls.json"
+else
+  echo "SKIPPED: no $RUN_DIR/recent_calls.json."
+  echo "         The public track record is paused pending audit item P3.3 —"
+  echo "         see audit/PHASE0_AUDIT_REV2.md and marketing/generate_public_track_record.py."
+  echo "         The landing page keeps serving whatever it already has; nothing new is published."
+fi
 
 echo ""
 echo "=== [5/5] Sending weekly digest ==="

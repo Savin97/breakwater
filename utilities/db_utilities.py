@@ -8,6 +8,7 @@
     create_eps_estimates_table_if_not_exists
     create_predictions_table_if_not_exists
 """
+import pandas as pd
 import logging
 from datetime import date, timedelta
 
@@ -41,18 +42,89 @@ def create_earnings_table_if_not_exists(con):
         CREATE UNIQUE INDEX IF NOT EXISTS earnings_unique
         ON earnings(stock, earnings_date, fiscal_end_date);
     """)
-    # The observed announcement time, so the BMO/AMC window is a recorded fact rather
-    # than something a later analysis infers from price behavior (audit/PHASE0_AUDIT_REV2.md
-    # Q1). Naive NY LOCAL time. announce_ts_source records where it came from. NULL means
-    # "not observed" — never a default, never a guess; AlphaVantage history is date-only
-    # and stays NULL.
+    # Phase 2 (audit/PHASE0_AUDIT_REV2.md Q1) — the observed announcement time, so the
+    # BMO/AMC window is a recorded fact rather than something a later analysis infers
+    # from price behavior. Naive NY LOCAL time; the column name carries the zone, which
+    # keeps it reproducible regardless of the reader's session timezone.
+    # announce_ts_source records where the timestamp came from, so provenance survives
+    # into the event frame (invariant 8). NULL means "not observed" — never a default,
+    # never back-filled from a guess. The AlphaVantage history is date-only and stays
+    # NULL forever; those events are simply unresolved.
     con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_ny TIMESTAMP")
     con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_source TEXT")
-    # WHEN the provider was observed saying that time, in naive NY LOCAL time (write it
-    # with utilities.time_utilities.now_ny(), never datetime.now()). observed_at <=
-    # announce_ts_ny means the row is still a schedule and ingestion may refresh it;
-    # observed_at > announce_ts_ny means it was observed after the event and is frozen.
+    # WHEN we observed the provider saying that time. Without it a timestamp collected
+    # while the event was still upcoming — a SCHEDULE, which the provider may later
+    # correct — is indistinguishable from one observed after the event, and a NULL-only
+    # backfill rule freezes the schedule into the historical record forever (external
+    # review of Phase 2, item 2). observed_at <= announce_ts_ny means the row is still a
+    # schedule and may be refreshed; observed_at > announce_ts_ny means the observation
+    # post-dates the announcement and is never overwritten.
+    #
+    # Naive NY LOCAL time, the SAME convention as announce_ts_ny, because the refresh
+    # rule compares the two directly — a comparison that would otherwise depend on the
+    # timezone of whatever host ran the ingestion. Write it with
+    # `utilities.time_utilities.now_ny()`, never `datetime.now()`. This is not the
+    # convention of the legacy `ingested_at` column, which is machine-local; see
+    # `ingestion.fetch_earnings_dates._REFRESH_ANNOUNCE_TS_SQL` for how that one is
+    # widened before it is ever compared against announce_ts_ny.
     con.execute("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS announce_ts_observed_at TIMESTAMP")
+
+
+def load_announcement_timing(con) -> pd.DataFrame:
+    """Observed announcement timestamps, keyed by (stock, earnings_date).
+
+    The event frame's only source of announcement timing. Reads the `earnings` table and
+    nothing else — in particular it never reads audit/provider_timestamps.parquet, which
+    was a one-time seed loaded into this column by a backfill since deleted, not a
+    runtime input.
+
+    `announce_ts_observed_at` rides along as provenance: it says when the provider was
+    observed saying that time, which is what separates a still-upcoming SCHEDULE from a
+    post-event observation. A DB predating that column reports it as NaT.
+
+    Where a (stock, earnings_date) somehow carries more than one timestamped row, the
+    MOST RECENTLY OBSERVED one wins — a later observation supersedes an earlier one, the
+    same rule the ingestion refresh applies.
+
+    Returns an empty frame (not an error) on a DB predating the column, so an old
+    database degrades to "every event UNKNOWN and unresolved" rather than to a crash.
+    """
+    out_cols = ["stock", "earnings_date", "announce_ts_ny", "announce_ts_source",
+                "announce_ts_observed_at"]
+    cols = {row[0] for row in con.execute("DESCRIBE earnings").fetchall()}
+    if "announce_ts_ny" not in cols:
+        return pd.DataFrame(columns=out_cols)
+    observed = ("announce_ts_observed_at" if "announce_ts_observed_at" in cols
+                else "CAST(NULL AS TIMESTAMP)")
+    out = con.execute(f"""
+        SELECT stock, earnings_date, announce_ts_ny, announce_ts_source,
+               {observed} AS announce_ts_observed_at
+        FROM earnings
+        WHERE announce_ts_ny IS NOT NULL
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY stock, earnings_date
+            ORDER BY {observed} DESC NULLS LAST, announce_ts_ny
+        ) = 1
+        ORDER BY stock, earnings_date
+    """).fetch_df()
+    out["earnings_date"] = pd.to_datetime(out["earnings_date"])
+    out["announce_ts_ny"] = pd.to_datetime(out["announce_ts_ny"])
+    out["announce_ts_observed_at"] = pd.to_datetime(out["announce_ts_observed_at"])
+    return out[out_cols]
+
+
+def load_active_stocks(con) -> set[str]:
+    """Tickers whose `stock_data.status` is 'active' — the current universe.
+
+    `status` is maintained by ingestion/fetch_sp500_sectors.py, which reconciles every
+    ticker against the live S&P 500 list each run: a ticker that left the index, or the
+    old symbol of a rename listed in data/ticker_renames.csv, is 'inactive' (the new
+    symbol is its own 'active' row). This is the authority for which stocks may receive
+    an upcoming call; nothing here infers activity from prices or earnings dates.
+    """
+    rows = con.execute("SELECT stock FROM stock_data WHERE status = 'active'").fetchall()
+    return {r[0] for r in rows}
+
 
 def create_sectors_data_table_if_not_exists(con):
     con.execute("""
@@ -145,6 +217,7 @@ def create_predictions_table_if_not_exists(con):
             surprise_momentum_flag  TEXT,
             model_version           TEXT,
             git_commit              TEXT,
+            score_asof_date         DATE,
             ingested_at             TIMESTAMP
         );
     """)
@@ -152,6 +225,37 @@ def create_predictions_table_if_not_exists(con):
     # scripts/sync_pipeline.sh overwrites the local DB with the droplet's copy, so a
     # schema change applied on only one side gets silently reverted on the next sync.
     con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS run_week DATE")
+    # score_asof_date: the observation date the tier was computed from. Added in the
+    # Phase 1 event-frame rebuild so staleness is a recorded fact rather than something
+    # a later audit has to infer. Rows written before it exists stay NULL — those are
+    # the pre-rebuild calls, whose score came from the previous completed event.
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS score_asof_date DATE")
+
+    # ---- Audit remediation P4.2 (audit/PHASE0_AUDIT_REV2.md) --------------------
+    # void_for_track_record: this call may be read as history, but must NEVER accrue
+    # into a published track record. It is a fact about the call, not about the row's
+    # age, so every consumer filters on the flag instead of hard-coding a date.
+    # Kept here, in the self-migration, so the marking survives a DB that is recreated,
+    # restored or re-synced; the UPDATE below is idempotent.
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS "
+                "void_for_track_record BOOLEAN DEFAULT FALSE")
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS void_reason TEXT")
+    con.execute("UPDATE predictions SET void_for_track_record = FALSE "
+                "WHERE void_for_track_record IS NULL")
+    # The 10 pre-audit calls (prediction_asof_date 2026-08-31, commit f3dd1e2). Their
+    # tier/risk_score came from the stock's PREVIOUS completed event (Issue 2), scored
+    # off a chain built on mismeasured before-open reactions (Issue 1). Preserved in
+    # full as history; stamped 0.3.1-preaudit and voided for track-record purposes.
+    con.execute("""
+        UPDATE predictions
+        SET model_version         = '0.3.1-preaudit',
+            void_for_track_record = TRUE,
+            void_reason           = 'Pre-audit feature chain (mismeasured BMO outcomes; '
+                                    'score inherited from the previous completed event). '
+                                    'Void for track record per audit/PHASE0_AUDIT_REV2.md P4.2.'
+        WHERE prediction_asof_date <= DATE '2026-08-31'
+          AND model_version IN ('0.3.1', '0.3.1-preaudit')
+    """)
     con.execute("""
         UPDATE predictions
         SET run_week = date_trunc('week', prediction_asof_date)
@@ -178,6 +282,16 @@ def create_predictions_table_if_not_exists(con):
         SELECT DISTINCT ON (stock, earnings_date) *
         FROM predictions
         ORDER BY stock, earnings_date, prediction_asof_date;
+    """)
+
+    # The track-record-safe slice: first call per event, minus everything voided by
+    # P4.2. ANY published/marketing number must come from this view, never from
+    # `predictions` or `predictions_first_call` directly. Re-created on every call, so
+    # a newly voided row drops out of it without anyone remembering to do anything.
+    con.execute("""
+        CREATE OR REPLACE VIEW predictions_track_record AS
+        SELECT * FROM predictions_first_call
+        WHERE NOT COALESCE(void_for_track_record, FALSE);
     """)
 
 def merge_tables(con):

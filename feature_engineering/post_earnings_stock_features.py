@@ -18,6 +18,11 @@ import numpy as np
 
 from config import REACTION_THRESHOLD, DEFAULT_REACTION_WINDOW
 from utilities.data_utilities import build_earnings_df
+from feature_engineering.event_features import (
+    event_reaction_std,
+    event_reaction_entropy,
+    event_directional_bias,
+    reaction_entropy)
 
 def engineer_earnings_reactions(df):
     """
@@ -76,12 +81,12 @@ def engineer_reaction_std(df):
     """
         reaction_std of past 8 earnings dates (window=8)
         min periods required is min_periods=3
+
+        Computation lives in feature_engineering.event_features.event_reaction_std so the
+        pending upcoming event runs through the identical code path (Phase 1).
     """
-    earnings_df = build_earnings_df(df)
-    earnings_df["reaction_std"] = (
-        earnings_df.groupby("stock")[DEFAULT_REACTION_WINDOW]
-            .transform(lambda x: x.abs().shift(1).rolling(window=8, min_periods=3).std(ddof=1) )
-    )
+    earnings_df = build_earnings_df(df).copy()
+    earnings_df = event_reaction_std(earnings_df)
     df = df.merge(
         earnings_df[["stock","earnings_date","reaction_std"]],
         on=["stock","earnings_date"],
@@ -90,42 +95,16 @@ def engineer_reaction_std(df):
     return df
 
 def engineer_reaction_entropy(df) -> pd.DataFrame:
-    """ """
-    def reaction_entropy(series : pd.Series, bins = 8) -> float:   
-        """ 
-            series = pd.Series of absolute reactions (past only)
-            Entropy (Shannon entropy) is defined as:
-                H = - sum_over_i( p_i * log(p_i) )
+    """Expanding Shannon entropy of past absolute reactions.
 
-            Properties:
-                minimum ≈ 0 -> all reactions same bucket
-                higher -> more chaotic
-
-            Entropy needs a probability distribution, we'll use a stable default of 
-            8 bins and compute a histogram.
-
-            p_i = count in bin i / total past earnings
-        """ 
-        series = series.dropna()
-
-        if len(series) < bins:
-            return np.nan
-        
-        hist, _ = np.histogram( series, bins)
-        probs =  hist/hist.sum()
-        probs = probs[probs > 0] # avoids log(0)
-
-        return -np.sum(probs * np.log(probs) )
-    
+    Computation lives in feature_engineering.event_features.event_reaction_entropy.
+    """
     best_reaction = df["reaction_3d"].fillna(df["reaction_1d"])
     earnings_mask = best_reaction.notna()
     earnings_df = df.loc[earnings_mask].copy()
     earnings_df["_best_reaction"] = best_reaction[earnings_mask].values
 
-    earnings_df["reaction_entropy"] = (
-        earnings_df.groupby("stock")["_best_reaction"]
-            .transform(lambda x: x.abs().shift(1).expanding().apply(reaction_entropy))
-    )
+    earnings_df = event_reaction_entropy(earnings_df)
     df.loc[earnings_mask, "reaction_entropy"] = earnings_df["reaction_entropy"].values
     return df
 
@@ -136,14 +115,11 @@ def engineer_directional_bias(df):
     
         Answers:
         When this stock reacts to earnings, does it tend to move up, down, or is it symmetric?
-    """
 
-    earnings_df = build_earnings_df(df)
-    earnings_df["directional_bias"] = (
-        earnings_df
-            .groupby("stock")[DEFAULT_REACTION_WINDOW]
-                .transform(lambda x: x.shift(1).expanding().mean())
-    )
+        Computation lives in feature_engineering.event_features.event_directional_bias.
+    """
+    earnings_df = build_earnings_df(df).copy()
+    earnings_df = event_directional_bias(earnings_df)
 
     earnings_mask = df[DEFAULT_REACTION_WINDOW].notna()
     df.loc[earnings_mask, "directional_bias"] = earnings_df["directional_bias"]

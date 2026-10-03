@@ -7,6 +7,7 @@ from datetime import date
 from config import PREDICTIONS_DB_PATH, MODEL_VERSION
 from utilities.db_utilities import create_predictions_table_if_not_exists
 from utilities.data_utilities import work_week_window
+from pipeline.events import pending_events
 
 
 def _get_git_commit() -> str:
@@ -18,7 +19,7 @@ def _get_git_commit() -> str:
         return ""
 
 
-def save_predictions_snapshot(df: pd.DataFrame, weeks: int = 1,
+def save_predictions_snapshot(events_df: pd.DataFrame, weeks: int = 1,
                               current_week: bool = False) -> None:
     """Persist the calls we published so backtesting can compare the tier/score we sent
     against the realized reaction. Called once per pipeline run (stage5).
@@ -34,13 +35,19 @@ def save_predictions_snapshot(df: pd.DataFrame, weeks: int = 1,
     a "prediction" for an event that already reported, which would leak hindsight into
     any backtest of this table. Rows written earlier for those events stay untouched, and
     the predictions_first_call view picks the earliest call per event regardless.
+
+    Reads the PENDING rows of the event frame. It used to read
+    `df.sort_values("date").groupby("stock").last()`, whose per-column NaN skipping
+    returned the tier/score of the stock's last COMPLETED event, so every archived call
+    was one earnings event stale (audit/PHASE0_AUDIT_REV2.md §Q4). score_asof_date is
+    persisted alongside so the archive records what the call was computed from.
     """
     today = pd.Timestamp(date.today())
     window_start, window_end = work_week_window(weeks=weeks, current_week=current_week)
     start = max(window_start, today)          # never record an event that already reported
     run_week_start = today - pd.Timedelta(days=today.weekday())      # Monday of this week
 
-    latest = df.sort_values("date").groupby("stock").last().reset_index()
+    latest = pending_events(events_df)
     upcoming = latest[
         (latest["earnings_date"] >= start) & (latest["earnings_date"] <= window_end)
     ].copy()
@@ -67,6 +74,7 @@ def save_predictions_snapshot(df: pd.DataFrame, weeks: int = 1,
         "surprise_momentum_flag":  upcoming["surprise_momentum_flag"],
         "model_version":           MODEL_VERSION,
         "git_commit":              _get_git_commit(),
+        "score_asof_date":         upcoming["score_asof_date"].dt.date,
         "ingested_at":             pd.Timestamp.now(),
     })
 
@@ -86,4 +94,4 @@ def save_predictions_snapshot(df: pd.DataFrame, weeks: int = 1,
     con.unregister("tmp_predictions")
     con.close()
     print(f"Saved {len(snap)} prediction rows → predictions table "
-          f"(asof {today.date()}, week ending {week_end.date()})")
+          f"(asof {today.date()}, week ending {window_end.date()})")

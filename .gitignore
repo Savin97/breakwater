@@ -20,6 +20,8 @@ backtesting/artifacts/
 testing/testing_results/
 testing/testing_results/**
 data/subscribers.txt
+data/benzinga_earnings/**
+data/benzinga_features/**
 
 # misc stuff
 .DS_Store
@@ -27,3 +29,22 @@ data/subscribers.txt
 *.env
 .ipynb_checkpoints/
 temp.py
+# Phase 1 parity scaffolding: a full pre-change copy of the daily frame (309 MB). The
+# parity procedure lives in the archive tag methodology-audit-archive-october-2026; this
+# line stays only while a local copy of the file still exists.
+audit/phase1_golden/daily_df_pre.parquet
+
+# Raw + normalized third-party vendor data (Massive / Benzinga, SEC, options). Licensed
+# data in a public repo, and nothing under here may ever become a production input — see
+# the static guards in testing/test_production_guards.py.
+data/vendor/
+**/vendor/
+
+# Benzinga acquisition tooling and its vendor data. Same rule as vendor/ above: licensed
+# third-party data must not land in a public repo. The tooling is archived in the tag
+# methodology-audit-archive-october-2026, not part of the product.
+benzinga_tools/
+benzinga_integration/
+benzinga_features/
+data/benzinga_earnings/
+data/benzinga_features/

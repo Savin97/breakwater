@@ -34,18 +34,23 @@ LONG_TERM_MOMENTUM = 20 # 20 past days
 LARGE_EARNINGS_REACTION_THRESHOLD = 0.05 # Based on 75th percentile of abs_reaction_3d
 EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08 # Based on 90th percentile of abs_reaction_3d
 
-# Bucket cut points on earnings_explosiveness_score. Chosen by OOS decile calibration
-# (see testing/testing.py); (73, 79) minimises ECE across the 2011-2025 walk-forward.
+# LEGACY PRODUCTION SETTINGS, pending replacement by Model C. Bucket cut points on
+# earnings_explosiveness_score, originally chosen by decile calibration on the legacy
+# abs_reaction_3d target (testing/metric_testing.py). That target mismeasures before-open
+# announcements, so the calibration and its out-of-sample claim are RETRACTED
+# (audit/PHASE0_AUDIT_REV2.md §Q2-Q3). Kept only because the shipped 0.3.1 scorer uses them.
 # Also used as score floors so a lift-reclassified event cannot score below the tier
 # it is labelled with.
 BUCKET_ELEVATED_FLOOR   = 73
 BUCKET_HIGH_ALERT_FLOOR = 79
 
-# Lift-based tier reclassification. A stock whose own past earnings blow up far more
-# often than the market baseline is treated as riskier than its structural score alone
-# implies. Measured OOS 2015-2026: Normal events with lift >= 1.5 realise P(>=8%) = 0.238
-# vs 0.058 for the Normal events left behind, and 0.250 for the genuine Elevated bucket —
-# i.e. they behave like Elevated, so they are labelled Elevated.
+# LEGACY PRODUCTION SETTINGS, pending replacement by Model C. Lift-based tier
+# reclassification: a stock whose own past earnings blow up far more often than the market
+# baseline is treated as riskier than its structural score alone implies. The performance
+# figures once quoted here were measured on the legacy target, which mismeasures
+# before-open announcements, and are RETRACTED (audit/PHASE0_AUDIT_REV2.md §Q3: the whole
+# chain feeding stock_bucket_lift was built from mismeasured outcomes). No lift figure is
+# shown to users (P4.1). Kept only because the shipped 0.3.1 scorer uses them.
 # prior_strength shrinks thin per-stock samples toward the market baseline.
 LIFT_PRIOR_STRENGTH     = 20
 LIFT_TO_ELEVATED        = 1.5

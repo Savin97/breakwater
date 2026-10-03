@@ -290,7 +290,7 @@ body {
   background: #f9f9f9;
 }
 
-/* ── High Conviction tier: High Alert + drift flag (4.78x OOS lift) ── */
+/* ── High Conviction tier: High Alert + drift flag (legacy rule, pending Model C) ── */
 .hc-num { color: #8e44ad; }
 .hc-row td { background: #fdf6ff !important; }
 .hc-row:hover td { background: #f7eaff !important; }

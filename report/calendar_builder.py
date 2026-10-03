@@ -16,6 +16,7 @@ import pandas as pd
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from utilities.output_utilities import get_run_output_dir
+from pipeline.events import pending_events
 
 # Fixed percentile thresholds calibrated on full earnings history.
 # Using fixed thresholds (not within-week percentiles) means the flag
@@ -57,14 +58,14 @@ def _bucket_stats(df):
     return per_bucket[["hist_extreme_prob", "lift_vs_baseline"]], round(p_global, 3)
 
 
-def build_calendar_data(df, reference_date=None, window_days=14):
+def build_calendar_data(df, reference_date=None, window_days=14, events_df=None):
     """
     Prepares calendar data for a window of earnings events.
 
-    reference_date : start of the display window.
-                     Defaults to (latest earnings_date in data - 7 days) so the window
-                     is always centered on the most recent available data.
+    reference_date : start of the display window. Defaults to today.
     window_days    : how many days forward from reference_date to include (default 14).
+    events_df      : the event frame (pipeline/events.py). When given, the window is
+                     selected from its pending rows; when None, from `df` itself.
 
     Returns (events_list, summary_dict, grouped_by_date_list).
     Stocks without a scored earnings_explosiveness_bucket are excluded — they lack
@@ -74,24 +75,35 @@ def build_calendar_data(df, reference_date=None, window_days=14):
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
 
     if reference_date is None:
-        # Center window on latest available date so there's always something to show,
-        # even when running against stale/historical data.
-        reference_date = pd.Timestamp(df["earnings_date"].max()) - pd.Timedelta(days=7)
+        # The calendar is the forward-looking weekly deliverable, so the window opens
+        # today. (It used to open at max(earnings_date) - 7d, which is the furthest-out
+        # scheduled report — part of why the window matched nothing.)
+        reference_date = pd.Timestamp.today().normalize()
     reference_date = pd.Timestamp(reference_date)
     end_date = reference_date + pd.Timedelta(days=window_days)
 
     # Thresholds from full earnings history — stable across weeks
     earn_all = df[df["is_earnings_day"] == 1].copy() if "is_earnings_day" in df.columns else df.copy()
+    # PRE-EXISTING BUG, fixed here as part of the Phase 1 consumer migration: the forward
+    # window below was selected out of `earn_all`, i.e. rows with is_earnings_day == 1,
+    # which by construction are COMPLETED events with a past earnings_date. A window
+    # centred on the future therefore matched nothing and the calendar rendered zero
+    # events on every run. Upcoming events live on the pending rows of the event frame.
     all_frag = earn_all["momentum_fragility_score"].dropna()
     frag_elevated_thr  = all_frag.quantile(FRAG_ELEVATED_PCTL)
     frag_stretched_thr = all_frag.quantile(FRAG_STRETCHED_PCTL)
 
     bucket_stats, p_global = _bucket_stats(df)
 
-    earn = earn_all
-    window = earn[
-        (earn["earnings_date"] >= reference_date) &
-        (earn["earnings_date"] <= end_date)
+    # The pipeline (stage5) passes the event frame, so the weekly calendar reads pending
+    # rows. Callers without one — the dashboard's "Export calendar HTML" button
+    # (streamlit_dash/app.py), which hands over its own frame of completed + upcoming
+    # rows for a window the user picked — keep the previous behaviour and select the
+    # window from the frame they passed.
+    upcoming = pending_events(events_df) if events_df is not None else earn_all
+    window = upcoming[
+        (upcoming["earnings_date"] >= reference_date) &
+        (upcoming["earnings_date"] <= end_date)
     ].copy()
 
     # Exclude stocks with no scored bucket (< ~8 historical earnings events)
@@ -116,8 +128,7 @@ def build_calendar_data(df, reference_date=None, window_days=14):
         surprise_flag = str(row.get("surprise_momentum_flag", "") or "")
         drift_flag    = str(row.get("pre_earnings_drift_flag", "") or "")
 
-        # High Conviction: High Alert + any drift flag (4.78x OOS lift).
-        # Drift flag compounds cleanly with the structural score; surprise flags add less.
+        # High Conviction: High Alert + any drift flag (legacy rule, pending Model C).
         high_conviction = (bucket == "High Alert") and bool(drift_flag)
 
         events.append({
@@ -131,7 +142,6 @@ def build_calendar_data(df, reference_date=None, window_days=14):
             "risk_level_css":    bucket.lower().replace(" ", "-"),
             "high_conviction":   high_conviction,
             "hist_extreme_prob": f"{row['hist_extreme_prob'] * 100:.1f}%" if pd.notna(row.get("hist_extreme_prob")) else "—",
-            "lift_vs_baseline":  f"{row['lift_vs_baseline']:.1f}x"  if pd.notna(row.get("lift_vs_baseline")) else "—",
             "fragility_flag":    row["fragility_flag"],
             "surprise_flag":     surprise_flag,
             "drift_flag":        drift_flag,
@@ -169,7 +179,7 @@ def build_calendar_data(df, reference_date=None, window_days=14):
     return events, summary, grouped
 
 
-def generate_calendar(df, reference_date=None, window_days=14):
+def generate_calendar(df, reference_date=None, window_days=14, events_df=None):
     """
     Renders the weekly calendar HTML and writes it into this run's timestamped
     output subfolder (output/output_<timestamp>/weekly_calendar.html).
@@ -177,7 +187,7 @@ def generate_calendar(df, reference_date=None, window_days=14):
     Can also be called directly (e.g. from Streamlit sidebar export button).
     Returns the path written to, or None if there was nothing to render.
     """
-    events, summary, grouped = build_calendar_data(df, reference_date, window_days)
+    events, summary, grouped = build_calendar_data(df, reference_date, window_days, events_df)
     if not events:
         print("Weekly calendar: no scored earnings events in window.")
         return None

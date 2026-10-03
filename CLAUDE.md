@@ -8,22 +8,79 @@ At the start of every conversation, read `.claude/memory/MEMORY.md` to restore c
 
 **Memory location:** All session memory lives in `.claude/memory/` inside this repo. It syncs via git across machines and is the single source of truth. Do NOT write to the Claude harness auto-memory location (`~/.claude/projects/*/memory/`) — that path is not used for this project and will diverge.
 
-## External Brain
+## Branches and Folders
 
-Durable cross-project knowledge lives at `/home/Michael/projects/brain`.
+Two branches: `master` (production — the droplet runs it) and `methodology-rebuild` (the
+audit rebuild, merged into master only when the user says it is ready). One folder: this
+one. **Do not create other branches, worktrees or copies of the repo without asking.**
+Small fixes go on master; afterwards master is merged into methodology-rebuild, never the
+other way round until the rebuild is ready. The user commits; give them the `-m` message.
 
-Use the external brain for source-backed research notes, durable decisions, project maps, and concepts that should persist across Breakwater, Polymarket, and musicology work. Keep `.claude/memory/` for Breakwater session continuity and immediate handoff notes.
+The complete methodology research (Phase 3–5 evaluation, Model C research code, options,
+SEC and fundamentals experiments, vendor tooling, audit scripts and artifacts) is preserved
+at the tag `methodology-audit-archive-october-2026`. Since 2026-10-03 `methodology-rebuild`
+is being rebuilt from `master` as a clean production integration: production fixes only,
+no research code. Recover anything archived from the tag selectively; never restore the
+research tree wholesale.
 
-Before doing architecture work, research synthesis, model-evaluation planning, or durable documentation, check `/home/Michael/projects/brain/projects/breakwater.md` and relevant notes under `/home/Michael/projects/brain/wiki/`.
+## Brain
+
+`/home/Michael/projects/brain`: the user's cross-project research notes (papers, finance
+concepts). When reading or adding to it would help (a research question, a paper or
+finding worth keeping), suggest it to the user — don't use it unasked. Example: it holds
+Leung & Santoli (2014) on the options-implied earnings jump, relevant to testing Breakwater
+against the implied move.
 
 ## What This Is
 
 Breakwater is an earnings tail-risk model for S&P 500 stocks. It ingests price/earnings/sector data, engineers features, scores each stock's upcoming earnings event on a risk scale, and produces reports and a Streamlit dashboard.
 
+## Performance Claims — `audit/PHASE0_AUDIT_REV2.md` Is The Authority
+
+**Read it before writing, quoting or restoring any performance number, anywhere in this repo
+or in any customer-facing or marketing surface.** Every figure published before it was derived
+from a target that mismeasured before-open (BMO) announcements and was overstated by roughly
+3x. Remediation item **P4.1 is "Retire every published lift figure until P3.3."**
+
+Verified figures (audit §Q2, n=11,496 events with provider announcement timestamps):
+
+| quantity | verified | retracted value it replaces |
+|---|---|---|
+| market baseline P(\|reaction\| ≥ 8%) | **0.204** [0.197, 0.211] | 6.9% |
+| High Alert hit rate | **0.455** [0.429, 0.482] | 40% |
+| Elevated hit rate | **0.293** [0.265, 0.321] | ~18% |
+| Normal hit rate | **0.157** [0.149, 0.164] | ~4% |
+| High Conviction hit rate | **0.586** [0.509, 0.659], n=162 | 52% |
+| High Alert lift | **1.91x stratified** (2.23x crude) | 3.70x / 5.8x |
+| High Conviction lift | **2.46x stratified** (2.88x crude) | 4.78x / 4.83x |
+| capture of ≥8% moves, High Alert + Elevated | **0.390** [0.371, 0.410] | 42% |
+
+Rules that follow from it:
+
+- **Quote the stratified lift, never the crude one.** The crude-vs-stratified gap is
+  composition, not model skill (audit §Q2). Reporting AMC alone is worth 1.42x with no model.
+- **There is no 15-year and no 2015–2025 out-of-sample record.** The figures above were
+  measured when verified timestamps covered 25.4% of scored events and reached back only to
+  ~2020 for most tickers (audit §Q3 coverage constraint). Nothing above is out-of-sample: the
+  73/79 cuts were selected on this distribution and are being re-fit. Coverage has since
+  grown (see the Benzinga section), but that does not change these figures or license new
+  ones — a figure measured on the wider history is a Phase 3 result and needs the same
+  scrutiny.
+- **The demonstrated edge is 1.87x within AMC and unestablished within BMO** (audit §Q3). On
+  BMO, 96.0% of events are `Normal` and `Normal` lift is 0.94x.
+- **No lift figure is displayed to users** (P4.1). The whole feature chain behind
+  `stock_bucket_lift` was computed from mismeasured prior outcomes (audit §Q3), so no
+  per-stock or per-tier lift appears in the PDF report (tables, recommendation text,
+  High Conviction badge), the weekly calendar, the dashboard or the parquet it reads.
+  The legacy scorer still computes lift internally for tier promotion until Model C
+  replaces it. `testing/test_customer_outputs.py` enforces this.
+- The pre-audit archived predictions are void for track-record purposes and
+  `marketing/generate_public_track_record.py` is paused (P4.2, P4.3).
+
 ## Commands
 
 ```bash
-# Run the full pipeline (see the incremental note under Stage 1 before running)
+# Run the full pipeline (ingests via yfinance, then scores and writes reports)
 python main.py
 
 # Re-score WITHOUT re-ingesting — no API calls, uses the existing DuckDB.
@@ -40,11 +97,16 @@ python -m testing.calibration
 # Launch the Streamlit dashboard
 streamlit run streamlit_dash/app.py
 
-# Ad-hoc feature/score testing
-python -m testing.testing
+# Predictions for a range of whole Mon-Fri work weeks (reads output/events_df.parquet)
+python -m analysis.predictions_range --weeks-back 12
+python -m analysis.predictions_range --weeks-forward 4
+python -m analysis.predictions_range --monday 2026-06-01 --weeks 3
 
-# Run tests
-pytest testing/test_pipeline.py
+# Ad-hoc feature/score metric script (not a test suite)
+python -m testing.metric_testing
+
+# Run the whole test suite
+pytest testing
 ```
 
 The project uses a `.venv` (Python 3.14). Activate with `source .venv/bin/activate` or prefix commands with `.venv/bin/python`.
@@ -55,20 +117,199 @@ The project uses a `.venv` (Python 3.14). Activate with `source .venv/bin/activa
 
 | Stage | File | What it does |
 |---|---|---|
-| 1 | `pipeline/stage1.py` | Creates/updates DuckDB at `db/breakwater.duckdb`. **Both settings ingest — the flag picks the provider.** `incremental=True` uses the free yfinance fetchers (`incremental_ingest_all_prices_yf`, `incremental_ingest_all_earnings_dates_yf`). `incremental=False` uses the legacy AlphaVantage full-history fetchers, which **require a paid AlphaVantage key**. `main.py` currently passes `incremental=False`. To re-score without ingesting at all, skip stage 1 entirely (see Commands). |
+| 1 | `pipeline/stage1.py` | Creates/updates DuckDB at `db/breakwater.duckdb`. **Both settings ingest — the flag picks the provider.** `incremental=True` uses the free yfinance fetchers (`incremental_ingest_all_prices_yf`, `incremental_ingest_all_earnings_dates_yf`). `incremental=False` uses the legacy AlphaVantage full-history fetchers, which **require a paid AlphaVantage key**. `main.py` passes `incremental=True`. To re-score without ingesting at all, skip stage 1 entirely (see Commands). |
 | 2 | `pipeline/stage2.py` | Reads `prices`, `earnings`, `stock_data` tables from DB; merges into a single DataFrame. Also dedups earnings and asserts data freshness. |
-| 3 | `pipeline/stage3.py` | Calls ~20 feature-engineering functions in sequence; each appends columns and returns the df. `incremental=True` recomputes only price-dependent rolling features and reads expanding earnings stats from `config.INCREMENTAL_CACHED_COLS`. |
-| 4 | `pipeline/stage4.py` | Calls the risk-scoring functions; produces `risk_score` (0–100), `earnings_explosiveness_bucket`, and component scores. `incremental=True` skips everything needing `abs_reaction_3d`. |
-| 5 | `pipeline/stage5.py` | Writes `output/full_df.parquet`, then generates PDF reports, the weekly calendar, charts, the public track record, the Streamlit export, and a predictions snapshot. |
+| 3 | `pipeline/stage3.py` | Calls ~20 feature-engineering functions in sequence; each appends columns and returns the df. Its `incremental=True` mode (price features only, earnings stats from `config.INCREMENTAL_CACHED_COLS`) is dead code: `run_pipeline` never passes the flag past stage 1. |
+| 4 | `pipeline/stage4.py` | Calls the risk-scoring functions; produces `risk_score` (0–100), `earnings_explosiveness_bucket`, and component scores. Its `incremental=True` mode is likewise never called. |
+| 4b | `pipeline/events.py` | Builds the **event frame** — one row per earnings event, every completed event plus one pending row per **active** stock (`stock_data.status = 'active'`, passed in as `active_stocks`; a stock that left the index keeps its history but gets no upcoming call) — attaches verified announcement timing, and asserts completed-event parity against the daily frame. Written to `output/events_df.parquet`. |
+| 5 | `pipeline/stage5.py` | Writes `output/full_df.parquet`, then generates PDF reports, the weekly calendar, charts, the public track record (paused under P4.3 — it returns without writing), the Streamlit export, and a predictions snapshot. |
 
-The intermediate output between stages is a pandas DataFrame. Stage 3 and 4 functions all follow the same pattern: accept `input_df`, copy it, add columns, return it — never mutate in place.
+The intermediate output between stages is a pandas DataFrame. Stage 3 and 4 functions all follow the same pattern: accept `input_df`, add columns, return it. The copy happens once at each stage's entry (`stage3_df = stage2_df.copy()`), not per function, so a function must never be called on a frame another stage still needs.
 
 ## Data Storage
 
-- **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price)`, `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
+- **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price)`, `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage, ingested_at, announce_ts_ny, announce_ts_source, announce_ts_observed_at)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
 - **Parquet** (`output/full_df.parquet`): the fully engineered + scored DataFrame, written at the top of stage 5. This is the source of truth for backtesting, calibration, and reporting.
 - **Parquet** (`output/streamlit_df.parquet`, `output/upcoming_df.parquet`): produced by `streamlit_dash/streamlit_export.py`; consumed by the Streamlit app.
+- **Parquet** (`output/events_df.parquet`, ~15 MB): the event frame. One row per earnings event; `is_pending == 0` is history, `is_pending == 1` is the upcoming call. Every forward-looking consumer reads this, never `groupby("stock").last()`.
 - **Stock universe** (`data/stock_list.csv`): the list of stocks to process.
+
+## Announcement Timing and the Corrected Target (Phase 2)
+
+`reaction_1d/3d/5d` and `abs_reaction_3d` measure `close(D+k)/close(D)`, which assumes the
+announcement lands after the close of the report date. That is true for AMC reporters and
+**false for BMO reporters**, whose first post-announcement session is D itself. On 6,573
+timestamped BMO events the measured P(|reaction| ≥ 8%) is 0.041; anchored correctly it is
+0.173. See `audit/PHASE0_AUDIT_REV2.md` §Q1–Q2.
+
+**What this does and does not establish.** The legacy target is *proven wrong for BMO
+events*. Nothing here establishes anything about the model: its validity and its
+incremental value remain **unestablished**, pending the corrected-history rebuild (Phase 3)
+and a competitive-baseline validation. Do not restate this finding as a claim about the
+model being right.
+
+**The legacy columns are unchanged and remain the production target.** Phase 2 adds a
+*parallel* corrected target so the two can be compared on equal terms; nothing switches over
+until the whole historical chain is rebuilt and the thresholds re-fit, which is Phase 3.
+
+`feature_engineering/announcement_timing.py` owns this. Event-frame columns:
+
+| column | meaning |
+|---|---|
+| `announce_ts_ny` | observed announcement time, naive **NY local** |
+| `announce_ts_source` | provenance of that timestamp |
+| `announce_ts_observed_at` | **when** the provider was observed saying it, naive **NY local** — the schedule-vs-observation flag |
+| `announce_window` | `BMO` (<09:30) / `AMC` (≥16:00) / `INTRADAY` / `UNKNOWN` — a pure function of the clock |
+| `anchor_date` | last close **strictly before** the announcement: AMC → close(D), BMO → close(D−1) |
+| `anchor_status` | `resolved`, `pending`, or `unresolved_{no_timestamp,intraday,no_session,price_gap,no_prior_session,anchor_before_history}` |
+| `anchor_session_status` | whether the report date is a session and this ticker has a row for it |
+| `reaction_{1,3,5}d_anchored`, `abs_reaction_3d_anchored` | k post-announcement **market sessions** from the anchor |
+| `reaction_{1,3,5}d_anchored_status` | per-horizon availability: `available`, or `unavailable_endpoint_{beyond_market_grid,after_last_price,price_gap}`, or the `anchor_status` when the anchor itself failed |
+
+**Anchors and endpoints are positions on the market-session grid**
+(`market_session_grid(daily_df)` — every date the loaded price data shows the market
+trading), never positions in the ticker's own price rows, and never calendar arithmetic:
+
+```
+anchor session     = grid[i + offset]        i = the report date's grid index
+k-session endpoint = grid[i + offset + k]    AMC offset 0, BMO offset −1
+```
+
+The ticker must then have a price row on those **exact** dates. Counting the ticker's own
+rows silently absorbs a hole — `.shift(-3)` over a three-session gap yields a six-session
+window, and a BMO event missing its D−1 row anchors to D−2 — and the arithmetic still
+returns a number. The legacy columns do exactly this and are deliberately left alone; the
+corrected target refuses and says which session it was missing. So an AMC anchored
+reaction is bit-identical to the legacy one **wherever the ticker has a row on every
+session in the window**; the AMC events that differ are all missing sessions (10 of 4,842
+on the Phase 2 data). That equality is the control.
+
+Rules that must not be relaxed:
+
+- **Never infer BMO/AMC from realized price behavior.** Audit rev-1 did (ticker labelled BMO
+  because its day-0 move exceeded its day-+1 move) and every "corrected" number it produced
+  was circular. `test_6_the_classifier_never_touches_price` enforces this statically.
+- **Never fabricate a timestamp.** The AlphaVantage date-only history stays NULL and its
+  events stay unresolved. Since the 2026-09-28 Benzinga seed, 25,883 of 45,713 completed
+  events (56.6%) are resolved — ~90%+ of each year from 2013, none before 2011; the rest are
+  counted, not guessed at.
+- **Never auto-roll a non-trading-day date.** A weekend/holiday date and a date the market
+  traded but we failed to ingest have different causes; rolling hides both (§Q6).
+- **Only `resolved_events()` may feed a corrected calibration**, and "anchor resolved" is
+  not "target available". `anchor_resolved_events()` is the anchoring control slice;
+  `resolved_events(events, target=...)` additionally requires that anchored outcome to be
+  non-null and defaults to `abs_reaction_3d_anchored`. After the Benzinga seed that is
+  25,883 resolved anchors → 25,879 with a 3d target. `resolution_summary()` in
+  `announcement_timing.py` reports the counts on whatever DB it is run on.
+- **A pre-event timestamp is a schedule, not a record.** A timestamp observed while the
+  event was still upcoming may be corrected later, so ingestion refreshes it when a newer
+  observation arrives (`refresh_announcement_timestamp`). A timestamp observed *after* the
+  announcement is never overwritten. `announce_ts_observed_at` is what tells the two
+  apart; where it is NULL, `ingested_at` stands in as a lower bound, and where both are
+  NULL nothing is refreshed.
+- **One clock: naive New York wall time.** `announce_ts_ny` and `announce_ts_observed_at`
+  are both naive NY local, because the refresh rule compares them directly and the
+  BMO/AMC cut points (09:30, 16:00) are NY wall-clock facts.
+  `utilities/time_utilities.now_ny()` is the only sanctioned source — `datetime.now()`
+  returns the *host's* clock, so on a UTC or Israel box an observation made hours before
+  an announcement reads as later than it, and a schedule gets frozen into the historical
+  record permanently. A static test forbids stamping `announce_ts_observed_at` from a
+  host clock; `test_schedule_vs_observation_is_identical_on_every_host` runs the whole
+  rule under five host timezones and across both US DST transitions.
+  The legacy `ingested_at` is **machine-local and its convention was never recorded**, so
+  it is never compared against `announce_ts_ny` raw: the fallback first widens it by
+  `MAX_HOST_CLOCK_AHEAD_OF_NY_HOURS` (19 — UTC+14 against EST) into a lower bound that
+  holds on any host, and a row is frozen only if it was post-event under *every* possible
+  host timezone. The residual error therefore only ever runs toward "still a schedule",
+  which a later correctly-stamped observation repairs; a false post-event classification
+  would be permanent. Every `announce_ts_observed_at` currently in the DB came from a
+  seed's fixed pull date (2026-09-05 audit, 2026-09-10 Benzinga) or from `now_ny()`, so no
+  stored row carries a host-local stamp.
+- **Seeds are evidence, not runtime inputs.** A yfinance timestamp pull (2026-09-05)
+  seeded `earnings.announce_ts_ny` first, via a one-time backfill; the Benzinga seed
+  (below) superseded most of it. Both are done, and the files and scripts that produced
+  them live in the archive tag `methodology-audit-archive-october-2026`. Ingestion keeps
+  the column current from there. Tests assert no production module reads either seed or
+  any vendor file (`test_announcement_timing.py`, `test_production_guards.py`).
+
+## Historical Timing Source: Benzinga (seeded once)
+
+The Benzinga Earnings API (via Massive) is Breakwater's **historical announcement-timing
+source**. The evaluation verdict is **ACCEPT WITH CONDITIONS** in
+`audit/BENZINGA_EARNINGS_AUDIT.md`, which is the artifact to read before doing anything
+with it.
+
+**How it reached production — once, as a seed, never as a feed.** On 2026-09-28 snapshot
+`earnings_20260910T180412Z` was turned into a seed (25,515 Benzinga exact-date rows + 1,028
+yfinance fallback; 214 off-by-one dates and 21 identity-hazard tickers skipped) and
+`backfills/load_announcement_seed.py` loaded it into the **droplet** DB, which then syncs
+down. On 2026-09-29 `backfills/apply_date_corrections.py` applied the earnings-date
+corrections built from the same snapshot. Both loaders are idempotent and already applied.
+The acquisition tooling, the seed and correction builders, and the vendor-matching code
+are in the archive tag `methodology-audit-archive-october-2026`, not in this tree. No
+pipeline stage calls Benzinga or reads vendor files; ingestion keeps timestamps current
+from yfinance. Load on the droplet, never locally — `full_workflow.sh` overwrites the
+local DB with the droplet's.
+
+Rules for any future use of this vendor, none of which may be relaxed:
+
+- **Raw vendor data lives in `data/vendor/`, which is gitignored.** Licensed third-party
+  data in a public repo, and a raw vendor file must never become a production input.
+  `testing/test_production_guards.py` asserts statically that no production module
+  mentions it and that the directory stays ignored. Never `git add -A` / `git add .`
+  in this repo.
+- **Never `sort=date.desc` against this vendor.** Its descending cursor returns 180,033 of
+  296,334 records and then reports itself finished, with no error — a silent 39% loss.
+  Forward or date-partitioned pagination only, and verify the count.
+- **`time` is New York local wall clock, despite being documented as "EST"** (audit §2).
+  A fixed UTC-5 reading would move every EDT event an hour across the 16:00 cut.
+- **`00:00:00` is the vendor's filler for "time unknown", not a BMO announcement.** 7.5%
+  of records carry it.
+- **Use the production window classifier** (`classify_announce_window` in
+  `feature_engineering/announcement_timing.py`), never a second set of cut points, and
+  never anything price-derived.
+- **Do not join on today's ticker string.** `BF-B` exists in the vendor only as `BF.B` and
+  `BFB`; `BRK-B` holds 29 records while `BRK.B` holds 62. `company_name` is not
+  point-in-time, and `SNDK` is a reused symbol across a 3,297-day hole under the *same*
+  name.
+
+The binding constraint on any future use: usable timing does not reach a steady state
+until 2015, and ≥80% of today's universe does not carry 28 prior timed events until year
+end **2019**.
+
+## Multi-Week Predictions (`analysis/predictions_range.py`)
+
+Predictions for N whole Mon-Fri work weeks, backward or forward, on the shipped 0.3.1
+model — legacy `abs_reaction_3d` target, `config.py` floors and lift gates. The Phase 2
+`*_anchored` columns are deliberately **not** reported here; no threshold has been re-fit
+against them, and putting them on a predictions sheet invites reading them as model
+output. Writes `output/predictions/predictions_<start>_<end>.{csv,txt}` — its own
+directory, never `get_run_output_dir()`, which wipes today's run folder on first call.
+
+Week arithmetic is `utilities/data_utilities.week_block_window()`, next to
+`work_week_window()`; a forward window is asserted identical to the one the weekly digest
+and the predictions snapshot publish on.
+
+The two halves are **not the same kind of number**:
+
+- **History** (`is_pending == 0`) is a **retro-score, not an archive**. Event-level stats
+  are causal (expanding/`shift(1)` over prior events only), but a few carried daily
+  columns — per-date cross-sectional ranks, the global quantile in
+  `score_momentum_fragility` — are computed over the whole frame. Where the real
+  published call exists it appears as `published_tier`; that archive starts 2026-08-31.
+  Phase 1 changed nothing here — `assert_completed_parity` proves completed events are
+  identical to the pre-audit daily pipeline's output.
+- **Upcoming** (`is_pending == 1`) is reported **twice**. `earnings_explosiveness_bucket`
+  / `risk_score` come from the event frame's pending row; the parallel
+  `*_pre_audit` columns reproduce
+  master's `df.sort_values("date").groupby("stock").last()`, whose per-column NaN
+  skipping reaches back to the stock's last **completed** event — the one-event-stale
+  call that was actually published before Phase 1 (§Q4). `pre_audit_differs` marks the
+  disagreements. The NaN skipping is the behaviour being measured; do not "fix" it.
+
+There is no pre-audit column on history rows: reproducing what `.last()` returned in a
+past week needs the daily frame as it stood then, and today's frame would answer with an
+event that has since completed.
 
 ## Feature Engineering Conventions
 
@@ -101,10 +342,20 @@ Stage 4 produces these component scores (all in `scoring/scoring_features.py`):
 score + lift) while `risk_score` carries only the first, so a lift-promoted event can sit in a
 higher tier than a higher-scoring event. That is deliberate: it means "mild structural profile,
 violent personal history." Do not "fix" it by flooring the score to the tier boundary or by
-multiplying the score by the lift — the latter was measured and drops top-decile lift from
-3.70x to 2.98x, because lift is ~0.79 rank-correlated with the score and corrupts its ordering
-when blended. As a conditional gate the same signal is strongly additive: capture of ≥8% moves
-goes 43.9% → 57.0% with `High Alert` purity unchanged at 0.409.
+multiplying the score by the lift — the latter was measured and degrades top-decile lift,
+because lift is ~0.79 rank-correlated with the score and corrupts its ordering when blended. As
+a conditional gate the same signal is additive: it raises capture of ≥8% moves with `High
+Alert` purity roughly unchanged.
+
+> **Figures retracted.** This rationale used to cite "3.70x → 2.98x" and "capture 43.9% →
+> 57.0%, purity 0.409". All four were measured on the legacy target, which mismeasures BMO
+> events, and `audit/PHASE0_AUDIT_REV2.md` §Q3 establishes that the entire feature chain
+> feeding `stock_bucket_lift` was computed from mismeasured prior outcomes. The **direction**
+> of the comparison is the reason for the design and is kept; the **magnitudes are not
+> publishable and are not restated**. The audit has no re-derived analogue of the
+> blend-vs-gate comparison — do not substitute the verified 1.91x or 39.0% for them, which are
+> different quantities. Re-measure under Phase 3 (P3.1–P3.3) before quoting a number here
+> again.
 
 Thresholds are in `config.py`: `LARGE_EARNINGS_REACTION_THRESHOLD = 0.05`,
 `EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08`, bucket cut points
@@ -117,7 +368,7 @@ Thresholds are in `config.py`: `LARGE_EARNINGS_REACTION_THRESHOLD = 0.05`,
 - `STOCKS_START_DATE / STOCKS_END_DATE`: date range for price data
 - `DEFAULT_REACTION_WINDOW`: `"reaction_3d"` — the primary reaction metric
 - `PRICES_PROVIDER`: `"ALPHAVANTAGE"` — only used by the legacy `incremental=False` ingestion path, which needs a paid key. The yfinance path (`incremental=True`) ignores it and is the one in routine use; its knobs are `YFINANCE_MAX_WORKERS` and the jitter settings.
-- `INCREMENTAL_CACHED_COLS`: expanding earnings stats read from the previous `full_df.parquet` in incremental mode instead of recomputed. Anything needing `abs_reaction_3d` must be listed here, or it will be silently missing on incremental runs.
+- `INCREMENTAL_CACHED_COLS`: expanding earnings stats the (currently uncalled) incremental scoring path reads from the previous `full_df.parquet`. If that path is ever revived: anything aggregating over a stock's earnings history must be listed, or it will be silently missing — the drift flag broke exactly this way.
 
 ## Backtesting
 
@@ -129,4 +380,11 @@ score/bucket consistency check. Use it to **compare two variants on equal terms*
 an absolute hit rate: the 73/79 cut points were themselves selected on this same window, so
 absolute numbers are optimistically biased.
 
-The train/test split convention used in `testing/testing.py`: pre-2015 = train, post-2015 = OOS test.
+The train/test split convention used in `testing/metric_testing.py`: pre-2015 = train, post-2015 = OOS test.
+
+**This split does not license an out-of-sample performance claim.** It runs on the legacy
+`abs_reaction_3d` target for all years, which is wrong for BMO events. Verified announcement
+timestamps — the only basis on which the target is known to be correctly anchored — now
+cover ~90% of each year from 2013 (Benzinga seed), but nothing in this module uses the
+anchored target (audit §Q3, "Coverage constraint"). The retired "consistent 2015–2025 OOS" line in
+`readme.md` came from reading this convention as a published record. Do not do that again.

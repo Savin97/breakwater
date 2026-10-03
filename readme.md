@@ -1,6 +1,8 @@
 # Breakwater
 
-Earnings tail-risk model for S&P 500 stocks. Scores each upcoming earnings event on a risk scale (0–100) and surfaces the ~15–20 events per week most likely to produce large moves. High Alert stocks move ≥8% on earnings 40% of the time vs. 7% base rate (5.8x lift, consistent 2015–2025 OOS).
+Earnings tail-risk model for S&P 500 stocks. Scores each upcoming earnings event on a risk scale (0–100) and surfaces the ~15–20 events per week most likely to produce large moves.
+
+> **No performance figures are published at present.** The scoring model is being replaced and will be re-fit on timestamp-anchored earnings reactions; new figures will be published only after that model has been audited. The previously published figures (40% vs 6.9%, 5.8x lift, a consistent 2015–2025 OOS record) were derived from a target that mismeasured before-open announcements, were overstated by roughly 3x, and are retracted. The history is recorded in `audit/PHASE0_AUDIT_REV2.md`.
 
 Live at **harbor-markets.com/breakwater** (Streamlit dashboard). Weekly email digest sent Monday mornings.
 
@@ -59,6 +61,7 @@ breakwater/
 ├── pipeline/
 │   ├── pipeline.py                 # Orchestrates stages 1–5
 │   ├── stage1.py – stage5.py       # Pipeline stages (see above)
+│   ├── events.py                   # Stage 4b: event frame (one row per earnings event + one pending row per stock)
 │   └── incremental.py              # Fast incremental update path
 │
 ├── data_ingestion/
@@ -74,6 +77,8 @@ breakwater/
 │   ├── pre_earnings_stock_features.py   # Vol, momentum, drift, timing features
 │   ├── post_earnings_stock_features.py  # Reaction stats, entropy, directional bias
 │   ├── pre_earnings_sector_features.py  # Sector-level aggregates
+│   ├── event_features.py               # Event-level statistics shared by history and the pending row
+│   ├── announcement_timing.py          # BMO/AMC from observed timestamps; timestamp-anchored reactions
 │   └── scoring_features.py             # Component scores → risk_score + bucket
 │
 ├── cron/
@@ -98,8 +103,8 @@ breakwater/
 │   ├── backtesting.py              # Full backtesting suite (calibration, lift, OOS)
 │   ├── calibration.py              # Calibration tables by bucket/percentile/year
 │   ├── testing_functions.py        # Individual test helpers
-│   ├── testing.py                  # Ad-hoc feature/score testing
-│   ├── window_sensitivity.py       # Grid search over reaction window
+│   ├── metric_testing.py           # Ad-hoc feature/score metric script (not a test suite)
+│   ├── test_*.py                   # pytest suite (`pytest testing`)
 │   └── testing_results/            # CSVs: calibration_by_bucket, _by_percentile, _year_by_year
 │
 ├── scripts/
@@ -107,7 +112,7 @@ breakwater/
 │   ├── gen_recent_calls.py         # Generates output/recent_calls.json for landing page
 │   ├── last_week_results.py        # Prints last week's earnings outcomes
 │   ├── results_check.py            # Full price history around past earnings events
-│   ├── sync_pipeline.sh            # rsync helper: pull DB, push parquets
+│   ├── sync_pipeline.sh            # rsync helper: pull the DB from the droplet
 │   └── sync_iv.sh                  # rsync helper: pull IV data from droplet
 │
 ├── data/
@@ -120,6 +125,7 @@ breakwater/
     ├── full_df.parquet             # Fully engineered + scored DataFrame (all history)
     ├── streamlit_df.parquet        # Historical view for dashboard
     ├── upcoming_df.parquet         # Forward-looking view for dashboard Upcoming tab
+    ├── events_df.parquet           # Event frame: one row per earnings event (history + pending)
     ├── recent_calls.json           # Last 2 weeks of calls for landing page
     ├── weekly_chart.png            # Weekly earnings calendar chart
     ├── results_chart.png           # Last-week outcomes chart
@@ -151,13 +157,8 @@ breakwater/
 
 ---
 
-## Key Model Numbers
+## Model Performance
 
-| Tier | P(move ≥8%) | vs Base (6.9%) | Events/year |
-|---|---|---|---|
-| Normal | ~4% | 0.6x | — |
-| Elevated | ~18% | 2.6x | — |
-| High Alert | 40% | 5.8x | ~60 |
-| High Conviction (HA + drift flag) | 52% | 7.5x | ~12 |
-
-12% of earnings events selected → 42% of all ≥8% moves captured.
+None published. The audit measurement of the legacy tiers on timestamp-anchored outcomes is
+historical record in `audit/PHASE0_AUDIT_REV2.md` §Q2–Q3, not current product evidence.
+Figures for the replacement model will appear here only after it has been fitted and audited.

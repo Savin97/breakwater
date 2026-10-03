@@ -1,680 +1,550 @@
-# Session Memory Index
+# Session Memory
 
-This file is read by Claude Code at the start of each session to restore context.
-Entries are updated at the end of each session. Most recent first.
+Read at the start of every session. Newest entry first. At the end of a session, add a
+dated entry at the top of the log and rewrite **Current state**. The full text of older
+entries is in git history (condensed 2026-09-29 from 1,304 lines + 7 side files).
+
+## How to write for this user — read before replying
+
+**No consultant jargon. Say the plain thing.** Corrected 2026-09-28: "scope it" and
+"park it" were both used and neither landed. Write "plan out what it involves before
+starting" and "leave it for now". Same for deliverable, workstream, bandwidth, circle
+back, align on, surface it: if a word describes a *process* rather than a *thing being
+done*, replace it with the thing being done.
+
+- **Do not invent categories.** "Phase 3 deliverable" was made up; the real list is
+  P3.1-P3.5 in `audit/PHASE0_AUDIT_REV2.md`. Check the source before naming something.
+- **Lead with the concrete artifact, not the statistics.** A table of real events
+  (tickers, scores, outcomes) explained the score-ceiling problem instantly after
+  several paragraphs of AUCs and confidence intervals had not.
+
+## Current state — updated 2026-10-03 (end of session)
+
+- **Research is finished and archived.** Tag `methodology-audit-archive-october-2026` →
+  `39fe089` (pushed). Free historical magnitude-feature research is complete: Phase 5B
+  price/peer, SEC text/8-K and XBRL fundamentals all added nothing to Model C. Options
+  expected move is the one open idea, paused until professional data is bought; its
+  pre-registered design is in the tag (`research/options_confirmatory/`). Future research
+  branches from future master and recovers archived code selectively.
+- **`methodology-rebuild` was reset to master (`8fcf3b7`) on 2026-10-03 and rebuilt as the
+  clean non-Model-C production integration** per `audit/NON_MODEL_C_INTEGRATION_PLAN.md`.
+  UNCOMMITTED, not pushed (the remote branch still holds the old research tip; pushing
+  will need a force-push — the user's call). Tests: 442 pass, 0 skip.
+- **Model C is NOT productionized.** Production still runs 0.3.1 on the legacy target.
+  Next step after this integration is merged: refit Model C on the PRODUCTION event frame
+  (strict timing rules — no ±1-day vendor matching, no proxy dates), then integrate it.
+  The research coefficients/cuts were measured on the research frame; do not copy them.
+  Deferred list: §6 of the integration plan.
+- **Prediction archive** `db/predictions.duckdb` (tracked, the only copy): 38 calls,
+  2026-08-31 → 2026-09-28, 10 voided as `0.3.1-preaudit`. Merged by key on 2026-10-03.
+  The droplet copy is master's old 10-row blob, untouched (nothing there writes it).
+  Backups: `~/breakwater_backups/integration_20261003_191434/`.
+- **Never `git add -A` / `git add .`**: 16 GB of licensed vendor data sits in `data/vendor/`
+  (ignored only by the restored `.gitignore`).
+- Timestamp history in both DBs: 26,657 / 47,503 rows; 25,987 of 45,715 completed events
+  anchored (56.8%). Date corrections and the IV live-price fix are live on the droplet.
+- Fixed in the integration (2026-10-03): only `stock_data.status = 'active'` stocks get a
+  pending event (485 of 503; the 18 inactive keep their history), and no lift figure is
+  displayed anywhere (PDF, calendar, dashboard, its parquet). The legacy scorer still
+  computes lift internally until Model C.
+- Not fixed, outside scope: the renamed tickers' new symbols (BNY, ECHO) are `active` but
+  have no price rows at all, so they get no upcoming call.
+
+## Retracted figures — do not reuse
+
+Any lift, hit rate or capture figure in an entry dated **before 2026-09-05** (4.5x, 4.49x,
+3.7x, 3.72x, 4.8x, 4.93x, 40%, 52%, 56.8%, 6.9% base, "15 years OOS", "stable 2015-2025")
+was measured on the legacy target, which mismeasures BMO events. They are kept only so the
+history reads straight. `audit/PHASE0_AUDIT_REV2.md` is the authority; CLAUDE.md lists the
+verified replacements.
 
 ---
 
-- [Social media strategy](social_media_strategy.md) — platforms, cadence, content rules, weekly workflow (added Jun 9, 2026)
-- [Reddit/X marketing playbook](reddit_marketing_playbook.md) — comment tone, data angles, soft Breakwater plug, real examples from Jun 23 2026 (MU, FDX, NKE, NOW)
-
-## 2026-09-04/05 — First full end-to-end run; digest + predictions scoped to a work week
-
-**THE CHAIN WORKS END TO END.** `full_workflow.sh` ran: pipeline -> 5 PDFs -> parquets
-rsynced to droplet -> digest sent -> **user confirmed the email arrived**. That was the
-last unverified link (`_send` and the attachment path had never executed).
-
-### Product rule the user stated — do not violate it
-**Every email covers exactly one whole Mon-Fri work week.** More than that must be
-explicitly asked for. Weekend earnings dates "make no sense" and are excluded.
-- Default: the next COMPLETE work week. Monday run = this week; any other day = next
-  week's Mon-Fri. **Consequence the user accepted:** running Tuesday means Wed-Fri of
-  that week are never emailed or recorded. Argues for keeping Monday the habit.
-- `--current-week`: this week's Mon-Fri whatever day it is run.
-- `--weeks 2`: two whole blocks.
-
-### What was built
-- `utilities/data_utilities.work_week_window(today, weeks, current_week)` — **one helper,
-  imported by BOTH the digest and the predictions snapshot.** They computed windows
-  separately before and drifted, which is the bug below. Do not re-inline it.
-- `analysis/save_predictions.py` and `cron/cron_weekly_digest.py::_select_stocks` both
-  select on it. Digest gained `--weeks` / `--current-week` argparse.
-- save_predictions clamps the lower bound to today, so `--current-week` on a Friday emails
-  the whole week but records only what has not reported — no hindsight in our own backtest.
-- The table stays the WIDER record: all tiers, while the email shows High Alert/Elevated.
-
-### The bug this fixed (found by inspecting the first real run)
-The Friday 2026-09-04 run **emailed ORCL, ADBE, COO, CPRT and recorded none of them.**
-The digest used a rolling today..+7 window; save_predictions used today..Sunday. On a
-Friday that is Sep 4-6, when nothing reports. Silent — the table simply had no rows.
-Verified fixed by simulation: "emailed but not recorded: none".
-
-### View renamed and re-keyed
-`predictions_week_open` -> **`predictions_first_call`**, `DISTINCT ON (stock,
-earnings_date)` instead of including `run_week`. A rolling window lets a Thursday run and
-the following Monday see the same event from two different run weeks, which under the old
-key produced two rows for one call. Old view is explicitly DROPped. `run_week` survives as
-a column recording WHEN the call was made — no longer a grouping key.
-**Backtest against `predictions_first_call`.**
-
-### Backfill's first production run — it worked
-0-14 day events: 100% missing EPS -> **24%**. 15-30 days: 100% -> **2%**.
-**But 31-60 days is still ~85% missing (306 events)** — `EARNINGS_RESULT_BACKFILL_DAYS=30`
-bounds it, so the pre-existing backlog outside 30 days was not swept. It will clear on the
-old slow path over ~2 months, or immediately with one run at 120 then set back.
-
-### Still open
-- `pipeline/incremental.py` — callerless, latent `TypeError` on line 27.
-- dtype experiment (float32, ~734 MB of 1910 MB frame; calibration is the gate).
-- 7 stocks with `earnings_date` >90 days out — **probably NOT a bug**, they are
-  off-calendar fiscal years whose next report is genuinely 97-112 days out. The
-  `export_upcoming_df` warning threshold of 90 days is just tight. Raise it or drop it.
-- Brain: still untouched, still undecided.
-
-## 2026-09-02 — Slice landed, digest fixed, and the product scope narrowed to weekly
-
-**SCOPE DECISION, made by the user this session — read this before planning anything:**
-**"weekly is enough."** No daily scoring on the droplet. The weekly local `full_workflow.sh`
-run produces everything; the digest is sent from that run. This retires the whole
-"droplet generates predictions automatically" thread that the last three sessions were
-building toward. Do not resurrect it without the user asking.
-
-### Consequences of that decision
-- **Predictions stay local.** `analysis/save_predictions.py` already runs in stage5 on the
-  weekly run and writes git-tracked `db/predictions.duckdb`. One writer, git as archive.
-  The "truth lives on the droplet, local copies it down" design is **moot — do not build it.**
-- **Nothing runs the incremental path any more.** `cron_ingest` is ingest-only, the droplet
-  does not score, `main.py` runs the full pipeline. `pipeline/incremental.py` has **no caller
-  anywhere** and still has a latent `TypeError` on line 27 (`run_pipeline()` called with no
-  args against signature `run_pipeline(incremental)`). Deleting it is defensible.
-- The droplet needs **no** SMTP, no subscribers file, no digest cron. Its only job is the
-  06:00 ingest plus serving Streamlit.
-
-### Shipped
-1. **Slice loading** (`9e914cf`, deployed). `utilities/scoring_slice.py` +
-   `attach_earnings_history()`, called from stage3's incremental branch.
-   Droplet measured: **369 MB, 14s, exit 0** (was 1030 MB, OOM). Local: 427 MB.
-2. **Parity is exact.** Full vs incremental `upcoming_df`: **all 23 columns, all 496 rows
-   identical**, `peer_percentile` included. The old divergence (17 stocks losing
-   `pre_earnings_drift_flag`, 8 on `surprise_momentum_flag`, ORCL/DECK flipping
-   `is_high_conviction`) is gone. xfail marker removed; suite **73 passed**.
-3. **Digest** reads `output/upcoming_df.parquet` not `full_df.parquet`: **128 MB** (was
-   multi-GB, unbounded). Added `MAX_PARQUET_AGE_HOURS = 24` — refuses to send stale numbers
-   rather than silently mailing last week's tiers. Wired in as step 5 of `full_workflow.sh`.
-   Sent LOCALLY on purpose: the PDF attachments come from stage5 (droplet has 0 PDFs in its
-   run dirs) and the SMTP creds are in the local `.env`. Also kills a race a Monday cron
-   would have had with the manual weekly run.
-4. **06:00 droplet cron succeeded for the first time** — 74s, exit 0, DB current.
-
-### Measurements that correct earlier notes
-- **The 274 MB slice estimate was WRONG.** A single `pd.read_parquet(filters=...)` costs
-  **584 MB**: `filters=` only prunes whole row groups by statistics, this file has 3 row
-  groups of ~970k rows, and earnings days are scattered through all of them, so it
-  decompresses everything and filters afterwards. Streaming 25,000-row batches gives
-  **232 MB** for a bit-identical result. That is why `scoring_slice.py` streams.
-- **The full pipeline peaks at 5562 MB**, not the "2000+ MB" recorded earlier. Measured
-  breakdown: the frame itself is **1910 MB** — float64 1468 MB (63 cols), str 288 MB (6),
-  datetime 93 MB, int8 32 MB. Peak is ~3x the frame because each stage copies.
-  float64 -> float32 would save **~734 MB** of frame (-> ~1176 MB) and proportionally more
-  of the peak. **The categorical idea is moot** — string columns are already `str` dtype,
-  not object; there are zero object columns. Cost of float32: precision changes, so
-  `testing/calibration.py` is the acceptance gate before trusting it.
-- Server sizing, if the droplet ever needs to run the full pipeline: that is an **8 GB**
-  box (~$48/mo vs the current $6), not 2 GB. **Try dtypes first** — float32 + categoricals
-  could plausibly halve it and helps local runs too. Cheaper experiment, measurable.
-
-### Earnings results were never backfilled (fixed 2026-09-02)
-`reported_eps` was NULL for **100% of events under 30 days old** and ~80% at 31-90 days,
-filling only at 91-180. Two causes, both needed fixing — the first alone does nothing:
-1. The skip rule (`WHERE earnings_date > current_date + 14`) asks "do we know the next
-   date?" and thereby also suppresses "do we have last quarter's result?". Once a stock
-   reports and yfinance hands us the next date ~90 days out, it is not fetched again for
-   ~80 days. Now also re-fetches stocks whose most recent past event lacks a result,
-   bounded by `EARNINGS_RESULT_BACKFILL_DAYS = 30`.
-2. **The ingestion is INSERT-ONLY.** It filters out every date already in the DB and then
-   does a plain `INSERT` — no upsert. So a placeholder row's NULL could only be corrected
-   by the ±60-day DELETE path, which fires only for a date it has not seen. Added an
-   explicit UPDATE pass before the filter; fills NULLs only, never overwrites a confirmed
-   row. Verified on a DB copy: 5 stocks backfilled, **0 rows added, 0 duplicates**.
-Yahoo had the data all along (ADSK 3.30/+5.64%, CRM 5.90/+80.36%) — we were not asking.
-**First run after this clears an ~80-day backlog: ~191 stocks fetched instead of 19, then
-it settles to the few that reported recently.**
-**Worth what exactly:** `surprise_momentum_flag` is DISPLAY ONLY — digest, PDF reports,
-calendar, dashboard, predictions table. It does not feed `earnings_explosiveness_score`,
-the tier, or `is_high_conviction` (drift flag only). Backtesting 2026-05-18 measured the
-surprise sub-categories at ~4.2x against a High Alert baseline of 3.82x and rejected them
-for high conviction. So this fixes "blank reads as normal when it means unknown", nothing
-in the ranking.
-
-### A trap worth remembering
-Emulating the old `groupby().last()` broadcast with an ffill **manufactures signals**.
-It carried a stale streak of 27 onto ADSK's 2026-08-27 earnings row, where the full path
-has NaN because the just-reported surprise is not in the DB yet — inventing an "Extended
-Beat Streak" the full path declines to assert. Six stocks affected. The full path leaves
-these columns NaN off earnings days and lets the flag functions propagate; consumers read
-`groupby().last()`, which skips NaN. **Do not fill them.** Reasoning is in the code.
-
-### Repo conventions the user stated
-- `pipeline/` holds **only** pipeline stages or versions of the pipeline. Nothing else.
-  (`scoring_slice.py` -> `utilities/`, `save_predictions.py` -> `analysis/` for this reason.)
-- Stages must read simply: prefer a named function call over an inline code block.
-- Droplet and local **must** produce identical results; a difference is a defect.
-
-### Open
-- **`data/subscribers.txt` is tracked as an EMPTY file** (committed 0 bytes in `acb79f5`,
-  so the address was never published — an earlier warning of mine about that was wrong).
-  The user added it to `.gitignore` line 22, but **gitignore does not apply to tracked
-  files**: the working copy (18 bytes, real address) still shows as modified and a
-  `git add .` would commit it. Needs `git rm --cached data/subscribers.txt`.
-- Uncommitted at time of writing: the digest + workflow change, plus the user's own
-  `streamlit_dash/app.py` and new `styles.css`.
-- 7 stocks with `earnings_date` >90 days out (CRM, DG, DLTR, HRL, NDSN, SNPS, ULTA).
-- Brain (`/home/Michael/projects/brain`): still undecided, still untouched, leave alone.
-- Droplet has **no backups**. It now matters less — nothing unique lives there.
-
-## 2026-09-01 — cron_ingest made ingest-only, branches consolidated, parity test filed
-
-**GOAL AS IT STOOD THAT DAY:** automatic weekly predictions + digest emails ON THE DROPLET.
-**SUPERSEDED 2026-09-02** — the user chose weekly-only, so the droplet does not score.
-See the 2026-09-02 entry above before acting on anything in this entry.
-
-### State of the tree — END OF SESSION, all clean
-- **One branch: `master`.** Local == `origin/master` == **`d9567d8`**, working tree clean.
-  `risk_score_proposed_fix` and `stock-lifecycle-status` were verified fully contained
-  (0 unique commits each) and **deleted** local + remote. Old tips: `2b79144`, `b387d82`.
-- **DROPLET IS DEPLOYED** — pulled to `d9567d8`, ingest-only `cron_ingest` in place, tree
-  clean apart from an untracked `next_earnings_df.csv`. Tomorrow's 06:00 run should succeed;
-  **check `/var/log/breakwater_ingest.log` first thing** to confirm it did.
-- **Suite is GREEN**: `72 passed, 1 xfailed`. The parity failure is now
-  `xfail(strict=True)`, not a red test. Do not delete the marker by hand — `strict=True`
-  makes the test FAIL the moment the bug is fixed, which is the signal to remove it.
-- Commits from this session: `3b1283c` (ingest-only), `e0c8632` (merge), `b19219c`
-  (refactor + parity test), `d9567d8` (memory prune).
-
-### Done today
-1. **`cron/cron_ingest.py` is now ingest-only** (`3b1283c`) — just `stage1(incremental=True)`.
-   Dropped from the daily job: `_has_new_earnings()` (391 MB), the `run_pipeline()` fallback,
-   and stage2-4 + `export_upcoming_df`. Header comment says why; do not add scoring back.
-2. **Measured on the droplet: 285 MB peak, 91s, exit 0**, ~308 MB headroom against ~593
-   available. First successful ingest in weeks; droplet DB now current to 2026-09-02.
-3. **Merged `origin/master`** (`e0c8632`) — 4 web-UI commits deleting the tracked calibration
-   CSVs. Took origin's side; `.gitignore` line 20 already covered them, they just predated it.
-   **Merged, not rebased, on purpose:** `config.py` cites `f3dd1e2` by SHA and the predictions
-   table stores `git_commit` per row — a rebase orphans both.
-4. Pushed master, THEN deleted the branches. Order mattered: all three recent commits were on
-   origin *only* via `origin/risk_score_proposed_fix`.
-
-### Two facts worth keeping
-- **stdout is block-buffered under cron and lost on SIGKILL.** `Stage 1 DONE` appears nowhere
-  in `/var/log/breakwater_ingest.log` despite stage1 completing every time. Only the yfinance
-  **stderr** lines mark real progress there. Do not infer where the job died from missing prints.
-- `run_incremental_pipeline()` now has **no callers anywhere** — dead until the slice work
-  revives it. Its line 27 calls `run_pipeline()` with no args while the signature is
-  `run_pipeline(incremental)`; latent `TypeError`, currently unreachable. Fix when rebuilding.
-  Also: `streamlit_dash/app.py` imports `run_pipeline` but never calls it — near miss, checked.
-
-### Next, in order — ALL DONE 2026-09-02, see the entry above
-The slice work, the digest parquet change and the deploy all landed. Kept only so the
-2026-09-01 record reads straight; do not work from this list.
-
-### Decisions taken 2026-09-01 (so they are not re-litigated)
-- ~~**Where predictions live once the droplet generates them:** droplet writes, workflow
-  pulls it down.~~ **REVERSED 2026-09-02 — DO NOT BUILD.** The droplet does not score, so
-  predictions stay local exactly as they already are: stage5 writes git-tracked
-  `db/predictions.duckdb` on the weekly run. One writer, git as archive. Nothing to do.
-- **Brain (`/home/Michael/projects/brain`): undecided, leave alone.** User: "i havent used the
-  brain yet, it was an idea." Every file there is dated 2026-06-29 and it is not a git repo.
-  `projects/breakwater.md` has drifted (`data/breakwater.duckdb` -> now `db/`,
-  `monday_workflow.sh` -> now `full_workflow.sh`). Breakwater's CLAUDE.md still routes every
-  session there before architecture work; that detour is currently worthless. Do not spend
-  time on it unless asked.
-- **Subscribers:** `data/subscribers.txt` was un-ignored by the user. **The repo is PUBLIC**
-  (`api.github.com/repos/Savin97/breakwater` -> `"private": false`) — user believed it was
-  private and judged the exposure acceptable on that basis; flagged, user's call, one address.
-  Real fix when wanted: a `subscribers` table (email, subscribed_at, status,
-  unsubscribe_token) fed by the landing-page form, digest reads the table not the file.
-  Needs a decision on whether the form posts to the droplet or a third party (Formspree).
-  Own session, not a tweak.
-
-### Also open
-- Droplet has **no backups at all** — the only backup line in its crontab is Ubuntu's
-  commented-out example. Disk is 37% used, 15 GB free, uptime 8 days (prior boot ran 102
-  days), 5 kernel OOM events all self-inflicted by the pipeline. Stable enough to write to,
-  not safe as the only copy.
-- Droplet still needs `data/subscribers.txt` and `DIGEST_SMTP_*` in `.env` before any digest
-  email can send.
-- `run_incremental_pipeline()` has **no callers anywhere** — dead until the slice work revives
-  it. Its line 27 calls `run_pipeline()` with no args while the signature is
-  `run_pipeline(incremental)`; latent `TypeError`, currently unreachable. Fix when rebuilding.
-- `utilities/db_utilities.py` has no trailing newline.
-
-## 2026-08-31 (session 2) — Droplet memory diagnosis + plan for automated weekly predictions
-
-**GOAL (stated by user):** weekly predictions generated automatically ON THE DROPLET, and
-weekly_digest emails sent automatically — at first only to the user, to test. Everything below
-is groundwork for that. **We stopped here; this is tomorrow's work.**
-
-### State of the tree — SUPERSEDED, see the 2026-09-01 entry above
-This section described the tree as of 2026-08-31 (3 unpushed commits, red suite, cron_ingest
-not yet ingest-only). All of it was resolved on 2026-09-01. The **measurements, the slice plan
-and the bug analysis below are still current and still the plan** — only the tree state changed.
-
-### Why the droplet cron has never worked (measured, not guessed)
-Droplet: **961 MiB RAM, ~581 MiB available** (Streamlit `breakwater.service` holds the rest).
-`/var/log/breakwater_ingest.log`: **75 `Killed`** (OOM) and only **2 `TypeError`**. The TypeError
-(`stage1(update=True)`) only appeared after the 2026-08-29 pull; before that it was pure OOM.
-**Fixing the TypeError does not fix the cron — it just moves the failure back to the OOM.**
-
-| path | peak RSS | on droplet |
-|---|---|---|
-| full `run_pipeline` | 2000+ MB | OOM (the 75 Killed lines) |
-| incremental path **as built** | **1030 MB** | OOM — the "fast path" does not fit either |
-| `_has_new_earnings()` alone | 391 MB | reads 4 cols x 2.9M rows |
-| slice, all 87 cols | 500 MB | fits, only ~80 MB headroom — too thin |
-| **slice, 21 needed cols** | **274 MB** | **fits, ~300 MB headroom** |
-| the sliced data itself | 10 MB | rest is import overhead + duckdb .df() buffer |
-
-Memory is dominated by **reading `full_df.parquet` (323 MB) into pandas**, not by the 90-day
-window. So the incremental design saves CPU but not memory, and memory is the binding constraint.
-
-### The plan: load only the rows the computation actually reads
-Key counts: 2,911,875 total rows, but only **45,693 are earnings days (1.6%)**. Slow per-stock
-stats (15 cols x 503 stocks = **7,545 numbers**) are aggregates over ~91 events per stock; the
-other 98.4% of rows are daily prices the slow stats never touch.
-
-**The slice = all earnings-day rows (every year) + the last 90 days of prices = ~76,494 rows (2.6%).**
-
-**CRITICAL CONSTRAINT — the slice is NOT contiguous in time.** Consecutive historical rows are
-~90 days apart. Anything using `.diff()`, `.pct_change()` or row-based `.rolling()` silently
-produces garbage there. Measured on AAPL: recomputed `pct_change` = **0.262** where the true
-stored `daily_ret` = **0.0104** — a 90-day return mislabelled as daily, 25x wrong, and it looks
-plausible. So the work MUST be split:
-- **historical earnings rows** -> use the **stored** per-event values (`abs_reaction_3d`,
-  `drift_30d`, `reaction_*`). NEVER recompute anything price-derived from them. Only aggregate
-  ACROSS events (`groupby(stock)` rolling/expanding), which is event-ordered and therefore valid.
-- **recent 90-day window** -> contiguous, recompute price features normally.
-
-**Bonus: this also fixes the flag-parity bug** (below) for free — that bug exists precisely because
-the 90-day window holds ~1 earnings event per stock, so the drift baseline cannot be built. The
-slice holds all ~91.
-
-**Do not assume bit-identical — prove it with the parity test.** (I over-claimed twice today.)
-
-### The bug the red test documents (full vs incremental divergence)
-The incremental path strips flags: on real data **17 stocks lose `pre_earnings_drift_flag`**,
-8 differ on `surprise_momentum_flag`, and **`is_high_conviction` goes True->False (ORCL, DECK)**.
-Score/bucket/percentile match exactly (they come from cache). Cause: `engineer_pre_earnings_drift_flag`
-builds its baseline from `drift_30d` over the stock's earnings-day rows *present in the loaded
-frame*; only **4 of 500 stocks have >=2 earnings days** in a 90-day window, so std is NaN,
-`has_hist` is False, and the flag falls back to `""`.
-**This becomes BLOCKING for the goal:** if the droplet generates the weekly predictions, HC — the
-headline signal — would be empty in every digest.
-Origin: `INCREMENTAL_CACHED_COLS` was created 7 Jun (`c0f82c4`); the drift flag's full-history
-dependency landed 9 Jun (`1682385`), two days later, and nothing reconciled them. CLAUDE.md states
-the rule as "anything needing `abs_reaction_3d`", which is **narrower than the real hazard** —
-the real rule is *any function that aggregates over the stock's earnings-day history*.
-
-### Also needed for the goal
-1. **`cron_weekly_digest.py` does `pd.read_parquet(PARQUET_PATH)` with NO column selection** —
-   the whole 2.9M x ~100 frame, several GB. It should read `output/upcoming_df.parquet`
-   (**46 KB**), which already has tier, score, percentile, both flags, HC and earnings_date.
-   Cheapest win of the lot.
-2. **Decide where predictions live if the droplet writes them.** `db/predictions.duckdb` is now
-   git-tracked and written locally; both sides writing it = binary git conflicts.
-3. Droplet needs `data/subscribers.txt` (gitignored) with just the user's address, and the
-   `DIGEST_SMTP_*` vars in its `.env`.
-4. Every week has earnings (2025+: median 12 stocks, max 179, **0 weeks with none**), so
-   `_has_new_earnings()` is essentially always True and the full-run fallback always fires.
-   Guard or remove it — on 961 MB it can never succeed.
-
-### Suggested order
-`cron_ingest` genuinely ingest-only (stops the bleeding) -> digest reads `upcoming_df` ->
-the slice loading change -> parity test green -> then deploy.
-
-### Other open items from earlier today
-- `week_start` is now always == `run_week` in the predictions table (week-only scope makes it
-  redundant). Harmless; drop only if wanted.
-- 9 stocks have `earnings_date` >90 days out (CRM, CRWD, DG, DLTR, HRL, NDSN, SNPS, ULTA, WDAY) —
-  ingestion data quality, untouched.
-- **Other fixture-driven tests may be vacuous** like the HC ones were (the synthetic fixture
-  yields no High Alert rows). Not audited.
-
-## 2026-08-31 — Predictions table + is_high_conviction fix (branch `risk_score_proposed_fix`)
-
-**Committed:** `b0db658` (HC fix + tests). Predictions-storage commit staged separately.
-
-**Predictions snapshot shipped** — `analysis/save_predictions.py::save_predictions_snapshot(df)`,
-called at the end of stage5. Records what we published: `prediction_asof_date`, `run_week`,
-`week_start`, stock, `earnings_date`, `tier`, `risk_score`, `is_high_conviction`, both flags,
-`model_version`, `git_commit`.
-- **Scope is the run week only** (`today..Sunday`), not every future event — the table is the
-  product record. Window starts at *today*, not Monday, so a mid-week re-run can't write a
-  prediction for an event that already reported (would leak hindsight into backtests). Cut at
-  Sunday not Friday because 115 earnings_dates in history land on a weekend (bad source data).
-- **Lives in its own `db/predictions.duckdb`** (`config.PREDICTIONS_DB_PATH`), NOT breakwater.duckdb.
-  Verified on the droplet: it has **no** predictions table and never writes one (its cron runs
-  `run_incremental()`, which skips stage5). `scripts/full_workflow.sh` pulls the droplet's
-  breakwater.duckdb and *overwrites local*, so a table living there is destroyed every weekly run.
-  Pushing our copy back was rejected: the droplet has **six cron writers/day** (ingest 06:00,
-  eps 14:45, IV 15:00/16:30/18:00/19:30 UTC) and rsync over a live DuckDB risks corruption plus
-  loss of IV snapshots, which cannot be refetched.
-- **Un-ignored in .gitignore** — it is the only copy and a lost week is unrecoverable. Needed
-  `db/*` + `**/db/*` instead of `db/`, because git cannot re-include a file whose parent dir is
-  excluded.
-- **Upsert**, keyed `(stock, earnings_date, prediction_asof_date)`. `ON CONFLICT DO NOTHING` was
-  wrong: the first run of a day won, so a broken snapshot survived a same-day re-score (this bit us
-  — required a manual DELETE). New date = new row, preserving drift toward the event.
-- **`predictions_week_open` view** = earliest surviving call per event per run week (the Monday
-  call). **Backtest against the view, not the table** — the raw table double-counts any event
-  scored on several days that week.
-- `utilities/peek_at_db.py` attaches the second DB + sets search_path so `peek_at_db predictions`
-  still works unqualified; `list_tables` needs `SHOW ALL TABLES` (plain `SHOW TABLES` sees only the
-  current catalog).
-
-**`is_high_conviction` was silently False on ~98% of rows** (fixed, `b0db658`).
-`engineer_high_conviction` compared `earnings_explosiveness_bucket` per row, but that column exists
-**only on earnings-day rows** — NaN in between, and `(NaN == "High Alert")` is False. Score/bucket
-survive this because `.groupby().last()` skips NaN and reaches back; a bool has no NaN to skip, so
-the wrong value wins. Fix carries the last completed event's bucket forward *locally inside the
-function*; stored columns untouched, so calibration groupbys and backtesting see identical data.
-Earnings-day rows bit-identical; ~31k rows changed, all False -> True.
-- **Who was affected:** `report_builder`'s weekly High Conviction list and the predictions table
-  (both read the raw column). Dashboard + weekly chart were already correct — they recompute it.
-- **Rejected as too broad:** ffilling the stored score/bucket columns. Only the bool benefits;
-  every other consumer already reaches back via `.last()`.
-
-**The test suite proved nothing here — 68/68 passed before AND after.** The synthetic fixture in
-`testing/test_pipeline.py` yields **zero High Alert rows**, so all three HC tests were vacuous
-(`.all()` on an empty frame is True), and two asserted the *old buggy* invariant and would have
-failed on real data. Now compare against the carried bucket + three direct tests of
-`engineer_high_conviction`, each confirmed to fail against the old implementation. **Lesson: check a
-new test actually fails against the bug before trusting a green suite.** Other fixture-driven tests
-may be vacuous for the same reason — not audited.
-
-**MODEL_VERSION renumbered to `0.3.1`** (pre-1.0 — not a finished product). Old `"1.0"` = **0.1**,
-old `"1.1"` = **0.2**; mapping recorded in config.py. Stored rows also carry `git_commit`, which
-places them unambiguously — needed because the 08-29 rows were labelled "1.0" while actually being
-lift-era `f3dd1e2` output.
-
-**Resolves open item 3 of the 2026-08-29 entry** (mislabeled prediction rows): table was cleared and
-re-saved; now 10 rows, asof 2026-08-31, model_version 0.3.1, HC=2 (ORCL, DECK).
-
-**Open:**
-1. **Not pushed / not deployed.** Branch not merged to master, nothing pushed. Droplet deploys by
-   `git pull`, so pushing master is effectively a deploy.
-2. **`db/predictions.duckdb` has no backup until committed** — un-ignoring only makes git *see* it.
-3. **9 stocks have earnings_date >90 days out** (CRM, CRWD, DG, DLTR, HRL, NDSN, SNPS, ULTA, WDAY) —
-   same class as WDAY's 174-day gap. Ingestion data-quality issue, untouched.
-4. `.claude/memory/MEMORY.md` "UNCOMMITTED" markers on the two 2026-08-29 entries were stale.
-   **Re-verified and corrected 2026-09-01:** `utilities/logging_utilities.py`,
-   `ingestion/fetch_earnings_dates.py` and `report/img/breakwater_logo.png` are all tracked.
-
-## 2026-08-29 — Logging framework + report logo fix
-
-*(Was recorded as uncommitted; committed since — `utilities/logging_utilities.py` and
-`report/img/breakwater_logo.png` are tracked as of 2026-09-01.)*
-
-Continuation of the same session as the parallelization entry below. Both were uncommitted at
-the time; both are committed as of 2026-09-01.
-
-**Logging (new `utilities/logging_utilities.py::setup_logging()`):**
-- `logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)-7s %(message)s",
-  datefmt="%H:%M:%S", stream=sys.stdout, force=True)`. stdout (not stderr) so cron shell
-  redirection keeps working. No FileHandler — `get_run_output_dir()` rmtree-on-first-call would
-  delete it out from under us.
-- Config: `LOG_LEVEL = "INFO"` and `NOISY_LIBRARIES` (a **dict** of library -> level cap).
-  User preference: constants belong in config.py with clear names, not module-level in code.
-- **Why NOISY_LIBRARIES exists (learned the hard way):** configuring the root logger *unleashed*
-  third-party logging that had been silent because logging was never configured. First DEBUG run
-  drowned in yfinance internals; first full pipeline run drowned in WeasyPrint's "Ignored `fill:
-  #c0392b`" CSS warnings (dozens per report x 10 reports) — net output got WORSE than prints.
-  yfinance/urllib3/peewee/matplotlib/fontTools capped at WARNING; **weasyprint + weasyprint.progress
-  need ERROR**, since their CSS noise is logged at WARNING level.
-- `setup_logging()` is called from `pipeline/stage1.py` (after its first print) and from
-  `cron/cron_iv.py` / `cron/cron_eps_estimates.py` (they bypass the pipeline).
-  **`main.py` is deliberately untouched — user wants it kept clean.**
-- Converted: `fetch_earnings_dates.py` (2 live fns only), `fetch_prices.py`
-  (`incremental_ingest_all_prices_yf` only), `fetch_sp500_sectors.py`,
-  `db_utilities.py` (`clean_duplicate_earnings_from_db`'s one line).
-  Levels: per-stock noise -> DEBUG, summaries/CORRECTED -> INFO, SKIPPED/no-calendar -> WARNING,
-  FAILED -> ERROR (still also written to the `debug_failed_*.txt` files).
-- **Deliberately NOT converted:** legacy AlphaVantage fns + unused `get_next_earnings_dates`;
-  all of `testing/` (interactive scripts, ~200 prints); and **product output** — the weekly risk
-  table, backtesting `to_string()` tables, "Saved chart → ..." lines. Rule agreed with user:
-  *logging = "what the program is doing / went wrong" (diagnostics); print = "the thing you ran the
-  command to read" (output).* Timestamping table rows would wreck them.
-
-**Report logo bug — found BY the logging change, fixed:**
-`report/templates/earnings_report.html` + `weekly_calendar.html` pointed at `webpage/img/breakwater_logo.png`,
-which **has never existed in this repo**. Every customer-facing PDF had been rendering a broken image,
-silently, because WeasyPrint's ERROR went nowhere without logging configured. Fixed by creating
-`report/img/` and copying `harbor_webpage/assets/logo.png` (1200x434, user picked from 4 variants)
-to `report/img/breakwater_logo.png`, then repointing both templates. `base_url=project_root` in
-`report_builder.py:50`, so `report/img/...` resolves correctly. Verified by rendering AVGO_report.pdf
-to PNG — logo displays in header; PDFs went ~30KB -> ~188KB.
-
-## 2026-08-28/29 — Fixed IV/EPS cron ingestion end-to-end (4 stacked bugs)
-
-`eps_estimates` was empty and `iv_snapshots` had stalled since Jun 26. Four independent bugs,
-each masking the next. All fixed and verified live. Details in
-[infra_digitalocean.md](infra_digitalocean.md).
-
-1. **Cron invocation** — crontab called `python /var/www/breakwater/cron/cron_iv.py` by path, so
-   `cron/` (not the repo root) landed on `sys.path` → `ModuleNotFoundError: No module named
-   'config'` on every run since ~Jun 29. Fix: always `cd /var/www/breakwater && python -m
-   cron.<module>`, as `cron_ingest` already did.
-2. **Positional INSERT** — `INSERT INTO iv_snapshots SELECT * FROM tmp_iv` is positional, but the
-   live table has `snapshot_hour` appended last (added later via ALTER TABLE) while the current
-   `CREATE TABLE` declares it 3rd → integer hour shoved into the `earnings_date` DATE column,
-   `ConversionException: BIGINT -> DATE`. Fix: explicit column lists in `ingestion/fetch_iv.py`
-   and `fetch_eps_estimates.py`. **Never use positional `SELECT *` inserts against a table whose
-   physical column order can drift.**
-3. **DuckDB write lock** — `cron_iv` and `cron_eps_estimates` were scheduled on the same minute;
-   DuckDB allows one writer, so the loser died outright (zero rows, not partial). Fix: stagger.
-4. **Timezone** — system TZ is UTC and Ubuntu's Debian cron **ignores `CRON_TZ`**, so ET-intended
-   times ran as UTC, putting 2 of 4 IV runs pre-market where options have no bid/ask. Fix: cron
-   times written in UTC inside the 14:30–20:00 UTC DST-safe window.
-
-**Verified 2026-08-28:** post-fix runs at 16:30/18:00/19:30 UTC each inserted 32 rows.
-**Also:** dependencies upgraded + pinned (local and droplet now match; `requirements.txt` was
-UTF-16, now UTF-8); `validate_upcoming_earnings_dates` narrowed to a 20-day window
-(`EARNINGS_DATE_VALIDATION_WINDOW_DAYS`), cutting it from 501 to ~165 yfinance calls.
-
-**Next / open:**
-- Monday 2026-08-31 is the first full day on the new schedule — expect IV hours 15/16/18/19 and
-  EPS at 14:45 UTC.
-- Droplet is one commit behind master (at `942de67`; master `117ee16`) — undeployed, affects the
-  reporting path not the crons.
-- Unexplained `eps_estimates` gap on Aug 6–7 (both weekdays, no rows) — never root-caused.
-- Stale untracked files on droplet: `data/breakwater.duckdb` (superseded by the `db/` move) and
-  `next_earnings_df.csv`. Confirm before deleting the DB file.
-
-## 2026-08-29 — Parallelized yfinance earnings fetches
-
-*(Was recorded as uncommitted; committed since — in `ingestion/fetch_earnings_dates.py`
-as of 2026-09-01.)*
-
-**Done — both per-ticker yfinance loops in `ingestion/fetch_earnings_dates.py` now fetch concurrently.**
-Pattern used in both: extract the network+parse work into a standalone function that touches
-NO DB and returns a dict; run those across a `ThreadPoolExecutor`; then keep the original
-sequential DB-write loop, iterating in the original order, reading pre-fetched results from a
-dict keyed by ticker. DuckDB connections aren't thread-safe and `con.register("tmp_earnings_df",…)`
-uses a fixed view name, so DB writes must stay serialized — that constraint drove the whole design.
-
-- `fetch_one_earnings_dates(stock)` → `{"stock", "earnings_dates_df", "error"}`. Three outcomes kept
-  distinct to preserve old behavior: data / no-data (silent) / exception (printed + written to
-  `debug_failed_earnings_ingestion.txt`).
-- `fetch_upcoming_earnings_date(stock, today)` → `{"stock", "upcoming_earnings_date", "error"}`. Reads
-  `.calendar` (company IR confirmed date) — a *different* endpoint from `.earnings_dates` (history +
-  Yahoo's often-wrong estimate); that difference is the whole point of the validate cross-check.
-  Now deduped to one fetch per unique stock (the old row-by-row loop refetched stocks having
-  multiple upcoming dates).
-- Renamed `future_dates` → `stocks_to_skip` (held tickers, not dates). Recheck window 7d → 14d,
-  moved to config.
-- Removed the per-iteration `time.sleep(0.3)` in both loops; worker cap + jitter replace it.
-- New in `config.py`: `YFINANCE_MAX_WORKERS = 8`, `YFINANCE_JITTER_MIN_SECONDS = 0.05`,
-  `YFINANCE_JITTER_MAX_SECONDS = 0.15`, `EARNINGS_RECHECK_WINDOW_DAYS = 14`.
-
-**Measured:** 40-ticker benchmark 59.6s → 5.1s (**11.7x**), identical data both ways, 0 errors.
-Single yfinance fetch ≈ 0.8–2.4s, so this loop was ~100% network-bound — DB work in it is ~0ms.
-Validate loop: 16 dates in 1.8s (was ~25-30s serial). Full `main.py` run: 1m30s, exit 0, all stages OK.
-
-**Watch item:** one `SSLError: Connection reset by peer` on BF-B during a full run. Investigated:
-BF-B alone sequentially 5/5 fine, and 180 concurrent fetches (60 tickers × 3 rounds @ 8 workers)
-produced ZERO errors — so it reads as transient network flakiness, not throttling. If resets start
-clustering on real runs, drop `YFINANCE_MAX_WORKERS` to 4–5 (single easy lever).
-
-**State: NOT committed, NOT deployed.** All changes are working-tree only; droplet still runs the old
-sequential code until a commit + `git pull` there. `cron/cron_ingest.py`'s `stage1(update=True)` bug
-noted on 2026-08-15 was already fixed by other work — nothing to do.
-
-**Update:** the logging pass (the other half of the original "too verbose / too slow" work) was
-implemented later the same day — see the 2026-08-29 logging entry above. Both are uncommitted together.
-
-## 2026-08-29 — Lift-based tier promotion built on branch `risk_score_proposed_fix` (COMMITTED f3dd1e2)
-
-**Supersedes the 2026-08-19 plan below — that plan's approach was tested and rejected.**
-
-**What shipped into the working tree:** `engineer_stock_bucket_lift` + `engineer_lift_adjusted_bucket`
-in `scoring/scoring_features.py`, wired into `pipeline/stage4.py`. Lift = P(extreme|stock,bucket) /
-P(extreme|market), causal (prior events only, shift(1)-before-expanding), shrunk by
-`LIFT_PRIOR_STRENGTH=20`. Normal events with lift>=1.5 promote to Elevated, >=3.0 to High Alert.
-Structural bucket preserved as `earnings_explosiveness_bucket_structural`. Duplicate logic deleted
-from `report/report_builder.py`. `MODEL_VERSION` -> 1.1.
-
-**Measured OOS 2015-2025:** capture of >=8% moves **43.6% -> 56.8%**, >=15% 66.2% -> 76.1%.
-High Alert unchanged (40.3%, 3.72x), Normal cleaner (7.0% -> 5.8%), Elevated 25.2% -> 23.7%
-(inside both CIs, not distinguishable). Selection 12.7% -> 18.9% (~4.8 -> ~7 names/week).
-High Conviction **bit-for-bit identical** (234 events, 0.534, 4.81x). 68/68 tests pass.
-
-**Rejected by measurement — do not retry:** multiplying risk_score by lift drops top-decile lift
-3.70x -> 2.98x (lift is ~0.79 rank-correlated with the score and corrupts its ordering). Ranking
-drift-first (treating HC as a tier above High Alert) drops P@10 2.25x -> 1.89x — HC is an overlay,
-and that original design is correct. Deleting the report_builder bump outright was also wrong: its
-promoted events realise 0.238 vs 0.058 for the Normal events left behind, i.e. real signal.
-
-**Why score and lift disagree** (the crux): score is p75 of abs reactions (rolling 28, capped at
-12%) = the *typical* move; lift is frequency of >=8% = the *tail*. p75 structurally ignores the top
-25%. EW: typical move 2.4% but 25% of events >=8%. Separately, EBAY scores **72.976** against a 73
-cutoff while exceeding 8% in 75% of its events — so lift is currently patching threshold brittleness
-as well as finding tail-heavy names.
-
-**Open, in priority order:**
-1. **73/79 cutoffs and the lift gate must be tuned together** — lift is doing two jobs (real tail
-   signal + patching the hard 73 boundary). Sequential tuning double-counts.
-2. **Unresolved: what `risk_score` is for.** Tier now uses two signals, score carries one, so they
-   disagree — Elevated currently spans 29.68-78.97 vs Normal 8.71-72.98 (16,698 overlapping pairs,
-   up from 0). Either accept it (score = within-tier sort key) or floor the score to the tier
-   boundary (rejected once as assigning a non-measurement). A measured but NOT-implemented option:
-   gate promotion on structural score >=50 — capture 57.2% -> 57.0% (~free), Elevated quality
-   0.241 -> 0.250, worst ordering violations gone.
-3. ~~**Predictions table has mislabeled rows**~~ — RESOLVED 2026-08-31: table cleared and
-   re-saved, and the insert is now an upsert so a same-day re-run corrects rather than skips.
-   See the 2026-08-31 entry.
-4. **Incremental path untested** — `stock_bucket_lift` and `earnings_explosiveness_bucket_structural`
-   added to `INCREMENTAL_CACHED_COLS` but `run_incremental()` never exercised. Droplet cron uses it.
-
-**Gotcha found:** `main.py` runs `run_pipeline(incremental=False)` = the **paid AlphaVantage** path;
-`incremental=True` is the free yfinance one. CLAUDE.md documented this backwards and has been fixed,
-along with several dead paths (`prep_for_streamlit.py`, root `testing.py`, `backtesting/`,
-`data/breakwater.duckdb`, `streamlit_df.csv`). `scripts/full_workflow.sh` calls `main.py`, so it hits
-the paid path as written. To re-score without ingesting, run stage2->3->4 directly.
-
-## Earlier sessions — compressed (2026-05-17 → 2026-08-19)
-
-Condensed 2026-09-01 from full session notes. Kept: facts still load-bearing today.
-Dropped: narrative, superseded plans, and next-step lists that have since been done or
-overtaken. Full text is in git history if ever needed.
-
-**2026-08-19 — risk_score/bucket inconsistency diagnosed.** A stock could show a lower
-`risk_score` than another while sitting in a higher tier, because `report_builder.py` and
-`streamlit_export.py` each reimplemented a "historical lift" bump that changed the label but
-never the number — three uncoordinated implementations. **Superseded:** fixed properly in
-`f3dd1e2` by moving lift into stage4 as a tier reclassification.
-
-**2026-08-15 — Ticker lifecycle + repo reorg (shipped).**
-- `stock_data` gained `status` ('active'/'inactive') and `reason`, reconciled every run against
-  the live Wikipedia S&P 500 table. `read_stocks_to_fetch(active_only=True)` stops dead tickers
-  being retried (503 -> 490).
-- `data/ticker_renames.csv`: **BK -> BNY** (2026-05-21), **SATS -> ECHO** (2026-06-24). Verified
-  NOT renames: DAY, EA, HOLX (taken private/delisted), CTRA (merged into pre-existing DVN).
-  CAG/CPB/EPAM/POOL/LW/PAYC/MTCH/MOH are still trading — merely dropped from the index.
-  *(These are the names still producing daily "possibly delisted" noise in the ingest log.)*
-- DB moved `data/` -> `db/breakwater.duckdb` (gitignored).
-- **Hazard worth remembering:** `full_workflow.sh` pulls the droplet's DB and *overwrites local*,
-  which silently wiped a local schema migration twice. Migrate the droplet's DB, then re-sync.
-
-**2026-08-15 — Pipeline fixes + first test suite.** Removed a stray `exit()` in stage2 that was
-silently killing the pipeline; added `assert_df_fresh` (raises if max price date >10 days old) and
-`clean_duplicate_earnings_from_db`; promoted `is_high_conviction` to a real stage4 column via
-`engineer_high_conviction`; created `testing/test_pipeline.py` and
-`testing/weekly_prediction_quality.py`.
-
-**2026-07-27 — Monday-log audit.** Fixed the big one: `yf.download(end=...)` is **exclusive**, so
-every Monday run fetched a window containing zero trading days and all 503 tickers logged
-"possibly delisted". Now `end = today + 1 day`.
-Open issues found then that are **still open**: `data/stock_list.csv` is stale (12 tickers appear
-in earnings data but not the list); earnings dates from yfinance are wrong ~20% of the time, many
-by exactly +7 days; `report/calendar_builder.py` filters `is_earnings_day == 1` so it never emits
-`weekly_calendar.html` for *future* events — check whether anything still reads that file.
-
-**2026-06-22 — Landing page + dedup.** Landing page stats band and dynamic recent-calls section
-(`recent_calls.json`, pushed to harbor_webpage by `full_workflow.sh`). Added `dedup_earnings`
-(yfinance returns slightly different dates for the same event). Droplet path lowercased to
-`/var/www/breakwater`.
-
-**2026-06-09 — Flag fix.** `pre_earnings_drift_flag` and `surprise_momentum_flag` were always
-empty for *upcoming* events, since both only populated `is_earnings_day == 1` rows while
-`export_upcoming_df` reads the latest price row. Drift flag now also computes on pre-earnings
-window rows (1-60 days out) — **this is the same function whose baseline breaks the incremental
-path today.** Surprise flag now forward-fills within each stock, earnings rows acting as resets.
-
-**2026-06-07 — Incremental pipeline built.** `stage2(lookback_days=N)`, `stage3(incremental=True)`
-reading cached expanding stats from `full_df.parquet` per `INCREMENTAL_CACHED_COLS`,
-`stage4(incremental=True)` skipping anything needing `abs_reaction_3d`, and `run_incremental()`
-with a `_has_new_earnings()` fallback to the full run. Claimed 0.8s vs 80s and "bit-for-bit
-identical" — **the identity claim was never true for the flags** (see the parity bug above); the
-drift flag's full-history dependency landed two days later and nothing reconciled them.
-Same commit: codebase audit — [full change log](codebase_audit_2026_06_07.md).
-
-**2026-06-01 — Calibration + percentile fix.** Built `testing/calibration.py`. High Alert 40.2%
-P(>=8%) vs 6.9% base; HC 52.4%; stable 2015-2025. Fixed uncapped percentile ranking to use
-`abs_reaction_p75_rolling.fillna(abs_reaction_p75)` instead of the clipped score. Product framing
-decision: sell "which 15-20 events matter this week", lead with the >=8% lift story; do not chase
-false negatives in the Normal bucket — those moves are structurally unpredictable.
-Memory consolidated to `.claude/memory/`; `cv_website` renamed `harbor_webpage`.
-
-**2026-05-31 — Report/digest consistency.** Reports used the last `is_earnings_day` row (a *past*
-event) for the earnings date, and ranked percentile against earnings-day rows only. Both switched
-to the forward-filled latest row + `rank(pct=True)`, matching the digest.
-
-**2026-05-31 — Digest selection bug.** `_select_stocks()` filtered `is_earnings_day == 1` *before*
-grouping, so upcoming earnings could never be found — future rows never have that flag. Fixed to
-`sort_values("date").groupby("stock").last()`. Identical bug in stage5's auto-selection. Digest
-gained PDF attachments and an unsubscribe link.
-
-**2026-05-30 — Product build + digest frozen.** IV (`expected_move_pct`, `atm_iv`) joined in
-stage2 and shown in reports; stage5 auto-selects High Alert + Elevated within 14 days; weekly
-digest `cron/cron_weekly_digest.py` (Mondays 07:00 UTC, reads `full_df.parquet`, list in
-`data/subscribers.txt`); cron scripts moved to `cron/`. Layout frozen — stop iterating on it.
-
-**2026-05-19 — Reports + yfinance migration.** `report/chart_builder.py` reactions chart, peer
-percentile, days-to-earnings. AlphaVantage subscription cancelled; `incremental_ingest_*_yf`
-functions added and made the active path.
-
-**2026-05-18 — Memory setup.** `.claude/memory/` created inside the repo so notes sync via git.
-
-**2026-05-18 — HC validated + recommendation block.** `is_high_conviction` (High Alert + drift
-flag) measured at 4.93x OOS lift, ~12 events/yr. Broader definitions tested and rejected: adding
-surprise sub-categories gave 4.24x at 75 events/yr — more coverage, worse precision. HC stays
-drift-only. `report/recommendations_builder.py` added with 4 tiers of language.
-
-**2026-05-17 — Dashboard overhaul.** Streamlit export automated into stage5; flags and
-`is_high_conviction` surfaced in Overview / Bucket Stats / Weekly Calendar tabs.
-
-## Product & Business
-- [Product direction](project_direction.md) — target market (retail options traders), value prop, pricing, live URLs (as of 2026-05-30)
-- [Next to build](next_to_build.md) — prioritized build list: IV into reports → coverage automation → weekly email digest (as of 2026-05-30)
-
-## Infrastructure
-- [DigitalOcean droplet](infra_digitalocean.md) — cron schedule, droplet path, stale tickers list
-- [Window sensitivity](window-sensitivity.md) — grid search confirmed window=28 optimal (4.49x avg lift, 100% years ≥3x)
-
-## DuckDB Schema — `db/breakwater.duckdb`
-
-**prices:** stock, date (DATE), price (DOUBLE), ingested_at — unique index (stock, date)
-**earnings:** stock, earnings_date (DATE), fiscal_end_date (DATE), reported_eps, estimated_eps, surprise_percentage (DOUBLE), ingested_at — unique index (stock, earnings_date, fiscal_end_date); fiscal_end_date=None for yfinance rows (manual dedup in code); surprise_percentage stored as decimal (÷100)
-**stock_data:** stock (PK), company_name, sector, sub_sector, ingested_at
-**merged_stock_data:** denormalised join of the above — NOT used by pipeline (stage2 reads raw tables directly)
-
----
+## 2026-10-03 — Clean non-Model-C integration built on `methodology-rebuild` (uncommitted)
+
+- Reset `methodology-rebuild` to master `8fcf3b7`; restored 28 files wholesale from the
+  archive tag, 6 selective patches (`.gitignore` first, `test_event_frame.py` minus the 2
+  dead golden tests + 2 new calendar tests, `calendar_builder.py` with master's fallback
+  for the dashboard export, readme, CLAUDE.md, this file), new
+  `testing/test_production_guards.py`, `config.py` comment, 15 deletions.
+- Predictions: fresh DB merged by `(stock, earnings_date, prediction_asof_date)`; 0
+  conflicts; 38 rows = every master and rebuild key.
+- Validation re-score ran with the predictions path overridden to a scratch copy; the
+  canonical DB hash was unchanged (`112b9c13…`). Calendar renders, reports use pending
+  rows, the track record stays paused, `full_workflow.sh` step 4 skips cleanly.
+- Before commit: lift removed from every customer surface (P4.1), with
+  `testing/test_customer_outputs.py`; `build_event_frame(..., active_stocks=...)` drops
+  pending rows for inactive stocks, supplied by `load_pipeline_active_stocks()`; config
+  and scoring comments relabelled as retracted legacy settings.
+- Then: no performance figure on any public surface. PDF High Conviction badge keeps its label
+  only (58.6% removed); readme and all marketing docs publish no hit rate or lift (1.91x /
+  2.46x / 45.5% gone) until the replacement model is audited. Audit-era figures stay only in
+  CLAUDE.md and `audit/PHASE0_AUDIT_REV2.md` as history. Suite 475 pass, 0 skip.
+
+## 2026-10-03 — Final branch inventory for the merge (uncommitted)
+
+`audit/FINAL_BRANCH_INVENTORY.md`: all 186 files in `master...methodology-rebuild`
+classified. A 30 keep/production, B 3 keep/docs (PHASE0_AUDIT_REV2, BENZINGA_EARNINGS_AUDIT,
+phase3_refit/RESULTS), C 135 archive-only, D 15 stay deleted, E 3 (predictions_range CLI).
+- The pipeline imports nothing from `research/` or `audit/`. Only the two one-time
+  `backfills/build_*.py` builders import research, and they are archive-only.
+- Every weekly call since 2026-09-06 (28 in `db/predictions.duckdb`) was written by
+  rebuild-branch commits: `full_workflow.sh` runs locally from this folder. Only the
+  droplet runs master.
+- Master still shows the retracted 4.78× (report) and 5.8× (readme), has no track-record
+  pause, and still ships one-event-stale calls. None of those fixes needs Model C.
+- Model C's numbers were measured on the research reaction data (raw Benzinga ±1 day,
+  weekend timestamps moved to a trading day), not on production's `events_df`
+  (exact-date DB timestamps, no date moving). Must be refit/re-measured before shipping.
+- Open decisions (user's): which frame to fit Model C on; merge the non-Model-C fixes to
+  master first?; keep predictions.duckdb in git; keep predictions_range; where future
+  research lives (branch from the tag recommended).
+
+## 2026-10-03 — Point-in-time XBRL fundamentals vs Model C: NO USEFUL VALUE (uncommitted)
+
+`research/fundamentals/` + `testing/test_fundamentals.py`; outputs `output/fundamentals/`.
+- Source: SEC Company Facts snapshot `sec_20261002T213221Z` (515 CIKs = pilot chains) in
+  gitignored `data/vendor/sec/xbrl_snapshots/`. Company Facts lists each value once per
+  filing (accn + filed) -> use only facts whose accn IS the quarter's original 10-Q/10-K.
+  YoY uses the same filing's comparative column (AES 2016 Q2: $3,229M as filed, $2,452M
+  restated later — the restatement never reaches 2016). Q4 = FY - Q3 9M YTD; CFO only TTM.
+- Coverage (2017-25): revenue vol 92%, margin 73% (no OI line: most banks/REITs, half of
+  Energy), leverage 99.6%, accruals 92%, working capital 82%, inventory 56% (not used).
+  Info is 84 days old at the call (period ended 115 days before).
+- Audit: 40 events, 325 filings re-read from EDGAR XBRL instances: 7,923/7,924 values agree,
+  360/360 features recomputed. SEC `reportDate` wrong for 0.4% of records (left missing).
+- Every Δ top-10% capture within ±0.31 pt, all CIs cross 0; size alone adds nothing;
+  2026 (frozen compact + margin) same. Within-C-decile AUC 0.47-0.53.
+- Traps: Company Facts `filed` can be a day later than submissions -> known_at = max.
+  Combined filings (EQR, LNT) carry several dei registrant names; use the undimensioned one.
+
+## 2026-10-03 — SEC features vs Model C: NO USEFUL VALUE (uncommitted)
+
+`research/sec_features/` + `testing/test_sec_features.py`; outputs `output/sec_features/`.
+- **Current corrected frame** = Phase 3's frame rebuilt by Phase 3's own code on the
+  date-corrected full_df (`frame.py` → `output/sec_features/feature_frame_current.parquet`);
+  `sec_filings_pilot/paths.FEATURE_FRAME` now points there. Refresh vs pilot: 0 changed info
+  sets; +110 events (the 103 corrected dates had never matched timing before).
+- Source = previous Breakwater event's Item 2.02 8-K, lowest EX-99 (97.3% of events have
+  both previous and second-prior). 40/40 matched correctly.
+- Gates (before outcomes): guidance_present FAILED twice (rules can't read outlook sections:
+  tables, "±", "raises outlook" beside "high end of guidance") → dropped; widths cover 24%
+  → dropped; uncertainty dictionary 47% noise (passed barely, safe-harbour lists).
+- 2017-2025, 15,777 events: every Δ top-10/20 capture within ±0.4 pt, all CIs cross 0;
+  AUC Δ <= +0.001. 2026 holdout (1,357): C+compact and C+8K pick the SAME top 10% as C.
+  Post hoc: every feature AUC 0.475-0.513 within C deciles; 8-K counts = size echo.
+- Direction source data kept (raise/lower/reaffirm counts, demand/margin/inventory) in
+  `output/sec_features/releases.parquet`, not evaluated.
+- Trap: SECClient now has a thread lock; bulk fetch uses min_interval 0.125 (8/s), 6 threads.
+
+## 2026-10-02 — SEC filings feasibility pilot (uncommitted)
+
+`research/sec_filings_pilot/` + `testing/test_sec_filings.py`; raw SEC data in gitignored
+`data/vendor/sec/` (snapshot `sec_20261002T165536Z`, sha `73ff61a5…`), tables in
+`output/sec_filings_pilot/`. No outcome read, nothing computed from text.
+- **SEC's submissions-JSON `acceptanceDateTime` is wrong for ~22% of filers** (JPM, AAPL:
+  shifted one extra UTC offset; old CIKs: NY time with a Z). Index page "Accepted" and
+  `.hdr.sgml` agree and are NY time. Rule: filing date < cutoff date, or same day with a
+  verified index time <= the NYSE close. Never use the JSON field for eligibility.
+- Population = Phase 3 frame, BMO/AMC, 2014-2026: 22,837 events / 482 stocks. 99.8% have
+  a prior 10-Q/10-K (median 84 days old); ~80% have >=1 8-K after it; 0 release 8-Ks leak.
+- 14 hand-verified CIK chains (GOOGL, MDT, AVGO, STE, DD, CI, DIS, TPL, APA, APO, BG, BLK,
+  XOM — ExxonMobil Holdings 2026-07-01 — and GOOG). The 21 Benzinga hazard tickers are not
+  in the population (no timing); LIN/DOW/DOC would need work.
+- Corpus that events use: ~6 GB gzip / ~10 GB text, ~182k requests (~25 h at the measured
+  ~2 req/s, one connection). All 241 sampled documents parsed; every 2.02 8-K has an EX-99
+  release. Trap: SEC requests need `SEC_USER_AGENT` exported in the shell.
+
+## 2026-10-02 — Confirmatory options test: checked, cannot run yet (uncommitted)
+
+- No professional options data exists (nothing in `data/vendor/` beyond DoltHub/Benzinga),
+  so the test was NOT run. DoltHub must not stand in: the pre-registration forbids reusing
+  the pilot's sample as evidence.
+- Population re-counted: matches PREREGISTRATION.md exactly (2014-2025 = 20,309).
+- Fixed in `core.py` (no data seen): covering expiry was picked from the *cleaned* chain,
+  so an expiry whose quotes all failed silently became a later one (pilot uses the raw
+  chain). Duplicate contracts now raise. +2 tests; suite 662 pass, 2 skip.
+- Still to write once data exists: vendor adapter, population/coverage audit (incl. the
+  ">5% of selected pairs fail filters" check), chain-internal fallback, staleness-3
+  robustness, walk-forward + bootstrap + decision rule (reuse `options_pilot/evaluate.py`).
+- First test year 2015 needs >=1,000 covered training rows of only 1,084 (2013+2014):
+  ~92% coverage of 2014, else it slips to 2016 and power drops.
+
+## 2026-09-30 — Historical options pilot: WEAK / UNCERTAIN VALUE (uncommitted)
+
+`research/options_pilot/` (PREREGISTRATION.md + Amendments 1–2, RESULTS.md), 30 tests in
+`testing/test_options_pilot.py`, outputs `output/options_pilot/`, raw cache in gitignored
+`data/vendor/dolthub_options/`.
+- Source: DoltHub `post-no-preference/options`, pinned `AS OF 1ug5hqta1o786faoh8fv89q7grrd00jj`,
+  CC BY-SA, provenance undocumented (no README). 2019-02 on; 2019 weekly Saturday-dated,
+  2020–mid-2024 Mon/Wed/Fri, then daily. Near-money chains only; nearest covering expiry a
+  median 14 days out. API caps results at 1,000 rows; aggregates time out; only
+  `(date, act_symbol)` lookups and `date > X ORDER BY date LIMIT 1` seeks are fast.
+- Symbols are point-in-time (FB→META etc.; 17 renames mapped, switch = day after the old
+  symbol's last row). The source lags renames by days-months. Class shares dot-spelled.
+- Matched 13,042/14,035 events; ≤1 session stale 80.7%. The vh-date calendar missed
+  option_chain dates 2023-11-16..24 (fixed: union calendar; 20 events re-matched).
+- Main tier ≤1 session, test 2021–2025, 8,241 events. C AUC 0.707 → **C + expected move
+  0.720** (+0.013 [+0.008, +0.020]); **top-20% capture +1.8 pt [+0.5, +3.6]** — first
+  new input in any phase to move top-of-ranking capture with CI > 0. Top-10% +0.7 pt, CI
+  crosses 0. AUC up only 3/5 years; gain mostly BMO. ATM IV adds nothing beyond EM; skew,
+  term structure, IV-vs-own-history add nothing (compact set is worse than EM+IV).
+- Frozen winner C+EM; 2026 holdout (1,326): same sign on every metric (AUC +0.010,
+  top-10% capture +1.5 pt), all CIs cross zero.
+- Covered sample is HARDER for C than uncovered (0.706 vs 0.788 AUC): not selection.
+- Traps: research/ may not import duckdb (vendor guard test); `pkill -f` on a pattern that
+  appears in the same bash command kills that command too — use `pkill -f "a[.]b"`.
+
+## 2026-09-29 — IV snapshots use the live price (master 8fcf3b7)
+
+- Was using the prior close all day. Now the live price from the options chain, retried
+  via `fast_info`, else skip. **Never fall back to the stored close.**
+- TMO/WAT were skipped by the old strike rule (holes in Yahoo's put list); fixed.
+
+## 2026-09-29 — Repo cleanup: memory, branches, IV fix
+
+- Memory folded from 1,304 lines + 7 side files into this one file (dated entries kept).
+- Deleted branches `announce-timing-on-master`, `fix-earnings-dates` and the
+  `breakwater-ivfix` worktree. CLAUDE.md now has the two-branch rule and makes the brain
+  suggest-only.
+- IV fix on master (`26b9ef8`): no runs when NYSE is closed, ATM strike quoted on both
+  sides within 10% of price, skip reasons logged, `join_iv` drops snapshots whose expiry
+  precedes the current earnings date (745 of 21,331 rows). Deleted 408 Labor Day rows on
+  the droplet (backup parquet in its `backfills/`); it had no Juneteenth rows.
+- Merge conflict notes: kept the rebuild's `load_announcement_timing`; the vendor guard
+  test now allows exactly the `'massive_benzinga:'` provenance label (master's date
+  cleanup compares it).
+- CLAUDE.md corrections: `main.py` runs `incremental=True` (since 2026-08-15); stage 3/4
+  incremental modes are dead code; functions don't copy their input.
+
+## 2026-09-29 — Late earnings dates corrected on the droplet
+
+- master 83b9fbe: `apply_date_corrections.py` + cleanup keeps the row whose date an
+  observed announcement backs (Benzinga > yfinance > later date). Pulled on droplet.
+- All 103 corrections applied (KO 2026-02-17 -> 02-10, PEP 2025-02-24 -> 02-04,
+  AZO 2024-06-07 -> 05-21); 0 duplicate pairs; timed rows 26,554 -> 26,657.
+- Only fixed where Benzinga AND yfinance agree (2021+). Left alone: 242 older
+  Benzinga-only disputes (Benzinga pre-2020 is sometimes filing dates / other companies)
+  and DOC's history (ticker taken over by Healthpeak).
+- Stray `next_earnings_df.csv` untracked in the droplet repo folder.
+
+## 2026-09-29 — Timestamp history verified
+
+- Droplet after the 06:00 ingest: 26,554 timestamped of 47,503 (+8 vs local, nothing lost).
+- Local: 25,508 Benzinga rows, 482 stocks, 2011-2026. Matches
+  `data/vendor/announcement_seed_earnings_20260910T180412Z.parquet` except 7 pending
+  events refreshed by yfinance (same BMO/AMC window). `events_df`: 25,883 of 45,713
+  completed events anchored.
+- The old "production DB has ~250 timestamps" blocker is resolved.
+
+## 2026-09-29 — IV/EPS collection health check (droplet, data Aug 28 - Sep 28)
+
+- Usable IV data starts 2026-08-28 (4 runs/day since). EPS since 2026-08-10.
+- Every weekday Aug 28-Sep 28 has all 4 IV hours + the EPS run. No crashes, duplicates
+  or nulls. Only failure: EPS 2026-09-09 lost OMC + LRCX (Yahoo rate limit).
+- **Problems found, not fixed (need user decision):**
+  1. Runs went ahead on Labor Day 2026-09-07 → 408 IV rows of stale quotes. No holiday check.
+  2. `current_price` = the PRIOR day's close from the DB for all 4 runs; ATM strike and
+     `expected_move_pct` use it, not a live price.
+  3. Earnings dates that move after a snapshot: 1,497 IV rows (9%) carry an old date;
+     526 rows / 14 stocks (ACN BSX DAL FDS FDX JBL MU QCOM REGN SO SYF TMUS TRV VZ) used
+     an expiry BEFORE the real date, so that IV does not cover the event. EPS: 433 rows.
+  4. 28 stocks never get an IV row (TMO, EA, BIIB, NVR, ECL, WAT, AVB, IEX, ...): no
+     expiries, or a thin chain with no matching ATM put. Skip reasons are not logged.
+  5. WRONG, retracted same day: both tables DO have unique indexes (`iv_snapshots_uq`,
+     `eps_estimates_uq`; they show in duckdb_indexes(), not duckdb_constraints()), so
+     `ON CONFLICT DO NOTHING` works.
+
+## 2026-09-28 — Announcement times loaded into the droplet DB
+
+- Why it had to be done on the droplet: `full_workflow.sh` rsyncs the droplet DB down
+  and overwrites local, so anything loaded locally is wiped. Pushing a DB up is unsafe
+  (six cron writers). User's decision: put the timing change on master, load the times
+  into the droplet DB once.
+- Master `5d82127` pulled on the droplet; `backfills/load_announcement_seed.py` filled
+  26,543 (25,515 Benzinga + 1,028 yfinance). The seed is built here by
+  `backfills/build_announcement_seed.py` (skips 214 off-by-one dates, 21 identity-hazard
+  tickers). Loader is idempotent: a second run fills 0.
+- Deploy window: outside the cron runs (06:00 UTC; weekdays 14:45-19:30 UTC).
+
+## 2026-09-28 — Earnings dates on the wrong day (built, not committed/deployed)
+
+- An EPS-backlog run (EARNINGS_RESULT_BACKFILL_DAYS=120, fixed missing EPS 124 → 6)
+  inserted 102 rows duplicating existing events at a different date, e.g. KO 2026-02-10
+  (yfinance, real) vs 2026-02-17 (stored AlphaVantage-era, late). The cleanup
+  `clean_duplicate_earnings_from_db` keeps the LATER row, i.e. the wrong one; it ran
+  2026-09-29 and KO is still on 02-17.
+- Vs Benzinga (2013+, hazards excluded): 24,410 exact of 25,545; 230 off by 2-30 days
+  (177 too late, 216 of them AlphaVantage rows ingested Feb 2026), 177 off by 1 day.
+- Fix on branch `fix-earnings-dates` (off master): cleanup keeps Benzinga-timed > any-timed
+  > later date (`_date_evidence`); `backfills/apply_date_corrections.py` (move/delete_old,
+  idempotent); 179 tests pass. Here: `backfills/build_date_corrections.py` →
+  `data/vendor/date_corrections_*.parquet`, **103 corrections**, only where Benzinga AND
+  yfinance agree (Benzinga alone is too often wrong pre-2020: LOW 2014, TPL filing
+  dates, CB = another company). So only 2021+ is fixed; 242 Benzinga-only candidates left
+  alone. Simulated on a droplet copy: clean, 0 duplicate pairs left.
+- DOC is still an identity hazard (keeps yfinance/Healthpeak history).
+
+## 2026-09-28 — P3.2 + P3.3 refit: results, not promoted (uncommitted)
+
+`research/phase3_refit/` + `testing/test_phase3_refit.py` → `output/phase3_refit/`.
+Write-up in `RESULTS.md`, rules fixed in `PREREGISTRATION.md` first.
+
+- Every feature at the real call time (last close before the report week's Monday).
+  Walk-forward OOF 2017-2025, 15,870 events; 2026 YTD holdout 1,328.
+- AUC: shipped 0.668, same formula on corrected history 0.706, B (history only) 0.712,
+  **C = logistic(log mean prior corrected |r3|, log vol_30d) 0.723**. BMO AUC 0.616 → 0.691.
+  2026 holdout: C 0.716 vs shipped 0.637.
+- Top-20% capture +2.3pt vs shipped; at top 10% no model beats any other.
+- Remove: the 12% cap (687 tied events), entropy (99.1% saturated), lift promotion (worse
+  than flagging the same count by score, post hoc), High Conviction (-3.6pt vs rest of
+  High Alert).
+- Call-time vs eve: no difference. Window-specific calibration and per-window cuts: no gain.
+- vol_30d makes flag volume follow the market (14.5-40%/yr); B stays flat at 20-26%.
+  **Open product choice: B vs C.** Also open: coefficient source (Benzinga history vs
+  yfinance 2020+; yfinance-only gives 2026 AUC 0.7125 vs 0.7131).
+
+## 2026-09-24 — Phase 5B: free price/peer features exhausted (committed 04a5b9e)
+
+`research/phase_5b_new_feature_testing/` (RESULTS.md, PREREGISTRATION.md).
+- 29 features / 7 families vs structural + vol_30d (0.7097). Only single features beat
+  it robustly, best is the sector peer reaction level (+0.006 AUC). **None improves
+  top-10%/20% capture.** Post-hoc pair (+ idio vol): 0.7167, still no capture gain.
+- Verdict: ~0.006 AUC left in free data vs ~0.054 from the timing fix. Next rational
+  step is point-in-time historical options/analyst data — verify vintage before buying.
+
+## 2026-09-24 — Phases 3-5: the model does not beat a one-line baseline (committed 177be6e)
+
+- **The data got better, and that is the real asset.** Corrected anchoring moves
+  P(|r| ≥ 8%) 0.118 → 0.189; 16% of BMO events flip their extreme label, 0.25% of AMC.
+  The same baseline scores 0.648 on free data vs 0.702 on corrected history — ~5x any
+  feature effect found anywhere.
+- **The score adds nothing over its own input:** rho 0.9997 with the raw prior p75.
+  Entropy clips to 1.0 on 97.1% of events, so score ≈ 85·min(p75/0.12, 1) + 15. Tier cuts:
+  score 73 ↔ p75 ~8.2%, 79 ↔ ~9.0%. Plain expanding mean of prior |reaction| is best (0.7078).
+- **Within a stock the score is below chance (0.43)** — it ranks companies, not quarters.
+  (Expanding stats are mechanically anti-predictive within stock, so ~0.43 is near the null.)
+- The original backtest compared features against each other, never against the raw
+  history they are computed from. Different question, not a flawed test.
+- BMO on corrected target + history (2019-2025): High Alert 126 → 566 events, hit 36.2%,
+  lift 2.25x; still flags 3x fewer than AMC — a threshold problem, fixed in the refit.
+- Other findings: the 0.12 ceiling flattens 649 events onto score 100 (ordering at the
+  top decided by frame order); the entropy `ffill` reads a FUTURE event of a DIFFERENT
+  ticker (nil after 2018, not nil pre-2015); `_missing_aware_lift` advances its global
+  prior by row, so events see same-day outcomes; wrapping the score in a GBM loses 0.011
+  AUC; pre-event realized vol is the only event-specific signal (+0.011); Benzinga
+  expectation features are negative (-0.018, latest-vintage estimates).
+- IV, expected move and analyst data have **zero historical coverage** — forward-only
+  from 2026. The features most likely to carry quarter-level signal cannot be tested.
+
+## 2026-09-10 — Benzinga source evaluation: accept with conditions
+
+Write-up: `audit/BENZINGA_EARNINGS_AUDIT.md`. Snapshot `earnings_20260910T180412Z`,
+`snapshot_sha256 17a5e76693c0c232…`. 296,334 records, raw pages in gitignored
+`data/vendor/`, 48 tests in `testing/test_massive_earnings.py`.
+1. **`date.desc` pagination silently loses 39%.** Completeness proved by re-acquiring
+   year by year: identical 296,334 ids.
+2. **`time` is NY local wall clock**, not the documented "EST" (tested against yfinance).
+3. yfinance timestamps are hour-rounded, so exact-minute agreement is meaningless.
+   Window agreement 99.63%; only 17 genuine contradictions.
+4. **Ticker joins are unsafe** (BF-B, BRK-B spellings; company_name not point-in-time;
+   SNDK reused). `00:00:00` = unknown (7.5%), never BMO.
+- Usable timing: 91% by 2015, 99.8% from 2019; ≥80% of the universe has 28 prior timed
+  events only at year end 2019.
+
+## 2026-09-06 — Multi-week predictions (`analysis/predictions_range.py`)
+
+- Model 0.3.1 as shipped, legacy target only (user's ask). History is a retro-score,
+  not an archive. Upcoming is shown twice: current and `*_pre_audit` (the one-event-stale
+  published call). **The NaN skipping is what is being reproduced — never "fix" it.**
+- Writes `output/predictions/`, never `get_run_output_dir()`. Details in CLAUDE.md.
+
+## 2026-09-05 — Phase 2: announcement timing + parallel anchored target (+ 3 review fixes)
+
+Commits `0ecec2c`, `a4475a9`, `a3bd276` on `methodology-rebuild`. Mechanism and rules are
+in CLAUDE.md. Things a successor must not undo:
+1. **AMC anchored == legacy, bit for bit** where the ticker has every session. That is the control.
+2. **Never infer BMO/AMC from price** (audit rev-1 did; every number was circular).
+3. **Never fabricate a timestamp; never auto-roll a non-session date.**
+4. `resolved_events()` is the only gate into a corrected calibration.
+5. Anchors are positions on the market-session grid, never the ticker's own rows.
+6. One clock: naive NY wall time via `now_ny()`. The host runs UTC+3 (Israel); a
+   host-clock stamp would freeze schedules into history permanently.
+- Still open: 24 events on sessions where the ticker has no price row (mostly the
+  2026-05-19..21 ingestion hole) — an ingestion bug, counted, never rolled.
+- `get_next_earnings_dates()` (~line 560) labels `datetime.now()` as NY — same bug class,
+  dead-ish legacy helper, left alone.
+
+## 2026-09-05 — Phase 1: event frame, upcoming-score staleness fixed
+
+- `groupby("stock").last()` skips NaN per column, so 100% of shipped upcoming calls were
+  one earnings event stale (audit §Q4). Fix: `pipeline/events.py`, one row per event plus
+  one pending row per stock; consumers read `is_pending == 1`.
+- Rules: **never put a pending row in the daily frame**; a pending row reads the entropy
+  `ffill` chain without updating it (letting it contribute moved 385 scores).
+- Found along the way: `calendar_builder` was dead (rendered zero events every run);
+  `save_predictions.py` had a live `NameError`.
+- Open: **15 stale price feeds** (AVB, BK, CAG, CPB, CTRA, DAY, EA, EPAM, EQR, HOLX, LW,
+  MOH, MTCH, PAYC, POOL) still carry a future earnings date with prices stopping as early
+  as 2026-02-03. `scoring_slice.py` and `INCREMENTAL_CACHED_COLS` now redundant; clean up later.
+
+## 2026-09-04 — First full end-to-end run; one work week per email
+
+- `full_workflow.sh` ran end to end: pipeline → PDFs → parquets to droplet → digest →
+  user confirmed the email arrived.
+- **Product rule (user): every email covers exactly one whole Mon-Fri work week.** More
+  must be explicitly asked for; weekend dates excluded. Monday run = this week, any other
+  day = next week (running Tuesday means Wed-Fri are never emailed — keep Monday the habit).
+  `--current-week`, `--weeks N`.
+- `work_week_window()` is shared by the digest and the predictions snapshot — they drifted
+  once (Friday run emailed ORCL/ADBE/COO/CPRT and recorded none). Do not re-inline it.
+- **Backtest against the view `predictions_first_call`** (renamed from
+  `predictions_week_open`), keyed on (stock, earnings_date).
+
+## 2026-09-02 — Scope decision: weekly only
+
+- **User: "weekly is enough."** No daily scoring on the droplet. The droplet only runs
+  ingest + IV/EPS crons and serves Streamlit. The weekly local run produces everything
+  and sends the digest. Do not resurrect droplet scoring without the user asking.
+- Predictions stay local: stage5 writes git-tracked `db/predictions.duckdb`. One writer.
+- `pipeline/incremental.py` has no caller and a latent `TypeError` (line 27). Deletable.
+- Memory measurements: the full pipeline peaks at ~5.5 GB (frame 1.9 GB); float32 would
+  save ~734 MB — `testing/calibration.py` is the gate. A droplet big enough to run the
+  pipeline is an 8 GB box.
+- EPS results were never backfilled: ingestion is INSERT-only and the skip rule hid last
+  quarter's result. Fixed with an UPDATE pass + `EARNINGS_RESULT_BACKFILL_DAYS`.
+- **Trap:** emulating `.last()` with an ffill manufactures signals (invented an "Extended
+  Beat Streak" on ADSK). Leave flag columns NaN off earnings days. **Do not fill them.**
+- **Repo conventions (user):** `pipeline/` holds only pipeline stages; stages read as named
+  function calls; droplet and local must produce identical results.
+- **The repo is PUBLIC** (`Savin97/breakwater`).
+
+## 2026-09-01 / 08-31 — cron ingest-only, predictions table, High Conviction bug
+
+- `cron/cron_ingest.py` is ingest-only (`stage1(incremental=True)`); 285 MB, fits the droplet.
+- **stdout is block-buffered under cron and lost on SIGKILL** — only stderr lines in
+  `/var/log/breakwater_ingest.log` show real progress.
+- Merged (not rebased) on purpose: `config.py` cites `f3dd1e2` and predictions rows store
+  `git_commit`; a rebase orphans both.
+- Predictions: `analysis/save_predictions.py`, own DB `db/predictions.duckdb`
+  (un-ignored — it is the only copy), upsert keyed (stock, earnings_date,
+  prediction_asof_date). Archive starts 2026-08-31.
+- `is_high_conviction` was silently False on ~98% of rows (NaN bucket off earnings days).
+  **The suite passed before and after** — the fixture had zero High Alert rows. Lesson:
+  check a new test fails against the bug before trusting a green suite. Other
+  fixture-driven tests may be vacuous; not audited.
+- MODEL_VERSION renumbered to 0.3.1 (old "1.0" = 0.1, "1.1" = 0.2; mapping in config.py).
+- Droplet has **no backups**.
+
+## 2026-08-29 — Lift promotion, logging, parallel yfinance fetches
+
+- Lift promotion (`f3dd1e2`): Normal → Elevated at lift ≥ 1.5, → High Alert at ≥ 3.0.
+  Measured [retracted] capture 43.6% → 56.8%; multiplying score by lift dropped top-decile
+  lift 3.70x → 2.98x, so lift is a gate, not a multiplier. (The 2026-09-28 refit found
+  promotion worse than flagging the same count by score.)
+- Logging: `utilities/logging_utilities.setup_logging()`, stdout, `LOG_LEVEL` and
+  `NOISY_LIBRARIES` in config.py (weasyprint needs ERROR). `main.py` deliberately untouched.
+  Rule: logging = what the program is doing; print = the output you ran it to read.
+- Report logo pointed at a file that never existed; every PDF had a broken image. Now
+  `report/img/breakwater_logo.png`.
+- Parallel fetches: network work in a thread pool, DB writes stay sequential (DuckDB
+  connections aren't thread-safe). 11.7x faster. If SSL resets cluster, drop
+  `YFINANCE_MAX_WORKERS` to 4-5.
+- The note here that `main.py` runs `incremental=False` (the paid path) was already wrong:
+  it has passed `incremental=True` (yfinance) since `117ee16`, 2026-08-15. Corrected 2026-09-29.
+- User preference: constants go in config.py with clear names.
+
+## 2026-08-02 → 08-28 — Droplet cron incidents (from infra notes)
+
+Repo at `/var/www/breakwater`, deploy = push + `git pull` on the droplet. Website repo:
+local `/home/Michael/projects/harbor_webpage`, server `/var/www/harbor_webpage`, GitHub
+`Savin97/harbor_webpage`.
+1. **Invoke cron scripts as modules**: `cd /var/www/breakwater && .venv/bin/python -m
+   cron.<module>`. By file path, `cron/` lands on `sys.path` → `No module named 'config'`
+   (IV stalled from 2026-06-26, EPS never ran).
+2. **Never positional `SELECT *` inserts** against a table whose column order can drift
+   (`snapshot_hour` ended up in a DATE column).
+3. **DuckDB allows one writer** — never schedule two DB jobs on the same minute.
+4. **Droplet TZ is UTC and Ubuntu's cron ignores `CRON_TZ`.** Times are written in UTC
+   inside 14:30-20:00 UTC (market hours under both EDT and EST). Don't change the system
+   timezone: `snapshot_hour` / `ingested_at` history is UTC.
+
+```
+45 14 * * 1-5   cd /var/www/breakwater && .venv/bin/python -m cron.cron_eps_estimates >> /var/log/breakwater/eps_estimates.log 2>&1
+0  15 * * 1-5   ... -m cron.cron_iv >> /var/log/breakwater/iv.log 2>&1
+30 16 * * 1-5   ... -m cron.cron_iv
+0  18 * * 1-5   ... -m cron.cron_iv
+30 19 * * 1-5   ... -m cron.cron_iv
+0 6 * * *       ... -m cron.cron_ingest >> /var/log/breakwater_ingest.log 2>&1
+```
+Pre-fix crontab backup: `/root/crontab.backup.20260828`.
+- Ticker lifecycle (2026-08-10/15): `stock_data.status` reconciled against Wikipedia each
+  run; renames in `data/ticker_renames.csv` (BK → BNY, SATS → ECHO).
+- **`full_workflow.sh` overwrites the local DB with the droplet's** — it silently wiped a
+  local schema migration twice. Migrate the droplet DB, then sync down.
+- Still open: `eps_estimates` gap Aug 6-7 never explained; stale untracked
+  `data/breakwater.duckdb` + `next_earnings_df.csv` on the droplet.
+
+## 2026-06-23 — Reddit/X comment playbook (from marketing notes)
+
+- Comment with real data; never hype, never trash a name; no directional calls — the
+  model flags tail risk, not direction. Soft plug: "I ran it through a risk model I use".
+- Data to pull: tier, peer percentile, recent 3d reactions, beat rate, beat-but-fell
+  rate, expected move (IV), `iv_vs_hist_ratio`, `pre_earnings_drift_flag`.
+- Angles that landed: "beat but stock fell" (NKE 73% beat rate, fell after 45% of beats);
+  options under/overpricing via `iv_vs_hist_ratio` (FDX 0.72, MU 1.63); "Compressed drift";
+  "coiled spring" (calm quarters + Compressed + High Alert); macro-catalyst pushback with
+  real price data; flag tail risk when someone is on margin.
+- Examples written that day: MU, FDX, NKE. Not in universe: SOFI, ELF, CELH, RVLV.
+
+## 2026-06-09 — Social media strategy (from marketing notes)
+
+- X: primary, 3x/week (Mon/Tue weekly watch with chart, Wed/Thu outcomes, Fri optional).
+  Reddit: comment in any thread on a stock reporting that week — r/stocks, wallstreetbets,
+  investing, StockMarket, thetagang, options, SecurityAnalysis, Daytrading.
+- **Content rules:** no model lift numbers, calibration stats or methodology; no mention
+  of ML/models; not options or trading advice; yes to factual history (avg move,
+  frequency); "I track earnings tail risk across the S&P 500" framing; always link
+  harbor-markets.com, never the raw dashboard.
+- Weekly: `python report/chart_weekly.py` → `output/weekly_chart.png`, pull stats, post,
+  then comment on Reddit threads.
+- Template: `★ $TICKER (High Alert) — avg ~X% move, Y of 8 quarters moved >5%. [context]`
+  … `Full weekly tracker → harbor-markets.com`.
+
+## 2026-06-07 — Codebase audit + incremental pipeline
+
+- Removed per-function `df.copy()` from ~34 functions (stage entries are the copy
+  boundary), fixed three positional `.to_numpy()` assignments, deleted dead code. ~120s → ~80s.
+- User asked to keep: reaction_1d/5d, is_up/down, z-score columns, the p90 bucket chain,
+  AlphaVantage ingestion functions.
+- Incremental pipeline built (`INCREMENTAL_CACHED_COLS`); its "bit-for-bit identical" claim
+  was never true for the flags. Nothing runs it now (see 2026-09-02).
+
+## 2026-05-17 → 07-27 — Early sessions
+
+- 2026-07-27: `yf.download(end=...)` is exclusive → `end = today + 1`. Still open then:
+  `data/stock_list.csv` stale; yfinance dates wrong ~20% of the time, often +7 days.
+- 2026-06-01: `testing/calibration.py` built. [Retracted] High Alert 40.2% vs 6.9% base,
+  HC 52.4%. Product framing: sell "which 15-20 events matter this week"; don't chase false
+  negatives in Normal. `cv_website` renamed `harbor_webpage`.
+- 2026-05-31: digest and reports were reading past events for upcoming dates — fixed
+  (the `.last()` approach later turned out one event stale; see Phase 1).
+- 2026-05-30: IV (`expected_move_pct`, `atm_iv`) into reports; weekly digest built;
+  stage5 auto-selects High Alert + Elevated. Layout frozen.
+- 2026-05-27: window grid search chose rolling-28 for p75 ([retracted] 4.49x avg lift).
+  The 2026-09-24 work found a plain expanding mean does better.
+- 2026-05-19: AlphaVantage cancelled; yfinance is the active ingest path.
+- 2026-05-18: HC (High Alert + drift flag) chosen over surprise-based variants
+  ([retracted] 4.93x); memory moved into `.claude/memory/`.
+
+## 2026-05-30 — Product direction and build list
+
+- Target: retail/prosumer options traders (straddle/strangle buyers, hedgers) — not
+  institutional quants. Sells move *magnitude*, not direction. Price $50-200/month.
+- Live: harbor-markets.com (landing page), harbor-markets.com/breakwater (Streamlit).
+- Revenue path: Stripe payment gate on the dashboard; the email digest as delivery.
+  **Not built yet.**
+- The original pitch ("4.5x lift, 15 years OOS", "lead the landing page with it") is
+  **retracted** — P4.1 retires every published figure until Phase 3 is ported.
+- Deferred: IV signal validation (`iv_vs_hist_ratio`, time-aware join) until IV history
+  accumulates; weekly chart polish. Not for now: SHAP, sector models, API, portfolio views.

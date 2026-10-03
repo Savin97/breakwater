@@ -8,9 +8,10 @@ import pandas as pd
 from report.chart_builder import generate_reactions_chart
 from report.recommendations_builder import build_recommendation
 from utilities.output_utilities import get_run_output_dir
+from pipeline.events import pending_events
 
-def generate_report(stock, data):
-    project_root = Path(__file__).resolve().parents[1]
+def render_report_html(stock, data):
+    """The report's HTML, exactly as it is turned into the PDF."""
     env = Environment(
         loader=FileSystemLoader("report/templates"),
         undefined=StrictUndefined,
@@ -18,7 +19,7 @@ def generate_report(stock, data):
     template = env.get_template("earnings_report.html")
 
     # Cover Page
-    html_out = template.render(
+    return template.render(
         stock = stock,
         company_name = data.get("company_name", ""),
         earnings_date = data["earnings_date"],
@@ -27,8 +28,6 @@ def generate_report(stock, data):
         risk_score = data["risk_score"],
         hist_extreme_prob = data["hist_extreme_prob"],
         base_extreme_prob = data["base_extreme_prob"],
-        current_lift_vs_baseline = data["current_lift_vs_baseline"],
-        current_lift_vs_same_bucket_global = data["current_lift_vs_same_bucket_global"],
         bucket_table = data["bucket_table"],
         sector = data["sector"],
         sub_sector = data["sub_sector"],
@@ -44,16 +43,53 @@ def generate_report(stock, data):
         iv_vs_hist_ratio     = data.get("iv_vs_hist_ratio"),
     )
 
+
+def generate_report(stock, data):
+    project_root = Path(__file__).resolve().parents[1]
+    html_out = render_report_html(stock, data)
     reports_dir = Path(get_run_output_dir()) / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     REPORT_OUTPUT_PATH = reports_dir / f"{stock}_report.pdf"
     HTML(string=html_out, base_url=project_root).write_pdf(REPORT_OUTPUT_PATH)
 
 
-def generate_reports(df):
+# Columns the customer PDF's bucket table must never show. Lift is retired from every
+# customer-facing surface by audit/PHASE0_AUDIT_REV2.md P4.1: it is computed from the
+# legacy target, which mismeasures before-open announcements, and from the lift-promoted
+# tier. The legacy scorer still uses the numbers internally until Model C replaces it.
+RETIRED_BUCKET_TABLE_COLUMNS = ["extreme_count", "lift_vs_baseline", "lift_vs_same_bucket_global"]
+
+
+def bucket_table_html_for(eb):
+    """The per-bucket table printed in the PDF: events, shrunk probability, global
+    probability. No lift columns."""
+    return (
+        eb.reset_index()
+        .drop(columns=[c for c in RETIRED_BUCKET_TABLE_COLUMNS if c in eb.columns])
+        .rename(columns={
+            "earnings_explosiveness_bucket": "Risk Bucket",
+            "index":                         "Risk Bucket",
+            "event_count":                   "Events",
+            "shrunk_prob":                   "Hist. Prob.",
+            "global_hist_prob":              "Global Prob.",
+        })
+        .to_html(index=False, classes="bucket-table", float_format=lambda x: f"{x:.3f}")
+    )
+
+
+def generate_reports(df, events_df):
+    """Per-stock PDF reports for the coming week.
+
+    Upcoming state comes from the PENDING rows of the event frame. This replaced two
+    stale mechanisms: `df.sort_values("date").groupby("stock").last()` (per-column NaN
+    skipping) and `earnings_df.iloc[-1]` (explicitly the last COMPLETED event), both of
+    which shipped a tier, score and IV snapshot one earnings event old
+    (audit/PHASE0_AUDIT_REV2.md §Q4). `df` is still the source for each stock's
+    historical reaction chart and bucket table.
+    """
     today  = pd.Timestamp.today().normalize()
     cutoff = today + pd.Timedelta(days=7)
-    latest_per_stock = df.sort_values("date").groupby("stock").last().reset_index()
+    latest_per_stock = pending_events(events_df)
     mask = (latest_per_stock["earnings_date"] >= today) & (latest_per_stock["earnings_date"] <= cutoff)
 
     stocks_to_report_for = latest_per_stock[mask].sort_values("risk_score", ascending=False)["stock"].tolist()
@@ -90,26 +126,31 @@ def generate_reports(df):
             print(f"  {stock}: no earnings rows, skipping.")
             continue
 
-        latest_row     = earnings_df.iloc[-1]
-        current_bucket = latest_row["earnings_explosiveness_bucket"]
-        if not isinstance(current_bucket, str):
-            latest_row     = earnings_df.iloc[-2]
-            current_bucket = latest_row["earnings_explosiveness_bucket"]
+        # The pending event row: tier, score and flags as of today, not as of the
+        # stock's previous report.
+        latest_row     = latest_per_stock_idx.loc[stock]
+        current_bucket = str(latest_row["earnings_explosiveness_bucket"])
 
         prior_strength = 20
+        # Reindexed over every tier: now that the tier comes from the pending event it
+        # can be one this stock has never historically occupied, which used to KeyError
+        # below. Zero prior events shrink to the market prior (lift 1.0), which is the
+        # right answer for "no opinion yet".
         eb = (
-            earnings_df.groupby("earnings_explosiveness_bucket")["is_extreme_reaction"]
+            earnings_df.groupby("earnings_explosiveness_bucket", observed=False)["is_extreme_reaction"]
             .agg(extreme_count="sum", event_count="count")
+            .reindex(["Normal", "Elevated", "High Alert"])
+            .fillna(0)
         )
         eb["shrunk_prob"]               = (eb["extreme_count"] + prior_strength * P_extreme_global) / (eb["event_count"] + prior_strength)
         eb["global_hist_prob"]           = bucket_stats.loc[eb.index, "global_hist_prob"]
         eb["lift_vs_baseline"]           = eb["shrunk_prob"] / P_extreme_global
         eb["lift_vs_same_bucket_global"] = eb["shrunk_prob"] / eb["global_hist_prob"]
 
-        upcoming_date   = pd.Timestamp(latest_per_stock_idx.loc[stock, "earnings_date"])
+        upcoming_date   = pd.Timestamp(latest_row["earnings_date"])
         surprise_flag   = str(latest_row.get("surprise_momentum_flag", "") or "")
         drift_flag      = str(latest_row.get("pre_earnings_drift_flag",  "") or "")
-        high_conviction = bool(latest_per_stock_idx.loc[stock, "is_high_conviction"])
+        high_conviction = bool(latest_row["is_high_conviction"])
 
         # The lift-based tier promotion that used to live here now runs in stage4
         # (engineer_lift_adjusted_bucket), so current_bucket already reflects it and
@@ -118,22 +159,11 @@ def generate_reports(df):
         # computed its lift from the stock's entire history including events after
         # the row being scored.
         current_bucket_prob                = f"{eb.loc[current_bucket, 'shrunk_prob']:.3f}"
+        # Lift is still computed because the recommendation text uses it to choose a
+        # wording, but it is never printed: audit P4.1 retires every lift figure.
         current_lift_vs_baseline           = f"{eb.loc[current_bucket, 'lift_vs_baseline']:.3f}"
-        current_lift_vs_same_bucket_global = f"{eb.loc[current_bucket, 'lift_vs_same_bucket_global']:.3f}"
 
-        bucket_table_html = (
-            eb.reset_index()
-            .drop(columns=["extreme_count"])
-            .rename(columns={
-                "earnings_explosiveness_bucket": "Risk Bucket",
-                "event_count":                   "Events",
-                "shrunk_prob":                   "Hist. Prob.",
-                "global_hist_prob":              "Global Prob.",
-                "lift_vs_baseline":              "Lift vs Baseline",
-                "lift_vs_same_bucket_global":    "Lift vs Peers",
-            })
-            .to_html(index=False, classes="bucket-table", float_format=lambda x: f"{x:.3f}")
-        )
+        bucket_table_html = bucket_table_html_for(eb)
 
         _exp_move = latest_row.get("expected_move_pct")
         _atm_iv   = latest_row.get("atm_iv")
@@ -150,8 +180,6 @@ def generate_reports(df):
             "n_events":                           len(earnings_df),
             "base_extreme_prob":                  round(P_extreme_global, 3),
             "hist_extreme_prob":                  current_bucket_prob,
-            "current_lift_vs_baseline":           current_lift_vs_baseline,
-            "current_lift_vs_same_bucket_global": current_lift_vs_same_bucket_global,
             "bucket_table":                       bucket_table_html,
             "surprise_flag":                      surprise_flag,
             "drift_flag":                         drift_flag,

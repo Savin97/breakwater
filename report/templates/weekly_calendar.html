@@ -56,7 +56,6 @@
         <th>Risk Score</th>
         <th>Risk Level</th>
         <th>Extreme Prob</th>
-        <th>Lift</th>
         <th>Positioning</th>
         <th>Surprise Pattern</th>
         <th>Pre-Earnings Drift</th>
@@ -65,7 +64,7 @@
     <tbody>
       {% for group in grouped %}
         <tr class="day-row">
-          <td colspan="10">{{ group.date }}</td>
+          <td colspan="9">{{ group.date }}</td>
         </tr>
         {% for e in group.events %}
         <tr{% if e.high_conviction %} class="hc-row"{% endif %}>
@@ -81,7 +80,6 @@
             <span class="badge badge-{{ e.risk_level_css }}">{{ e.risk_level }}</span>
           </td>
           <td>{{ e.hist_extreme_prob }}</td>
-          <td>{{ e.lift_vs_baseline }}</td>
           <td>
             {% if e.fragility_flag == "Stretched" %}
               <span class="frag-stretched">&#9650; Stretched</span>
