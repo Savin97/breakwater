@@ -53,6 +53,11 @@ done*, replace it with the thing being done.
 - Housekeeping DONE 2026-09-29: droplet .bak files, stray CSV and local bak deleted; Labor
   Day IV backup moved to droplet /root/iv_rows_on_closed_days_20260929_130616.parquet.
 
+- **Fundamentals test done 2026-10-03, uncommitted: FUNDAMENTALS ADD NO USEFUL VALUE.**
+  `research/fundamentals/` (PREREGISTRATION, RESULTS) + `testing/test_fundamentals.py` (24).
+  With SEC text also null, the free historical feature families are treated as exhausted
+  (user's stop rule); options expected move is the one exception, awaiting paid data.
+  Full suite: 729 pass, 2 skip.
 - **SEC feature test done 2026-10-03, uncommitted: SEC FEATURES ADD NO USEFUL VALUE.**
   `research/sec_features/` (PREREGISTRATION + Amendment 1, RESULTS), 14 tests. Model C is
   still the benchmark; next new-data candidate is the user's call (options data still paused).
@@ -72,6 +77,24 @@ history reads straight. `audit/PHASE0_AUDIT_REV2.md` is the authority; CLAUDE.md
 verified replacements.
 
 ---
+
+## 2026-10-03 — Point-in-time XBRL fundamentals vs Model C: NO USEFUL VALUE (uncommitted)
+
+`research/fundamentals/` + `testing/test_fundamentals.py`; outputs `output/fundamentals/`.
+- Source: SEC Company Facts snapshot `sec_20261002T213221Z` (515 CIKs = pilot chains) in
+  gitignored `data/vendor/sec/xbrl_snapshots/`. Company Facts lists each value once per
+  filing (accn + filed) -> use only facts whose accn IS the quarter's original 10-Q/10-K.
+  YoY uses the same filing's comparative column (AES 2016 Q2: $3,229M as filed, $2,452M
+  restated later — the restatement never reaches 2016). Q4 = FY - Q3 9M YTD; CFO only TTM.
+- Coverage (2017-25): revenue vol 92%, margin 73% (no OI line: most banks/REITs, half of
+  Energy), leverage 99.6%, accruals 92%, working capital 82%, inventory 56% (not used).
+  Info is 84 days old at the call (period ended 115 days before).
+- Audit: 40 events, 325 filings re-read from EDGAR XBRL instances: 7,923/7,924 values agree,
+  360/360 features recomputed. SEC `reportDate` wrong for 0.4% of records (left missing).
+- Every Δ top-10% capture within ±0.31 pt, all CIs cross 0; size alone adds nothing;
+  2026 (frozen compact + margin) same. Within-C-decile AUC 0.47-0.53.
+- Traps: Company Facts `filed` can be a day later than submissions -> known_at = max.
+  Combined filings (EQR, LNT) carry several dei registrant names; use the undimensioned one.
 
 ## 2026-10-03 — SEC features vs Model C: NO USEFUL VALUE (uncommitted)
 
