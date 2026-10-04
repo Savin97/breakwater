@@ -10,19 +10,21 @@ from pipeline.events import (build_and_score_event_frame, load_pipeline_announce
                              load_pipeline_active_stocks)
 
 
-def stage5(df, events_df=None):
-    """Outputs.
+def stage5(df):
+    """
+    Outputs.
 
-    `events_df` is the event frame (pipeline/events.py): one row per earnings event,
-    completed or pending. Every forward-looking consumer reads its pending rows instead
-    of `df.sort_values("date").groupby("stock").last()`, which returned the stock's last
-    COMPLETED event's state. Built here when not supplied so the documented
-    stage5(stage4(stage3(stage2()))) re-score one-liner keeps working.
+    First builds the event frame (pipeline/events.py): one row per earnings event,
+    completed or pending. It is built from the daily frame and never merged back into
+    it, so no future-dated row can reach the rolling price windows or the per-date
+    cross-sectional ranks; building it asserts that no completed event's score changed.
+    Every forward-looking consumer reads its pending rows instead of
+    `df.sort_values("date").groupby("stock").last()`, which returned the stock's last
+    COMPLETED event's state.
     """
     print("--------------------\nStage 5 - Outputs...")
-    if events_df is None:
-        events_df = build_and_score_event_frame(
-            df, load_pipeline_announcement_timing(), active_stocks=load_pipeline_active_stocks())
+    events_df = build_and_score_event_frame(
+        df, load_pipeline_announcement_timing(), active_stocks=load_pipeline_active_stocks())
 
     def generate_full_parquet(df):
         df.to_parquet("output/full_df.parquet", index=False)

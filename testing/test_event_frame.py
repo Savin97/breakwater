@@ -553,7 +553,7 @@ def test_load_active_stocks_reads_stock_data_status():
     assert load_active_stocks(con) == {"AAA", "BNY"}
 
 
-@pytest.mark.parametrize("path", ["pipeline/pipeline.py", "pipeline/stage5.py"])
+@pytest.mark.parametrize("path", ["pipeline/stage5.py"])
 def test_production_supplies_the_active_universe(path):
     """`active_stocks=None` means "no filter" for synthetic tests; every production call
     site must pass the DB's active set explicitly."""

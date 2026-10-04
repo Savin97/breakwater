@@ -61,7 +61,7 @@ breakwater/
 ├── pipeline/
 │   ├── pipeline.py                 # Orchestrates stages 1–5
 │   ├── stage1.py – stage5.py       # Pipeline stages (see above)
-│   ├── events.py                   # Stage 4b: event frame (one row per earnings event + one pending row per stock)
+│   ├── events.py                   # Event frame, built at the top of stage 5 (one row per earnings event + one pending row per stock)
 │   └── incremental.py              # Fast incremental update path
 │
 ├── data_ingestion/
