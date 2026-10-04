@@ -20,6 +20,13 @@ done*, replace it with the thing being done.
 
 ## Current state — updated 2026-10-03 (end of session)
 
+- **Model C refit on the production event frame done 2026-10-03, uncommitted
+  (`analysis/model_c_refit/`, RESULTS.md): SURVIVES WEAKLY.** OOF 2017–2025 n 16,315: B
+  0.715 / C 0.725 AUC, C−B +0.010 [+0.005, +0.015]; top-10/20 capture flat (C−B −0.8 /
+  −0.1 pt, CIs cross 0). 2026 (n 1,436): B 0.717 / C 0.720. Both beat 0.3.1 by ~0.05 AUC.
+  Same signal as the archived run on shared rows. Raw probability drifts by year (2026
+  p 0.212 vs observed 0.247) → expose a rank, not a probability. Next decision is the
+  user's: ship B or C (top-k identical), then productionise. Nothing in production changed.
 - **Research is finished and archived.** Tag `methodology-audit-archive-october-2026` →
   `39fe089` (pushed). Free historical magnitude-feature research is complete: Phase 5B
   price/peer, SEC text/8-K and XBRL fundamentals all added nothing to Model C. Options
@@ -59,6 +66,18 @@ history reads straight. `audit/PHASE0_AUDIT_REV2.md` is the authority; CLAUDE.md
 verified replacements.
 
 ---
+
+## 2026-10-03 — Model C refit on the production event frame (uncommitted)
+
+`analysis/model_c_refit/` (SPEC.md written before outcomes, frame/model/evaluate, 17 tests in
+`tests/`, run explicitly — not under `testing/`); outputs `output/model_c_refit/`.
+- Sample: 25,983 labelled → 21,927 common (2014–2026, ≥ 8 usable priors; vol never missing,
+  always the exact cutoff row). 1,382 dropped for short history (612 in 2014).
+- vs archived: 97 archived events were ±1-day vendor matches (production has no timestamp);
+  315 production events have a yfinance timestamp the archived run lacked; 102 are the
+  date-correction refresh. On 15,795 shared OOF rows: identical AUCs.
+- Candidate fit (endpoint < 2026-01-01, n 20,491): intercept −1.8303, z_hist 0.7513, z_vol
+  0.2707; means −3.238277 / −4.209207, stds 0.443920 / 0.458417. NOT deployed.
 
 ## 2026-10-03 — Clean non-Model-C integration built on `methodology-rebuild` (uncommitted)
 
