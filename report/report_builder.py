@@ -5,10 +5,13 @@ from weasyprint import HTML
 from pathlib import Path
 import pandas as pd
 
-from report.chart_builder import generate_reactions_chart
-from report.recommendations_builder import build_recommendation
+from report.chart_builder import generate_reactions_chart, reactions_chart_summary
+from report.recommendations_builder import (build_recommendation, PERCENTILE_EXPLAINER,
+                                            SIGNAL_EXPLAINER, TIER_BANDS)
+from scoring.model_b import display_score, sort_by_risk, MIN_PRIOR
 from utilities.output_utilities import get_run_output_dir
 from pipeline.events import pending_events
+
 
 def render_report_html(stock, data):
     """The report's HTML, exactly as it is turned into the PDF."""
@@ -17,31 +20,7 @@ def render_report_html(stock, data):
         undefined=StrictUndefined,
         autoescape=True,)
     template = env.get_template("earnings_report.html")
-
-    # Cover Page
-    return template.render(
-        stock = stock,
-        company_name = data.get("company_name", ""),
-        earnings_date = data["earnings_date"],
-        generated_date = data.get("generated_date", ""),
-        risk_level = data["risk_level"],
-        risk_score = data["risk_score"],
-        hist_extreme_prob = data["hist_extreme_prob"],
-        base_extreme_prob = data["base_extreme_prob"],
-        bucket_table = data["bucket_table"],
-        sector = data["sector"],
-        sub_sector = data["sub_sector"],
-        surprise_flag        = data.get("surprise_flag", ""),
-        drift_flag           = data.get("drift_flag", ""),
-        high_conviction      = data.get("high_conviction", False),
-        recommendation       = data.get("recommendation", {}),
-        peer_percentile      = data.get("peer_percentile"),
-        days_to_earnings     = data.get("days_to_earnings"),
-        reactions_chart_svg  = data.get("reactions_chart_svg", ""),
-        iv_implied_move_pct  = data.get("iv_implied_move_pct"),
-        atm_iv_pct           = data.get("atm_iv_pct"),
-        iv_vs_hist_ratio     = data.get("iv_vs_hist_ratio"),
-    )
+    return template.render(stock=stock, **data)
 
 
 def generate_report(stock, data):
@@ -49,159 +28,84 @@ def generate_report(stock, data):
     html_out = render_report_html(stock, data)
     reports_dir = Path(get_run_output_dir()) / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
-    REPORT_OUTPUT_PATH = reports_dir / f"{stock}_report.pdf"
-    HTML(string=html_out, base_url=project_root).write_pdf(REPORT_OUTPUT_PATH)
+    HTML(string=html_out, base_url=project_root).write_pdf(reports_dir / f"{stock}_report.pdf")
 
 
-# Columns the customer PDF's bucket table must never show. Lift is retired from every
-# customer-facing surface by audit/PHASE0_AUDIT_REV2.md P4.1: it is computed from the
-# legacy target, which mismeasures before-open announcements, and from the lift-promoted
-# tier. The legacy scorer still uses the numbers internally until Model C replaces it.
-RETIRED_BUCKET_TABLE_COLUMNS = ["extreme_count", "lift_vs_baseline", "lift_vs_same_bucket_global"]
+def _fmt_date(d) -> str:
+    return pd.Timestamp(d).strftime("%B %d, %Y")
 
 
-def bucket_table_html_for(eb):
-    """The per-bucket table printed in the PDF: events, shrunk probability, global
-    probability. No lift columns."""
-    return (
-        eb.reset_index()
-        .drop(columns=[c for c in RETIRED_BUCKET_TABLE_COLUMNS if c in eb.columns])
-        .rename(columns={
-            "earnings_explosiveness_bucket": "Risk Bucket",
-            "index":                         "Risk Bucket",
-            "event_count":                   "Events",
-            "shrunk_prob":                   "Hist. Prob.",
-            "global_hist_prob":              "Global Prob.",
-        })
-        .to_html(index=False, classes="bucket-table", float_format=lambda x: f"{x:.3f}")
-    )
+def build_report_data(row: pd.Series, history: pd.DataFrame, company_name: str = "",
+                      today=None) -> dict:
+    """Everything the PDF template shows for one pending event — Model B fields from the
+    event row, the corrected reaction chart from the stock's completed events, and the
+    options snapshot as separate market context."""
+    today = pd.Timestamp(today if today is not None else date.today()).normalize()
+    upcoming = pd.Timestamp(row["earnings_date"])
+    tier = str(row["risk_tier"])
+    hist_abs = row.get("model_b_hist_mean_abs")
+    n_prior = int(row["model_b_n_prior"])
+
+    exp_move, atm_iv = row.get("expected_move_pct"), row.get("atm_iv")
+    iv_date = row.get("iv_snapshot_date")
+    has_iv = pd.notna(exp_move)
+    return {
+        "company_name":        company_name or "",
+        "generated_date":      today.strftime("%B %d, %Y"),
+        "earnings_date":       _fmt_date(upcoming),
+        "days_to_earnings":    (upcoming - today).days,
+        "sector":              row.get("sector", "") or "",
+        "sub_sector":          row.get("sub_sector", "") or "",
+        "risk_tier":           tier,
+        "risk_tier_css":       tier.lower().replace(" ", "-"),
+        "risk_score":          display_score(row.get("risk_score")),
+        "tier_band":           TIER_BANDS[tier],
+        "hist_mean_abs_pct":   (f"{hist_abs * 100:.1f}%" if pd.notna(hist_abs) else None),
+        "n_prior":             n_prior,
+        "min_prior":           MIN_PRIOR,
+        "score_asof_date":     _fmt_date(row["score_asof_date"])
+                               if pd.notna(row.get("score_asof_date")) else None,
+        "percentile_explainer": PERCENTILE_EXPLAINER,
+        "signal_explainer":    SIGNAL_EXPLAINER,
+        "tier_bands":          TIER_BANDS,
+        "recommendation":      build_recommendation(tier, row["stock"], _fmt_date(upcoming),
+                                                    n_prior, hist_abs),
+        "reactions_chart_svg": generate_reactions_chart(history),
+        "chart_summary":       reactions_chart_summary(history),
+        "iv_implied_move_pct": float(exp_move) if has_iv else None,
+        "atm_iv_pct":          float(atm_iv) if has_iv and pd.notna(atm_iv) else None,
+        "iv_snapshot_date":    _fmt_date(iv_date) if has_iv and pd.notna(iv_date) else None,
+        "iv_snapshot_age_days": (today - pd.Timestamp(iv_date).normalize()).days
+                                if has_iv and pd.notna(iv_date) else None,
+        "model_version":       row.get("model_version", ""),
+    }
 
 
-def generate_reports(df, events_df):
-    """Per-stock PDF reports for the coming week.
-
-    Upcoming state comes from the PENDING rows of the event frame. This replaced two
-    stale mechanisms: `df.sort_values("date").groupby("stock").last()` (per-column NaN
-    skipping) and `earnings_df.iloc[-1]` (explicitly the last COMPLETED event), both of
-    which shipped a tier, score and IV snapshot one earnings event old
-    (audit/PHASE0_AUDIT_REV2.md §Q4). `df` is still the source for each stock's
-    historical reaction chart and bucket table.
-    """
-    today  = pd.Timestamp.today().normalize()
+def generate_reports(events_df, today=None):
+    """Per-stock PDF reports for events reporting in the next 7 days, read from the
+    PENDING rows of the Model B-scored event frame. Riskiest first; Unscored
+    events get a report too, which says they are unscored and why."""
+    today = pd.Timestamp(today if today is not None else date.today()).normalize()
     cutoff = today + pd.Timedelta(days=7)
-    latest_per_stock = pending_events(events_df)
-    mask = (latest_per_stock["earnings_date"] >= today) & (latest_per_stock["earnings_date"] <= cutoff)
+    pend = pending_events(events_df)
+    week = pend[(pend["earnings_date"] >= today) & (pend["earnings_date"] <= cutoff)].copy()
+    if week.empty:
+        raise ValueError("No stocks found to report for")
+    week = sort_by_risk(week)
 
-    stocks_to_report_for = latest_per_stock[mask].sort_values("risk_score", ascending=False)["stock"].tolist()
-    if not stocks_to_report_for:
-        raise ValueError(f"No stocks found to report for")
-    
-    hc       = latest_per_stock[mask & latest_per_stock["is_high_conviction"]].sort_values("risk_score", ascending=False)["stock"].tolist()
-    ha       = latest_per_stock[mask & (latest_per_stock["earnings_explosiveness_bucket"] == "High Alert") & ~latest_per_stock["is_high_conviction"]].sort_values("risk_score", ascending=False)["stock"].tolist()
-    elevated = latest_per_stock[mask & (latest_per_stock["earnings_explosiveness_bucket"] == "Elevated")].sort_values("risk_score", ascending=False)["stock"].tolist()
-    print(f"{len(stocks_to_report_for)} stocks this week:\n*** HC: {hc or 'none'}\n** HA: {ha or 'none'}\n* Elevated: {elevated or 'none'}")
+    by_tier = {t: g["stock"].tolist() for t, g in week.groupby("risk_tier", sort=False)}
+    print(f"{len(week)} stocks this week: "
+          + "; ".join(f"{t}: {', '.join(s)}" for t, s in by_tier.items()))
 
-    latest_per_stock_idx = latest_per_stock.set_index("stock")
-    
-    company_names  = pd.read_csv("data/sp500_full_info.csv", usecols=["ticker", "name"]).set_index("ticker")["name"]
-    generated_date = date.today().strftime("%B %d, %Y")
-    df_by_stock    = {s: grp for s, grp in df.groupby("stock")}
+    company_names = pd.read_csv("data/sp500_full_info.csv",
+                                usecols=["ticker", "name"]).set_index("ticker")["name"]
+    completed = events_df[~events_df["is_pending"]]
+    history_by_stock = {s: g for s, g in completed.groupby("stock")}
+    empty = completed.iloc[0:0]
 
-    global_earnings_df     = df[df["is_earnings_day"] == 1].copy()
-    P_extreme_global       = global_earnings_df["is_extreme_reaction"].mean()
-    P_extreme_given_bucket = global_earnings_df.groupby("earnings_explosiveness_bucket")["is_extreme_reaction"].mean()
-    bucket_stats           = pd.DataFrame({"global_hist_prob": P_extreme_given_bucket})
-
-    rank_key         = latest_per_stock_idx["abs_reaction_p75_rolling"].fillna(latest_per_stock_idx["abs_reaction_p75"])
-    peer_percentiles = rank_key.rank(pct=True).fillna(0)
-
-    print(f"Generating reports: {', '.join(stocks_to_report_for)}")
-    for stock in stocks_to_report_for:
-        stock_df = df_by_stock.get(stock)
-        if stock_df is None or stock_df.empty:
-            print(f"  {stock}: no data, skipping.")
-            continue
-        earnings_df = stock_df[stock_df["is_earnings_day"] == 1]
-        if earnings_df.empty:
-            print(f"  {stock}: no earnings rows, skipping.")
-            continue
-
-        # The pending event row: tier, score and flags as of today, not as of the
-        # stock's previous report.
-        latest_row     = latest_per_stock_idx.loc[stock]
-        current_bucket = str(latest_row["earnings_explosiveness_bucket"])
-
-        prior_strength = 20
-        # Reindexed over every tier: now that the tier comes from the pending event it
-        # can be one this stock has never historically occupied, which used to KeyError
-        # below. Zero prior events shrink to the market prior (lift 1.0), which is the
-        # right answer for "no opinion yet".
-        eb = (
-            earnings_df.groupby("earnings_explosiveness_bucket", observed=False)["is_extreme_reaction"]
-            .agg(extreme_count="sum", event_count="count")
-            .reindex(["Normal", "Elevated", "High Alert"])
-            .fillna(0)
-        )
-        eb["shrunk_prob"]               = (eb["extreme_count"] + prior_strength * P_extreme_global) / (eb["event_count"] + prior_strength)
-        eb["global_hist_prob"]           = bucket_stats.loc[eb.index, "global_hist_prob"]
-        eb["lift_vs_baseline"]           = eb["shrunk_prob"] / P_extreme_global
-        eb["lift_vs_same_bucket_global"] = eb["shrunk_prob"] / eb["global_hist_prob"]
-
-        upcoming_date   = pd.Timestamp(latest_row["earnings_date"])
-        surprise_flag   = str(latest_row.get("surprise_momentum_flag", "") or "")
-        drift_flag      = str(latest_row.get("pre_earnings_drift_flag",  "") or "")
-        high_conviction = bool(latest_row["is_high_conviction"])
-
-        # The lift-based tier promotion that used to live here now runs in stage4
-        # (engineer_lift_adjusted_bucket), so current_bucket already reflects it and
-        # every surface — dashboard, digest, parquet — agrees with this report.
-        # The old local version applied only to PDFs, never moved risk_score, and
-        # computed its lift from the stock's entire history including events after
-        # the row being scored.
-        current_bucket_prob                = f"{eb.loc[current_bucket, 'shrunk_prob']:.3f}"
-        # Lift is still computed because the recommendation text uses it to choose a
-        # wording, but it is never printed: audit P4.1 retires every lift figure.
-        current_lift_vs_baseline           = f"{eb.loc[current_bucket, 'lift_vs_baseline']:.3f}"
-
-        bucket_table_html = bucket_table_html_for(eb)
-
-        _exp_move = latest_row.get("expected_move_pct")
-        _atm_iv   = latest_row.get("atm_iv")
-        _p75      = latest_row.get("abs_reaction_p75_rolling")
-
-        report_data = {
-            "earnings_date":                      upcoming_date.strftime("%B %d, %Y"),
-            "company_name":                       company_names.get(stock, ""),
-            "generated_date":                     generated_date,
-            "risk_level":                         current_bucket,
-            "risk_score":                         f"{latest_row['risk_score']:.0f}",
-            "sector":                             latest_row.get("sector", ""),
-            "sub_sector":                         latest_row.get("sub_sector", ""),
-            "n_events":                           len(earnings_df),
-            "base_extreme_prob":                  round(P_extreme_global, 3),
-            "hist_extreme_prob":                  current_bucket_prob,
-            "bucket_table":                       bucket_table_html,
-            "surprise_flag":                      surprise_flag,
-            "drift_flag":                         drift_flag,
-            "high_conviction":                    high_conviction,
-            "recommendation":                     build_recommendation(
-                risk_level=current_bucket,
-                hist_extreme_prob=current_bucket_prob,
-                base_extreme_prob=round(P_extreme_global, 3),
-                lift=current_lift_vs_baseline,
-                surprise_flag=surprise_flag,
-                drift_flag=drift_flag,
-                high_conviction=high_conviction,
-                stock=stock,
-                earnings_date=upcoming_date.strftime("%B %d, %Y"),
-            ),
-            "peer_percentile":                    int(peer_percentiles.loc[stock] * 100),
-            "days_to_earnings":                   (upcoming_date.date() - date.today()).days,
-            "reactions_chart_svg":                generate_reactions_chart(earnings_df),
-            "iv_implied_move_pct":                float(_exp_move) if pd.notna(_exp_move) else None,
-            "atm_iv_pct":                         float(_atm_iv)   if pd.notna(_atm_iv)   else None,
-            "iv_vs_hist_ratio":                   round(float(_exp_move) / float(_p75), 2)
-                                                  if pd.notna(_exp_move) and pd.notna(_p75) and float(_p75) > 0
-                                                  else None,
-        }
-        generate_report(stock, report_data)
+    print(f"Generating reports: {', '.join(week['stock'])}")
+    for _, row in week.iterrows():
+        stock = row["stock"]
+        data = build_report_data(row, history_by_stock.get(stock, empty),
+                                 company_names.get(stock, ""), today)
+        generate_report(stock, data)

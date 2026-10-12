@@ -22,26 +22,26 @@
       <div class="summary-lbl">Events</div>
     </div>
     <div class="summary-cell">
-      <div class="summary-num">{{ summary.n_elevated_frag }}</div>
-      <div class="summary-lbl">Elevated Positioning</div>
+      <div class="summary-num">{{ summary.n_high_alert }}</div>
+      <div class="summary-lbl">High Alert</div>
     </div>
     <div class="summary-cell">
-      <div class="summary-num hc-num">{{ summary.n_high_conviction }}</div>
-      <div class="summary-lbl">High Conviction</div>
+      <div class="summary-num">{{ summary.n_elevated }}</div>
+      <div class="summary-lbl">Elevated</div>
     </div>
     <div class="summary-cell">
-      <div class="summary-num">{{ summary.avg_risk_score }}</div>
-      <div class="summary-lbl">Avg Risk Score</div>
+      <div class="summary-num">{{ summary.n_unscored }}</div>
+      <div class="summary-lbl">Unscored</div>
     </div>
     <div class="summary-cell">
       <div class="summary-num">{{ summary.hottest_sector }}</div>
       <div class="summary-lbl">Most Active Sector</div>
     </div>
     <div class="summary-cell">
-      <div class="summary-lbl">By Risk Level</div>
+      <div class="summary-lbl">By Risk Tier</div>
       <div class="level-pills">
-        {% for level, count in summary.level_counts.items() %}
-          <span class="level-pill pill-{{ level | lower | replace(' ', '-') }}">{{ level }}: {{ count }}</span>
+        {% for tier, count in summary.tier_counts.items() %}
+          <span class="level-pill pill-{{ tier | lower | replace(' ', '-') }}">{{ tier }}: {{ count }}</span>
         {% endfor %}
       </div>
     </div>
@@ -53,56 +53,37 @@
         <th>Date</th>
         <th>Ticker</th>
         <th>Sector / Sub-Sector</th>
-        <th>Risk Score</th>
-        <th>Risk Level</th>
-        <th>Extreme Prob</th>
-        <th>Positioning</th>
-        <th>Surprise Pattern</th>
-        <th>Pre-Earnings Drift</th>
+        <th>Risk Percentile</th>
+        <th>Risk Tier</th>
+        <th>Avg. Past Earnings Move</th>
+        <th>Usable Past Reports</th>
       </tr>
     </thead>
     <tbody>
       {% for group in grouped %}
         <tr class="day-row">
-          <td colspan="9">{{ group.date }}</td>
+          <td colspan="7">{{ group.date }}</td>
         </tr>
         {% for e in group.events %}
-        <tr{% if e.high_conviction %} class="hc-row"{% endif %}>
+        <tr>
           <td></td>
-          <td class="stock-ticker">{{ e.stock }}{% if e.high_conviction %} <span class="hc-star">&#9733;</span>{% endif %}</td>
+          <td class="stock-ticker">{{ e.stock }}</td>
           <td class="sector-text">
             {{ e.sector }}{% if e.sub_sector %} · {{ e.sub_sector }}{% endif %}
           </td>
           <td>
-            <span class="risk-chip chip-{{ e.risk_level_css }}">{{ e.risk_score }}</span>
-          </td>
-          <td>
-            <span class="badge badge-{{ e.risk_level_css }}">{{ e.risk_level }}</span>
-          </td>
-          <td>{{ e.hist_extreme_prob }}</td>
-          <td>
-            {% if e.fragility_flag == "Stretched" %}
-              <span class="frag-stretched">&#9650; Stretched</span>
-            {% elif e.fragility_flag == "Elevated" %}
-              <span class="frag-elevated">&#9650; Elevated</span>
+            {% if e.risk_score is not none %}
+              <span class="risk-chip chip-{{ e.risk_tier_css }}">{{ e.risk_score }}</span>
             {% else %}
-              <span class="frag-none">—</span>
+              <span class="risk-chip chip-unscored">—</span>
             {% endif %}
           </td>
           <td>
-            {% if e.surprise_flag %}
-              <span class="flag flag-{{ e.surprise_flag | lower | replace(' ', '-') }}">{{ e.surprise_flag }}</span>
-            {% else %}
-              <span class="frag-none">—</span>
-            {% endif %}
+            <span class="badge badge-{{ e.risk_tier_css }}">{{ e.risk_tier }}</span>
+            {% if e.risk_tier == "Unscored" %}<div class="muted">insufficient history — not low risk</div>{% endif %}
           </td>
-          <td>
-            {% if e.drift_flag %}
-              <span class="flag flag-{{ e.drift_flag | lower }}">{{ e.drift_flag }}</span>
-            {% else %}
-              <span class="frag-none">—</span>
-            {% endif %}
-          </td>
+          <td>{{ e.hist_mean_abs }}</td>
+          <td>{{ e.n_prior }}</td>
         </tr>
         {% endfor %}
       {% endfor %}
@@ -110,9 +91,11 @@
   </table>
 
   <div class="footer">
-    Base extreme-move probability (all stocks): {{ summary.base_extreme_prob }} &nbsp;|&nbsp;
-    Extreme = 3-day post-earnings move ≥ 8% &nbsp;|&nbsp;
-    Positioning = momentum_fragility_score percentile &nbsp;|&nbsp;
+    {{ summary.percentile_explainer }} &nbsp;|&nbsp;
+    High Alert: {{ summary.tier_bands["High Alert"] }} &nbsp;|&nbsp;
+    Elevated: {{ summary.tier_bands["Elevated"] }} &nbsp;|&nbsp;
+    {{ summary.unscored_note }} &nbsp;|&nbsp;
+    Avg. past earnings move = mean 3-session move, either direction, over past reports with a verified announcement time &nbsp;|&nbsp;
     Generated by Breakwater
   </div>
 

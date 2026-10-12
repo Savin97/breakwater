@@ -1,106 +1,68 @@
-def build_recommendation(risk_level, hist_extreme_prob, base_extreme_prob,
-                         lift, surprise_flag, drift_flag, high_conviction,
-                         stock, earnings_date):
-    """Recommendation text for the PDF.
+# report/recommendations_builder.py
+"""Customer wording for Model B — one place, shared by the PDF, the calendar, the digest
+and the dashboard so no surface drifts into saying something the model does not know.
 
-    `lift` only chooses between two Normal-tier wordings; it is never printed. Audit
-    P4.1 (audit/PHASE0_AUDIT_REV2.md) retires every lift figure from customer output,
-    so the text states the two probabilities and never a multiple of the market rate.
-    """
-    hist_pct = round(float(hist_extreme_prob) * 100, 1)
-    base_pct = round(float(base_extreme_prob) * 100, 1)
-    lift_x   = round(float(lift), 1)
+Model B knows one thing: how large this stock's corrected earnings moves have been
+historically, ranked against a frozen reference distribution. It is magnitude risk only.
+Nothing here may state a probability or chance, a multiple of a market rate, an expected
+move, or a direction (testing/test_customer_outputs.py enforces this).
+"""
+from scoring.model_b import HIGH_ALERT, ELEVATED, NORMAL, UNSCORED, MIN_PRIOR
 
-    flag_lines = []
-    if drift_flag == "Extended":
-        flag_lines.append(
-            "Pre-earnings drift is Extended — the stock has been trending upward into earnings, "
-            "raising the bar for a positive surprise and increasing the risk of a sharp reversal."
-        )
-    elif drift_flag == "Compressed":
-        flag_lines.append(
-            "Pre-earnings drift is Compressed — unusually quiet price action ahead of earnings "
-            "often precedes a sharp move in either direction."
-        )
+PERCENTILE_NAME = "Breakwater Risk Percentile"
 
-    if surprise_flag == "Beat Streak":
-        flag_lines.append(
-            "Beat Streak — the stock has beaten consensus estimates in recent quarters. "
-            "Elevated expectations increase sensitivity to any earnings disappointment."
-        )
-    elif surprise_flag == "Miss Streak":
-        flag_lines.append(
-            "Miss Streak — consecutive estimate misses signal persistent downside pressure "
-            "heading into this event."
-        )
-    elif surprise_flag == "Erratic":
-        flag_lines.append(
-            "Erratic surprise pattern — inconsistent results make the earnings outcome "
-            "harder to predict and the price reaction harder to anticipate."
-        )
-    elif surprise_flag == "Overdue Miss":
-        flag_lines.append(
-            "Overdue Miss — after a run of beats, the stock may face a higher risk "
-            "of a negative surprise this quarter."
-        )
+PERCENTILE_EXPLAINER = (
+    "Breakwater Risk Percentile compares this stock's structural earnings-move risk with "
+    "the frozen Model B reference distribution. It is a rank, not a probability.")
 
-    if risk_level == "Normal":
-        headline = "Normal — No Special Action Required"
-        if lift_x >= 1.3:
-            body = (
-                f"{stock} is currently in its Normal risk tier — no active timing signals this quarter. "
-                f"Note that its historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
-                f"above the {base_pct}% market average. "
-                f"This reflects {stock}'s structural volatility profile, not an elevated signal for this event."
-            )
-        else:
-            body = (
-                f"{stock} shows no elevated tail risk ahead of earnings on {earnings_date}. "
-                f"The historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
-                f"in line with the {base_pct}% market average."
-            )
-        action = "Standard position management applies. No special action required before earnings."
-        flag_lines = []
+SIGNAL_EXPLAINER = (
+    "The score is built from one input: the average absolute 3-session price move on this "
+    "stock's past earnings reports, measured from the last close before each announcement "
+    "and counting only reports with a verified announcement time. It ranks the size of a "
+    "potential move, never its direction.")
 
-    elif risk_level == "Elevated":
-        headline = "Elevated Risk — Light Caution Advised"
-        body = (
-            f"{stock} shows moderately elevated tail risk ahead of earnings on {earnings_date}. "
-            f"The historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
-            f"against a market average of {base_pct}%."
-        )
-        action = (
-            "Review your position size ahead of earnings. "
-            "If you hold a concentrated position, light hedging may be appropriate."
-        )
+TIER_BANDS = {
+    HIGH_ALERT: "top decile of the reference distribution (90th percentile and above)",
+    ELEVATED:   "80th–90th percentile of the reference distribution",
+    NORMAL:     "below the 80th percentile of the reference distribution",
+    UNSCORED:   f"fewer than {MIN_PRIOR} usable prior corrected earnings reactions",
+}
 
-    elif risk_level == "High Alert" and not high_conviction:
-        headline = "High Alert — Heightened Caution Warranted"
-        body = (
-            f"{stock} has a structurally elevated earnings jump risk. "
-            f"The historical probability of an extreme move (>8% in 3 days) is {hist_pct}%, "
-            f"against a market average of {base_pct}%."
-        )
-        action = (
-            "Consider reducing exposure or adding downside protection before earnings. "
-            "Monitor closely in the days leading up to the event."
-        )
+# Unscored is a coverage statement, never a risk level. Every surface that shows an
+# Unscored event, or leaves one out, says so in these words.
+UNSCORED_NOTE = (
+    "Unscored means there is not enough verified earnings history to evaluate this event "
+    f"with Model B (fewer than {MIN_PRIOR} usable past reports) — it is not a low-risk rating.")
 
-    else:  # High Alert + high conviction
-        headline = "High Alert ★ Highest Priority"
-        body = (
-            f"{stock} combines a historically explosive earnings profile with active timing signals "
-            f"this quarter. The historical probability of an extreme move (>8% in 3 days) is "
-            f"{hist_pct}%, against a market average of {base_pct}%."
-        )
-        action = (
-            "Strong case for hedging or reducing exposure before earnings. "
-            "This is the highest-priority flag in the Breakwater framework."
-        )
+_HEADLINES = {
+    HIGH_ALERT: "High Alert — top decile of historical earnings-move size",
+    ELEVATED:   "Elevated — 80th to 90th percentile of historical earnings-move size",
+    NORMAL:     "Normal — below the 80th percentile",
+    UNSCORED:   "Unscored — not enough verified earnings history",
+}
 
-    return {
-        "headline": headline,
-        "body":     body,
-        "action":   action,
-        "flag_lines": flag_lines,
-    }
+_ACTIONS = {
+    HIGH_ALERT: ("This stock's past earnings reports have produced some of the largest moves "
+                 "in the S&P 500 reference set. Review position size and any hedges before "
+                 "the report; a large move in either direction is in character for it."),
+    ELEVATED:   ("This stock's past earnings moves have been larger than most. Worth "
+                 "checking position size before the report."),
+    NORMAL:     "Nothing in this stock's earnings history marks it out for an unusually "
+                "large move. Standard position management applies.",
+    UNSCORED:   ("Breakwater does not score this event. That is not a statement that the "
+                 "risk is low — there is not enough verified history to rank it."),
+}
+
+
+def build_recommendation(risk_tier, stock, earnings_date, n_prior, hist_mean_abs):
+    """Headline / body / action for the PDF's summary block."""
+    if risk_tier == UNSCORED:
+        body = (f"{stock} reports on {earnings_date}. It has {int(n_prior)} usable prior "
+                f"corrected earnings reaction{'s' if int(n_prior) != 1 else ''}; Model B "
+                f"needs at least {MIN_PRIOR} to score an event.")
+    else:
+        body = (f"{stock} reports on {earnings_date}. Across its {int(n_prior)} usable past "
+                f"earnings reports, the stock moved {hist_mean_abs * 100:.1f}% on average "
+                f"over the 3 sessions after the announcement (either direction). That places "
+                f"it in the {risk_tier} tier: {TIER_BANDS[risk_tier]}.")
+    return {"headline": _HEADLINES[risk_tier], "body": body, "action": _ACTIONS[risk_tier]}

@@ -70,8 +70,8 @@ TABLE_SPECS = {
     "predictions": {
         "time_col": "prediction_asof_date",
         "cols": ["prediction_asof_date", "week_start", "stock", "earnings_date",
-                 "tier", "risk_score", "is_high_conviction",
-                 "pre_earnings_drift_flag", "model_version"],
+                 "tier", "risk_score", "model_b_hist_mean_abs", "model_b_n_prior",
+                 "score_asof_date", "model_version"],
     },
     "stock_data": {
         "time_col": "ingested_at",

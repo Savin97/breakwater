@@ -1,926 +1,485 @@
-# backtesting/testing_functions.py
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+# testing/testing_functions.py
 """
-    Backtesting & Regime Evaluation Utilities for Breakwater
+    Evaluation helpers for Breakwater — Model B (0.4.0) and any candidate feature.
 
-    This module contains diagnostic, validation, and regime-testing functions
-    used to evaluate Breakwater's earnings-period risk framework.
+    Every function takes the EVENT FRAME (output/events_df.parquet; the pipeline's
+    events) and first reduces it with `prepare_events`: completed events whose corrected
+    3-session outcome is available, with
+        y        abs_reaction_3d_anchored >= 8%   (the Model B validation target)
+        y_large  abs_reaction_3d_anchored >= 5%
+        move     abs_reaction_3d_anchored
+        year     report year
+    Events without a verified announcement time have no corrected outcome and are dropped,
+    never counted as misses. The legacy report-date reaction is never used.
 
-    Purpose
-    -------
-    Provide tools to:
-    • Validate individual feature predictive power
-    • Test multi-factor "high-risk" regimes
-    • Compare regime performance vs volatility-only baselines
-    • Measure precision/recall of extreme-move detection
-    • Run train/test and walk-forward robustness checks
-    • Inspect distributional stability and lift statistics
+    Defaults: score = `model_b_hist_mean_abs` (the raw Model B signal; `risk_score` ranks
+    identically), dates = `earnings_date`. Anything else on the event frame can be passed
+    in its place — e.g. `vol_30d`, `expected_move_pct` — which is how a candidate feature
+    is tested against or on top of Model B.
+
+    INTERNAL ONLY. Results on history are retro-scored (each event's Model B call computed
+    from prior outcomes only) and are not a track record. When quoting a ratio, split it by
+    `announce_window` (BMO vs AMC differ in base rate and tier mix).
 
     ---------------------------------------------------------------------------
     FEATURE DIAGNOSTICS
     ---------------------------------------------------------------------------
-
-    check_explosiveness_feature(df)
-        Tests earnings_explosiveness_score via quantile bucketing and compares
-        large/extreme move rates across buckets.
-
-    check_timing_danger_connection_to_earnings_move_bucket(df)
-        Decile analysis of timing_danger vs large/extreme move outcomes,
-        including lift vs baseline and confidence intervals.
-
-    check_corr_of_features(df)
-        Prints correlation matrix between core components:
-        proximity, volatility expansion, momentum fragility,
-        explosiveness, and timing_danger.
-
-    check_timing_danger_score_metric(df)
-        Evaluates distribution, dispersion, and bucketed reaction behavior
-        of the timing_danger score (including normalization diagnostics).
+    check_explosiveness_feature(df, score)      quintile hit rates of a score
+    check_feature_connection_to_large_reacion_metric(df, feature)
+                                                decile table, ≥5% / ≥8% rates, Wilson CIs
+    check_corr_of_features(df, cols)            Spearman matrix between signals
+    check_score_metric(df, score, plots=False)  distribution, dispersion, quintile means
 
     ---------------------------------------------------------------------------
-    REGIME TESTING
+    REGIME TESTING (conditions are (column, quantile) pairs: column >= its quantile)
     ---------------------------------------------------------------------------
-
-    three_way_regime_test(df)
-        Tests the 3-factor regime hypothesis:
-        high timing_danger + elevated idiosyncratic vol +
-        high explosiveness, and compares hit rates vs baseline.
-
-    breakwater_regime_test(df)
-        Computes regime statistics (event count, large/extreme rates)
-        for the defined Breakwater regime mask.
-
-    volatility_only_regime_test(df)
-        Baseline comparison using volatility-only conditions
-        (high vol_30d + elevated idiosyncratic vol).
-
-    evaluate_high_risk_earnings_regime(df)
-        Defines a stricter "high-risk" regime and runs threshold grids
-        to evaluate sensitivity of extreme-move concentration.
-
-    comparing_regime_results_to_volatility_only(df)
-        Stress-tests regime performance vs volatility-only signals,
-        including shuffled-label checks and stability diagnostics.
+    three_way_regime_test(df, score, cond_a, cond_b)
+    conditional_hit_rate_analysis(df, score, conditions)
+    breakwater_regime_test(df, score, conditions)
+    volatility_only_regime_test(df, vol_col, score)   competitive baseline vs Model B
+    evaluate_high_risk_earnings_regime(df, score, other)  quantile robustness grid
+    high_conviction_regime_test(df, overlays)         tier + overlay condition
 
     ---------------------------------------------------------------------------
     CLASSIFICATION METRICS
     ---------------------------------------------------------------------------
-
-
-    (Threshold sweep block)
-        Iterates multiple quantile thresholds and evaluates confusion
-        metrics for each regime definition.
+    testing_precision_recall(df, regime)        confusion matrix, precision, recall
+    comparing_regime_results_to_volatility_only(df, feat1, feat2)
+                                                signal persistence, shuffled-label null,
+                                                first/second-half stability, top-vol baseline
 
     ---------------------------------------------------------------------------
-    ROBUSTNESS & OUT-OF-SAMPLE VALIDATION
+    ROBUSTNESS & OUT-OF-SAMPLE
     ---------------------------------------------------------------------------
-
-    check_timing_danger_train_test(df)
-        Pre/post split validation ensuring normalization and bucket
-        edges are trained only on prior data.
-
-    yearly_oos_report(df, ...)
-        Walk-forward yearly OOS test computing correlation,
-        bucket separation, and lift statistics per year.
-
-    
-    ---------------------------------------------------------------------------
-    Forward Evaluating
-    ---------------------------------------------------------------------------
-    forward_eval_onefactor
-
-    forward_eval_twofactor_and
-
-    All evaluations are performed on earnings-day events unless otherwise specified.
+    check_feature_train_test(df, feature)       frozen train edges applied to test years
+    yearly_oos_report(df, ...)                  walk-forward yearly corr and separation
+    forward_eval_onefactor / forward_eval_twofactor
+                                                train-quantile regimes evaluated per year
 """
+import math
 
-def check_explosiveness_feature(df):
-    """ 
-        Extreme move rate: 0.10421515386604603
-        explosive_bucket
-        (18.035, 46.526]    0.066775
-        (46.526, 57.006]    0.035889
-        (57.006, 68.114]    0.037520
-        (68.114, 80.606]    0.089723
-        (80.606, 100.0]     0.307818
+import numpy as np
+import pandas as pd
 
-        The highest explosiveness bucket gives:
-        P(extreme move | top explosiveness) ≈ 31%
-        vs baseline:
-        P(extreme move) ≈ 10%
+from config import EXTREME_EARNINGS_REACTION_THRESHOLD
+from feature_engineering.announcement_timing import TARGET_AVAILABLE
 
-        That's roughly a 3x risk multiplier.
-        That's strong signal for a single feature. Very strong, actually.
+SCORE = "model_b_hist_mean_abs"
+TARGET = "abs_reaction_3d_anchored"
+LARGE_MOVE = 0.05
+TRAIN_YEARS = range(2013, 2017)       # corrected timing is sparse before 2013
+TEST_YEARS = range(2017, 2026)        # the refit's out-of-sample years
 
-        This gives results:
-        "Stocks with historically explosive earnings behavior are about 
-        three times more likely to experience an extreme earnings move."
 
-        Why this validates your explosiveness design
-        It confirms:
+# ------------------------------------------------------
+# Shared preparation
+# ------------------------------------------------------
 
-        median reaction component is useful
-        p75 tail component is useful
-        normalization by vol_30d works
-        scoring compression didn't kill signal
-        requiring 8 historical earnings events was reasonable
+def prepare_events(df):
+    """Completed events with an available corrected outcome, plus y / y_large / move /
+    year. Accepts the event frame or an already-prepared frame."""
+    if {"y", "y_large", "move", "year"} <= set(df.columns):
+        return df
+    ev = df
+    if "is_pending" in ev.columns:
+        ev = ev[~ev["is_pending"].astype(bool)]
+    ev = ev[ev["reaction_3d_anchored_status"].eq(TARGET_AVAILABLE) & ev[TARGET].notna()].copy()
+    ev["move"] = ev[TARGET]
+    ev["y"] = (ev["move"] >= EXTREME_EARNINGS_REACTION_THRESHOLD).astype(int)
+    ev["y_large"] = (ev["move"] >= LARGE_MOVE).astype(int)
+    ev["year"] = pd.to_datetime(ev["earnings_date"]).dt.year
+    return ev
 
-        All of that survived testing.
 
-        You just discovered something real about earnings risk:
-        Extreme earnings moves are heavily stock-dependent.
-        Some stocks are simply "earnings explosives."
+def wilson_ci(p, n, z=1.96):
+    if n == 0:
+        return (np.nan, np.nan)
+    denom = 1 + z ** 2 / n
+    center = (p + z ** 2 / (2 * n)) / denom
+    half = (z * math.sqrt((p * (1 - p) + z ** 2 / (4 * n)) / n)) / denom
+    return (center - half, center + half)
 
-    """
-    # Check correlation structure of timing_danger and its components
-    subset = df[df["is_earnings_day"] == True].copy()
-    print("Extreme move rate:", subset["is_extreme_reaction"].mean())
 
-    subset["explosive_bucket"] = pd.qcut(
-        subset["earnings_explosiveness_score"],
-        5,
-        duplicates="drop"
-    )
+def _mask(ev, conditions):
+    """AND of `column >= quantile(q)` over (column, q) pairs; q may be negative to mean
+    `column <= quantile(-q)` (the low tail)."""
+    m = pd.Series(True, index=ev.index)
+    for col, q in conditions:
+        m &= (ev[col] <= ev[col].quantile(-q)) if q < 0 else (ev[col] >= ev[col].quantile(q))
+    return m
 
-    print(subset.groupby("explosive_bucket")["is_extreme_reaction"].mean())
-    print(subset.groupby("explosive_bucket").size())
 
-    top = subset[subset["earnings_explosiveness_score"] >= subset["earnings_explosiveness_score"].quantile(0.8)]
-    bottom = subset[subset["earnings_explosiveness_score"] <= subset["earnings_explosiveness_score"].quantile(0.2)]
+def _rates(sub, label):
+    return {"group": label, "n": len(sub), "p_large_plus": sub["y_large"].mean(),
+            "p_extreme": sub["y"].mean()}
 
-    print("Top bucket extreme rate:", top["is_extreme_reaction"].mean())
-    print("Bottom bucket extreme rate:", bottom["is_extreme_reaction"].mean())
 
-def three_way_regime_test(df, score_feature):
-    """
-        This is a temporary function to test the three-way regime hypothesis:
-        Tail risk increases materially when:
-        timing_danger is high
-        stock_vs_sector_vol ≥ 1
-        earnings_explosiveness_score is in the top decile
+# ------------------------------------------------------
+# Feature diagnostics
+# ------------------------------------------------------
 
-        We will check the hit rates for large_plus and extreme earnings moves across different regimes.
-    """
-    # separate back testing df to only earnings days
-    bt = df[df["is_earnings_day"] == 1].copy()
+def check_explosiveness_feature(df, score=SCORE):
+    """Quintile buckets of `score`: extreme-move rate per bucket, top vs bottom quintile.
+    For Model B the signal IS a stock's earnings explosiveness (its mean past corrected
+    move), so this is the first thing to look at."""
+    ev = prepare_events(df).dropna(subset=[score])
+    print("Extreme move rate:", round(ev["y"].mean(), 4))
+    ev["bucket"] = pd.qcut(ev[score], 5, duplicates="drop")
+    print(ev.groupby("bucket", observed=True)["y"].agg(["mean", "size"]))
+    top = ev[ev[score] >= ev[score].quantile(0.8)]
+    bottom = ev[ev[score] <= ev[score].quantile(0.2)]
+    print("Top quintile extreme rate:", round(top["y"].mean(), 4))
+    print("Bottom quintile extreme rate:", round(bottom["y"].mean(), 4))
+    return ev.groupby("bucket", observed=True)["y"].mean()
 
-    # Define the three regime conditions:
-    # High timing danger (top decile)
-    danger_cutoff = bt[score_feature].quantile(0.9)
-    bt["high_danger"] = (bt[score_feature] >= danger_cutoff).astype(int)
 
-    # High individual volatility
-    bt["high_individual_vol"] = (bt["stock_vs_sector_vol"] >= 1).astype(int)
-
-    # High explosiveness (top decile)
-    exp_cut = bt["earnings_explosiveness_score"].quantile(0.9)
-    bt["high_explosiveness"] = (
-        bt["earnings_explosiveness_score"] >= exp_cut
-    ).astype(int)
-
-    baseline = {
-        "group": "ALL",
-        "n": len(bt),
-        "p_large_plus": bt["is_large_reaction"].mean(),
-        "p_extreme": bt["is_extreme_reaction"].mean(),
-    }
-
-    mask = (
-        (bt["high_danger"] == 1) &
-        (bt["high_individual_vol"] == 1) &
-        (bt["high_explosiveness"] == 1)
-        )
-
-    three_way = {
-        "group": "High danger + individual vol + explosiveness",
-        "n": mask.sum(),
-        "p_large_plus": bt.loc[mask, "is_large_reaction"].mean(),
-        "p_extreme": bt.loc[mask, "is_extreme_reaction"].mean(),
-    }
-    print( pd.DataFrame([baseline, three_way]) )
-
-def conditional_hit_rate_analysis(df, score_feature):
-    """ 
-        We already proved something important:
-        Unconditional timing_danger ≠ large move predictor
-        So now we ask the correct question:
-        In which regimes does earnings risk actually turn into realized large moves?
-        That means conditioning.
-    """
-    bt = df[df["is_earnings_day"] == 1].copy()
-
-    # We want:
-    # vol_stress_extreme == 1
-    # Sector earnings crowding: sector_earnings_density >= median
-    # Stock-specific volatility dominance: stock_vs_sector_vol >= 1
-    # median split for density
-    density_med = bt["sector_earnings_density"].median()
-    bt["dense_earnings"] = (bt["sector_earnings_density"] >= density_med).astype(int)
-
-    bt["high_individual_vol"] = (bt["stock_vs_sector_vol"] >= 1).astype(int)
-
-    danger_cut = bt[score_feature].quantile(0.9)
-    bt["high_danger"] = (bt[score_feature] >= danger_cut).astype(int)
-
-    def cond_table(df, mask, label):
-        sub = df[mask]
-        return {
-            "group": label,
-            "n": len(sub),
-            "p_large_plus": sub["is_large_reaction"].mean(),
-            "p_extreme": sub["is_extreme_reaction"].mean(),
-        }
-
-    rows = []
-
-    # baseline
-    rows.append(cond_table(bt, bt.index == bt.index, "ALL"))
-
-    # danger only
-    rows.append(cond_table(bt, bt["high_danger"] == 1, "High danger"))
-
-    # danger + vol stress
-    rows.append(cond_table(
-        bt,
-        (bt["high_danger"] == 1) & (bt["vol_stress_extreme"] == 1),
-        "High danger + vol stress extreme"
-    ))
-
-    # danger + low density
-    rows.append(cond_table(
-        bt,
-        (bt["high_danger"] == 1) & (bt["dense_earnings"] == 0),
-        "High danger + low earnings density"
-    ))
-
-    # danger + idio vol
-    rows.append(cond_table(
-        bt,
-        (bt["high_danger"] == 1) & (bt["high_individual_vol"] == 1),
-        "High danger + high idio vol"
-    ))
-    print(pd.DataFrame(rows))
-
-def check_feature_connection_to_large_reacion_metric(df, feature):
-    
-    ## Diagnostic: timing_danger connection to earnings_move_bucket
-    # Earnings-only rows (use your actual column name)
-    bt = df[df["is_earnings_day"] == 1].copy()
-
-    # Safety: drop rows missing what you need
-    #bt = bt.dropna(subset=["timing_danger", "earnings_move_bucket"])
-    bt = bt.dropna(subset=[feature, "reaction_3d"])
-
-    # 10 deciles: 1..10
-    bt[f"{feature}_decile"] = pd.qcut(
-        bt[feature],
-        q=10,
-        labels=False,
-        duplicates="drop" # avoids errors if timing_danger has repeated values
-    ) + 1
-
-    # Define two targets:
-        # large+ = bucket >= 1
-        # extreme = bucket == 2
-
-        # Interpretation rules:
-        # p_large_plus should generally increase from D1 -> D10.
-        # lift_large_plus in D10:
-        # ~1.0 = no signal
-        # 1.3–1.7 = usable
-        # 2.0+ = strong
-        # p_extreme is rarer, so it'll be noisier; lift matters more than smoothness.
-
-    decile_table = (
-        bt.groupby(f"{feature}_decile")
-        .agg(
-            n=(feature, "size"),
-            avg_danger=(feature, "mean"),
-            p_large_plus=("is_large_reaction", "mean"),
-            p_extreme=("is_extreme_reaction", "mean"),
-        )
-        .reset_index()
-    )
-
-    # Add lift vs overall baseline
-    base_large = bt["is_large_reaction"].mean()
-    base_ext   = bt["is_extreme_reaction"].mean()
-
-    decile_table["lift_large_plus"] = decile_table["p_large_plus"] / base_large
-    decile_table["lift_extreme"]    = decile_table["p_extreme"] / base_ext
-
-    decile_table.sort_values(f"{feature}_decile")
-
-    from math import sqrt
-    import numpy as np
-    def wilson_ci(p, n, z=1.96):
-        if n == 0:
-            return (np.nan, np.nan)
-        denom = 1 + z**2/n
-        center = (p + z**2/(2*n)) / denom
-        half = (z * sqrt((p*(1-p) + z**2/(4*n))/n)) / denom
-        return (center - half, center + half)
-
-    rows = []
-    for _, r in decile_table.iterrows():
-        n = int(r["n"])
-        lo, hi = wilson_ci(r["p_large_plus"], n)
-        rows.append((lo, hi))
-
-    decile_table["p_large_plus_ci_lo"] = [x[0] for x in rows]
-    decile_table["p_large_plus_ci_hi"] = [x[1] for x in rows]
-
-    print(decile_table)
+def check_feature_connection_to_large_reacion_metric(df, feature=SCORE):
+    """Decile table of `feature`: ≥5% and ≥8% rates, ratio to the overall rate, Wilson
+    95% CI on the ≥5% rate. Rates should rise from decile 1 to 10."""
+    ev = prepare_events(df).dropna(subset=[feature])
+    ev["decile"] = pd.qcut(ev[feature].rank(method="first"), q=10, labels=False) + 1
+    table = (ev.groupby("decile")
+               .agg(n=(feature, "size"), avg_value=(feature, "mean"),
+                    p_large_plus=("y_large", "mean"), p_extreme=("y", "mean"))
+               .reset_index())
+    table["ratio_large_plus"] = table["p_large_plus"] / ev["y_large"].mean()
+    table["ratio_extreme"] = table["p_extreme"] / ev["y"].mean()
+    ci = [wilson_ci(p, int(n)) for p, n in zip(table["p_large_plus"], table["n"])]
+    table["p_large_plus_ci_lo"] = [c[0] for c in ci]
+    table["p_large_plus_ci_hi"] = [c[1] for c in ci]
+    print(table.round(4).to_string(index=False))
     print("----------------------")
+    print(ev[feature].describe())
+    return table
 
-    print(bt[feature].describe())
-    print(bt[feature].nunique())
 
-def check_corr_of_features(df):
-    # only earnings ??? 
-    df_to_check = df[df["is_earnings_day"] == 1].copy()
-    print(df_to_check[
-        ["proximity_score",
-        "vol_expansion_score",
-        "momentum_fragility_score",
-        "earnings_explosiveness_score"]
-    ].corr())
+def check_corr_of_features(df, cols=(SCORE, "vol_30d", "vol_10d", "expected_move_pct")):
+    """Spearman correlation between signals (and with |move|). High correlation with the
+    Model B signal means a candidate adds little on its own."""
+    ev = prepare_events(df)
+    usable = [c for c in cols if c in ev.columns and ev[c].notna().sum() >= 30]
+    skipped = [c for c in cols if c not in usable]
+    if skipped:
+        # e.g. expected_move_pct: options snapshots only exist from 2026-09.
+        print(f"skipped (absent or < 30 values): {skipped}")
+    corr = ev[usable + ["move"]].corr(method="spearman")
+    print(corr.round(3))
+    return corr
 
-def breakwater_regime_test(df, score_feature):
-    bt = df[df["is_earnings_day"] == 1].copy()
 
-    # timing danger top decile
-    danger_cutoff = bt[score_feature].quantile(0.9)
-    bt["high_danger"] = (bt[score_feature] >= danger_cutoff)
-
-    # explosiveness top decile
-    explosiveness_cutoff = bt["earnings_explosiveness_score"].quantile(0.9)
-    bt["high_explosive"] = (bt["earnings_explosiveness_score"] >= explosiveness_cutoff)
-    # stock vol > sector vol
-    bt["vol_vs_sector"] = (bt["stock_vs_sector_vol"] >= 1)
-
-    regime = (
-        bt["vol_vs_sector"] &
-        bt["high_explosive"] &
-        bt["high_danger"]
-    )
-
-    subset = bt[regime]
-    results = {
-        "n_events": len(subset),
-        "extreme_rate": subset["is_extreme_reaction"].mean(),
-        "large_plus_rate": subset["is_large_reaction"].mean(),
-    }
-    print(results)
-
-def volatility_only_regime_test(df):
-    """
-        Test whether volatility alone can generate high extreme-move rates.
-    """
-    bt = df[df["is_earnings_day"] == 1].copy()
-    # --- Define volatility regime ---
-    # Top decile volatility
-    vol_cutoff = bt["vol_30d"].quantile(0.9)
-    bt["high_vol"] = (bt["vol_30d"] >= vol_cutoff)
-    # Stock moving more than sector
-    bt["vol_vs_sector"] = (bt["stock_vs_sector_vol"] >= 1)
-
-    regime = bt["high_vol"] & bt["vol_vs_sector"]
-    subset = bt[regime]
-
-    results = {
-        "n_events": len(subset),
-        "extreme_rate": subset["is_extreme_reaction"].mean(),
-        "large_plus_rate": subset["is_large_reaction"].mean(),
-    }
-    print(results)
-
-def evaluate_high_risk_earnings_regime(df, score_feature):
-    """
-        Define a "high-risk regime" where all three conditions hold:
-        timing_danger in top 20%
-        stock_vs_sector_vol >= 1
-        earnings_explosiveness_score in top 10%
-
-        Prints regime statistics and robustness checks.
-    """
-    subset = df[df["is_earnings_day"] == True].copy()
-
-    cond = (
-        (subset[score_feature] >= subset[score_feature].quantile(0.8)) &
-        (subset["stock_vs_sector_vol"] >= 1) &
-        (subset["earnings_explosiveness_score"] >= subset["earnings_explosiveness_score"].quantile(0.9))
-    )
-
-    print("Sample size:", cond.sum())
-    print("Large move rate:", subset.loc[cond, "is_large_reaction"].mean())
-    print("Extreme move rate:", subset.loc[cond, "is_extreme_reaction"].mean())
-
-    print("Baseline extreme:", subset["is_extreme_reaction"].mean())
-    print("Baseline large:", subset["is_large_reaction"].mean())
-
-    print(subset.loc[cond, "abs_reaction_3d"].describe())
-    print(subset.loc[cond].groupby("stock").size().describe())
-
-    for td_q in [0.7, 0.8]:
-        for ex_q in [0.8, 0.9]:
-            cond = (
-                (subset[score_feature] >= subset[score_feature].quantile(td_q)) &
-                (subset["earnings_explosiveness_score"] >= subset["earnings_explosiveness_score"].quantile(ex_q)) &
-                (subset["stock_vs_sector_vol"] >= 1)
-            )
-
-            if cond.sum() > 30:
-                print(td_q, ex_q,
-                    cond.sum(),
-                    subset.loc[cond, "is_extreme_reaction"].mean())
-
-def testing_precision_recall(input_df):
-    df = input_df.copy()
-    print(f"\n--- Precision & Recall tests ---")
-    earnings = df[df["is_earnings_day"] == 1].copy()
-
-    extreme = earnings["is_extreme_reaction"] == 1
-    regime = earnings["is_joint_regime"] == 1
-
-    TP = ((regime) & (extreme)).sum()
-    FN = ((~regime) & (extreme)).sum()
-    FP = ((regime) & (~extreme)).sum()
-    TN = ((~regime) & (~extreme)).sum()
-
-    recall = TP / (TP + FN)
-    precision = TP / (TP + FP)
-
-    print("TP:", TP)
-    print("FN:", FN)
-    print("FP:", FP)
-    print("TN:", TN)
-    print("recall:", recall)
-    print("precision:", precision)
-    print(regime.sum(), "events flagged")
-    print(len(earnings), "total earnings events")
-
-def comparing_regime_results_to_volatility_only(df):
-    earnings_df = df[df.is_earnings_day == 1].sort_values(["stock","date"]).copy()
-
-    # For each stock, compare current p75 with previous event p75
-    earnings_df["p75_diff"] = (
-        earnings_df.groupby("stock")["abs_reaction_p75"]
-        .diff()
-    )
-    print(earnings_df[["stock","date","abs_reaction_3d","abs_reaction_p75","p75_diff"]].head(20))
-
-    # Test 2 
-    earnings_df["extreme_shuffled"] = np.random.permutation(earnings_df["is_extreme_reaction"].values)
-    threshold = 0.9
-    exp_thr = earnings_df["earnings_explosiveness_score"].quantile(threshold)
-    frag_thr = earnings_df["momentum_fragility_score"].quantile(threshold)
-
-    earnings_df["is_joint_regime"] = (
-        (earnings_df["earnings_explosiveness_score"] >= exp_thr) &
-        (earnings_df["momentum_fragility_score"] >= frag_thr) &
-        (earnings_df["is_earnings_day"])
-    ).astype(int)
-
-    regime = earnings_df["is_joint_regime"] == 1
-
-    TP = ((regime) & (earnings_df["extreme_shuffled"] == 1)).sum()
-    FP = ((regime) & (earnings_df["extreme_shuffled"] == 0)).sum()
-
-    print("Shuffled precision:", TP / (TP + FP))
-
-    # Test 3
-    median_year = earnings_df["date"].dt.year.median()
-
-    first_half = earnings_df[earnings_df["date"].dt.year <= median_year]
-    second_half = earnings_df[earnings_df["date"].dt.year > median_year]
-
-    def regime_precision(sub):
-        regime = sub["is_joint_regime"] == 1
-        extreme = sub["is_extreme_reaction"] == 1
-        TP = ((regime) & (extreme)).sum()
-        FP = ((regime) & (~extreme)).sum()
-        return TP / (TP + FP)
-
-    print("First half precision:", regime_precision(first_half))
-    print("Second half precision:", regime_precision(second_half))
-
-    # Top volatility test
-    threshold = 0.98
-
-    vol_thr = earnings_df["vol_30d"].quantile(threshold)
-    regime_vol_top2 = earnings_df["vol_30d"] >= vol_thr
-    print(regime_vol_top2)
-
-    regime_vol_top2 = earnings_df["vol_30d"] >= vol_thr
-    extreme = earnings_df["is_extreme_reaction"] == 1
-
-    TP = ((regime_vol_top2) & (extreme)).sum()
-    FP = ((regime_vol_top2) & (~extreme)).sum()
-
-    precision = TP / (TP + FP)
-
-    print("Top 2% vol events:", regime_vol_top2.sum())
-    print("Extreme rate (precision):", precision)
-
-def check_score_metric(input_df, score_feature):
-    df = input_df.copy()
-    df["abs_reaction_3d"] = df["reaction_3d"].abs()
-    df[f"{score_feature}_score"] = (
-            100 * (df[score_feature] - df[score_feature].min()) /
-            (df[score_feature].max() - df[score_feature].min())
-        )
-    test_score_df = df[["stock", "date","earnings_date","abs_reaction_3d", f"{score_feature}_score"]].dropna()
-    s = test_score_df[f"{score_feature}_score"]
-    stats = {
-        "count": s.count(),
-        "min": s.min(),
-        "max": s.max(),
-        "mean": s.mean(),
-        "median": s.median(),
-        "std": s.std(),
-        "p10": s.quantile(0.10),
-        "p25": s.quantile(0.25),
-        "p75": s.quantile(0.75),
-        "p90": s.quantile(0.90),
-        "p95": s.quantile(0.95),
-    }
-    print(stats)
+def check_score_metric(df, score=SCORE, plots=False):
+    """Distribution of a score rescaled 0-100, its per-report-date dispersion, its
+    correlation with |move| and mean |move| by quintile. `plots=True` also draws the
+    four diagnostic charts (blocks until closed)."""
+    ev = prepare_events(df).dropna(subset=[score]).copy()
+    lo, hi = ev[score].min(), ev[score].max()
+    ev["scaled"] = 100 * (ev[score] - lo) / (hi - lo) if hi > lo else 50.0
+    s = ev["scaled"]
+    stats = {"count": int(s.count()), "min": s.min(), "max": s.max(), "mean": s.mean(),
+             "median": s.median(), "std": s.std(),
+             **{f"p{int(q * 100)}": s.quantile(q) for q in (0.10, 0.25, 0.75, 0.90, 0.95)}}
+    print({k: round(float(v), 3) for k, v in stats.items()})
     counts, bins = np.histogram(s, bins=30)
-
     for i in range(len(counts)):
-        print(f"{bins[i]:.4f} to {bins[i+1]:.4f} : {counts[i]}")
-    per_day_dispersion = (
-        test_score_df
-        .groupby("earnings_date")[f"{score_feature}_score"]
-        .agg(["mean", "std", "min", "max", "count"])
-    )
-    per_stock = (
-        test_score_df
-        .groupby("stock")[f"{score_feature}_score"]
-        .agg(["mean", "std", "count"])
-    )
-    top_10 = s.quantile(0.90)
-    bottom_10 = s.quantile(0.10)
+        print(f"{bins[i]:.1f} to {bins[i + 1]:.1f} : {counts[i]}")
+    per_day = ev.groupby("earnings_date")["scaled"].agg(["mean", "std", "count"])
+    print("per-report-date std (median):", round(float(per_day["std"].median()), 3))
+    print("spearman vs |move|:", round(ev["scaled"].corr(ev["move"], method="spearman"), 3))
+    ev["bucket"] = pd.qcut(ev["scaled"].rank(method="first"), q=5, labels=False)
+    bucket_stats = ev.groupby("bucket")["move"].mean()
+    print(bucket_stats.round(4))
+    if plots:
+        import matplotlib.pyplot as plt
+        for title, draw in [
+            (f"{score} distribution (0-100)", lambda: plt.hist(s, bins=30)),
+            (f"{score} vs |move|", lambda: plt.scatter(ev["scaled"], ev["move"], alpha=0.25)),
+            (f"mean |move| by {score} quintile", lambda: bucket_stats.plot(kind="bar")),
+            (f"per-report-date dispersion of {score}",
+             lambda: plt.hist(per_day["std"].dropna(), bins=30)),
+        ]:
+            plt.figure(figsize=(8, 5))
+            draw()
+            plt.title(title)
+            plt.show()
+    return stats
 
-    high_tail_rate = (s >= top_10).mean()
-    print(high_tail_rate)
-    low_tail_rate = (s <= bottom_10).mean()
-    print(low_tail_rate)
-    corr = test_score_df[[f"{score_feature}_score", "abs_reaction_3d"]].corr()
-    print(corr)
 
-    test_score_df["bucket"] = pd.qcut(
-        test_score_df[f"{score_feature}_score"], 
-        q=5, 
-        labels=False
-    )
+# ------------------------------------------------------
+# Regime testing
+# ------------------------------------------------------
 
-    bucket_stats = test_score_df.groupby("bucket")["abs_reaction_3d"].mean()
-    print(bucket_stats)
+def three_way_regime_test(df, score=SCORE, cond_a=("vol_30d", 0.5),
+                          cond_b=("vol_ratio_10_to_30", 0.5), q=0.9):
+    """Is tail risk materially higher when the score is in its top (1-q) AND two other
+    conditions hold? Compares the joint regime with the baseline and with the score
+    alone. Conditions are (column, quantile)."""
+    ev = prepare_events(df).dropna(subset=[score, cond_a[0], cond_b[0]])
+    if ev.empty:
+        print(f"no events carry {score}, {cond_a[0]} and {cond_b[0]} together")
+        return pd.DataFrame()
+    alone = _mask(ev, [(score, q)])
+    joint = _mask(ev, [(score, q), cond_a, cond_b])
+    out = pd.DataFrame([_rates(ev, "ALL"), _rates(ev[alone], f"{score} top"),
+                        _rates(ev[joint], f"{score} top + {cond_a[0]} + {cond_b[0]}")])
+    print(out.round(4).to_string(index=False))
+    return out
 
-    plt.figure(figsize=(8, 5))
-    plt.hist(s, bins=30)
-    plt.title(f"{score_feature} score distribution")
-    plt.xlabel(f"{score_feature}_score")
-    plt.ylabel("Count")
-    plt.show()
 
-    plt.figure(figsize=(8, 5))
-    plt.scatter(
-        test_score_df[f"{score_feature}_score"],
-        test_score_df["abs_reaction_3d"],
-        alpha=0.25
-    )
-    plt.title(f"{score_feature} score vs abs reaction 3d")
-    plt.xlabel(f"{score_feature}_score")
-    plt.ylabel("abs_reaction_3d")
-    plt.show()
+def conditional_hit_rate_analysis(df, score=SCORE,
+                                  conditions=(("vol_30d", 0.9), ("vol_ratio_10_to_30", 0.9),
+                                              ("vol_30d", -0.5)), q=0.9):
+    """In which regimes does a high score turn into realized large moves? The score's
+    top decile alone, then combined with each condition in turn."""
+    ev = prepare_events(df).dropna(subset=[score])
+    top = _mask(ev, [(score, q)])
+    rows = [_rates(ev, "ALL"), _rates(ev[top], f"{score} top")]
+    for col, cq in conditions:
+        sub = ev.dropna(subset=[col])
+        m = _mask(sub, [(score, q)]) & _mask(sub, [(col, cq)])
+        side = f"low {col}" if cq < 0 else f"high {col}"
+        rows.append(_rates(sub[m], f"{score} top + {side} (q {abs(cq)})"))
+    out = pd.DataFrame(rows)
+    print(out.round(4).to_string(index=False))
+    return out
 
-    plt.figure(figsize=(8, 5))
-    bucket_stats.plot(kind="bar")
-    plt.title(f"Mean abs_reaction_3d by {score_feature} bucket")
-    plt.xlabel("Score bucket, low to high")
-    plt.ylabel("Mean abs_reaction_3d")
-    plt.show()
 
-    plt.figure(figsize=(8, 5))
-    plt.hist(per_day_dispersion["std"].dropna(), bins=30)
-    plt.title(f"Per-earnings-date dispersion of {score_feature} score")
-    plt.xlabel("Daily cross-sectional std")
-    plt.ylabel("Count")
-    plt.show()
+def breakwater_regime_test(df, score=SCORE, conditions=(("vol_30d", 0.5),), q=0.9):
+    """One regime: score top (1-q) AND every condition. Returns its size and rates."""
+    ev = prepare_events(df).dropna(subset=[score] + [c for c, _ in conditions])
+    sub = ev[_mask(ev, [(score, q), *conditions])]
+    res = {"n_events": len(sub), "extreme_rate": sub["y"].mean(),
+           "large_plus_rate": sub["y_large"].mean(), "baseline_extreme": ev["y"].mean()}
+    print(res)
+    return res
 
-def check_feature_train_test(df, feature):
-    test_score_df = df[["stock", "date","earnings_date","abs_reaction_3d", feature]].dropna().copy()
-    pre_2015 = test_score_df[test_score_df["date"] < "2015-01-01"].copy()
-    post_2015 = test_score_df[test_score_df["date"] >= "2015-01-01"].copy()
 
-    def normalize_with_train(s, train_min, train_max):
-        denom = train_max - train_min
-        if denom == 0:
-            return pd.Series(50, index=s.index)
-        return 100 * (s - train_min) / denom
-    train_min = pre_2015[feature].min()
-    train_max = pre_2015[feature].max()
-    pre_2015["score_oos"] = normalize_with_train(
-        pre_2015[feature], train_min, train_max
-    )
+def volatility_only_regime_test(df, vol_col="vol_30d", score=SCORE, q=0.9):
+    """Competitive baseline: can recent volatility alone find the large moves? The vol
+    top decile vs the Model B top decile on the SAME events, plus their overlap.
+    `vol_30d` on an event row is as of the session before the report date — slightly
+    later than Model B's call cutoff, which favours the baseline."""
+    ev = prepare_events(df).dropna(subset=[vol_col, score])
+    v, b = _mask(ev, [(vol_col, q)]), _mask(ev, [(score, q)])
+    rows = [_rates(ev, "ALL"), _rates(ev[v], f"{vol_col} top"), _rates(ev[b], f"{score} top"),
+            _rates(ev[v & b], "both"), _rates(ev[v & ~b], f"{vol_col} top only"),
+            _rates(ev[b & ~v], f"{score} top only")]
+    out = pd.DataFrame(rows)
+    out["capture_extreme"] = [ev.loc[m, "y"].sum() / ev["y"].sum() for m in
+                              (pd.Series(True, index=ev.index), v, b, v & b, v & ~b, b & ~v)]
+    print(out.round(4).to_string(index=False))
+    return out
 
-    post_2015["score_oos"] = normalize_with_train(
-        post_2015[feature], train_min, train_max
-    ).clip(0, 100)
-    pre_corr = pre_2015[["score_oos", "abs_reaction_3d"]].corr().iloc[0,1]
-    print("Train corr:", pre_corr)
 
-    pre_2015["bucket"] = pd.qcut(pre_2015["score_oos"], q=5, labels=False)
-    print(pre_2015.groupby("bucket")["abs_reaction_3d"].mean())
-    train_edges = pd.qcut(
-        pre_2015["score_oos"],
-        q=5,
-        retbins=True,
-        labels=False
-    )[1]
+def evaluate_high_risk_earnings_regime(df, score=SCORE, other="vol_30d"):
+    """A strict regime (score top 10% AND `other` top 20%) and its robustness across a
+    grid of quantiles; prints regime size, rates, and how concentrated it is in stocks."""
+    ev = prepare_events(df).dropna(subset=[score, other])
+    cond = _mask(ev, [(score, 0.9), (other, 0.8)])
+    print("Sample size:", int(cond.sum()))
+    print("Large move rate:", round(ev.loc[cond, "y_large"].mean(), 4))
+    print("Extreme move rate:", round(ev.loc[cond, "y"].mean(), 4))
+    print("Baseline extreme:", round(ev["y"].mean(), 4), " Baseline large:", round(ev["y_large"].mean(), 4))
+    print(ev.loc[cond, "move"].describe().round(4))
+    print("events per stock in regime:")
+    print(ev.loc[cond].groupby("stock").size().describe().round(2))
+    grid = []
+    for sq in (0.8, 0.9):
+        for oq in (0.7, 0.8):
+            c = _mask(ev, [(score, sq), (other, oq)])
+            if c.sum() > 30:
+                grid.append({"score_q": sq, "other_q": oq, "n": int(c.sum()),
+                             "extreme_rate": ev.loc[c, "y"].mean()})
+    grid = pd.DataFrame(grid)
+    print(grid.round(4).to_string(index=False))
+    return grid
 
-    post_2015["bucket"] = pd.cut(
-        post_2015["score_oos"],
-        bins=train_edges,
-        labels=False,
-        include_lowest=True
-    )
-    post_corr = post_2015[["score_oos", "abs_reaction_3d"]].corr().iloc[0,1]
-    print("Test corr:", post_corr)
-    print(post_2015.groupby("bucket")["abs_reaction_3d"].mean())
 
-def yearly_oos_report(df, date_col, score_feature, target_col, q=5):
-    d = df[df["is_earnings_day"]==1]
-    d = d[[date_col, score_feature, target_col]].dropna()
-    d[date_col] = pd.to_datetime(d[date_col])
-
-    years = sorted(d[date_col].dt.year.unique())
+def high_conviction_regime_test(df, overlays=None, tier="High Alert", test_years=TEST_YEARS):
+    """Does an overlay condition on top of a Model B tier improve the hit rate, or is it
+    noise? `overlays` maps a label to (column, quantile) conditions; per-year and pooled
+    rate, ratio to base and capture for the tier alone and the tier + each overlay."""
+    ev = prepare_events(df)
+    ev = ev[ev["year"].isin(test_years)]
+    in_tier = ev["risk_tier"] == tier
+    regimes = {tier: in_tier}
+    for label, conds in (overlays or {}).items():
+        sub = ev.dropna(subset=[c for c, _ in conds])
+        m = pd.Series(False, index=ev.index)
+        m.loc[sub.index] = _mask(sub, conds)
+        regimes[f"{tier} + {label}"] = in_tier & m
     rows = []
+    for y, g in ev.groupby("year"):
+        base, K = g["y"].mean(), g["y"].sum()
+        for label, mask in regimes.items():
+            sub = g[mask.loc[g.index]]
+            if len(sub):
+                rows.append({"regime": label, "year": int(y), "n": len(sub),
+                             "extreme_rate": sub["y"].mean(),
+                             "ratio": sub["y"].mean() / base if base else np.nan,
+                             "capture": sub["y"].sum() / K if K else np.nan})
+    result = pd.DataFrame(rows)
+    base_rate = ev["y"].mean()
+    summary = (result.groupby("regime", sort=False)
+                     .apply(lambda g: pd.Series({
+                         "total_n": g["n"].sum(),
+                         "extreme_rate": (g["extreme_rate"] * g["n"]).sum() / g["n"].sum(),
+                         "avg_capture": g["capture"].mean()}), include_groups=False))
+    summary["ratio"] = summary["extreme_rate"] / base_rate
+    print(summary.round(3).to_string())
+    print(f"\nBaseline extreme rate: {base_rate:.3f}")
+    return summary
 
-    for y in years[1:]:  # start from 2nd year (need prior data to train)
+
+# ------------------------------------------------------
+# Classification metrics
+# ------------------------------------------------------
+
+def testing_precision_recall(df, regime=None):
+    """Confusion matrix of a regime against the ≥8% target. `regime` is a boolean column
+    name or Series aligned to the event frame; default: the High Alert tier."""
+    ev = prepare_events(df)
+    if regime is None:
+        flag = ev["risk_tier"] == "High Alert"
+    elif isinstance(regime, str):
+        flag = ev[regime].astype(bool)
+    else:
+        flag = regime.reindex(ev.index).fillna(False).astype(bool)
+    extreme = ev["y"] == 1
+    TP, FN = int((flag & extreme).sum()), int((~flag & extreme).sum())
+    FP, TN = int((flag & ~extreme).sum()), int((~flag & ~extreme).sum())
+    res = {"TP": TP, "FN": FN, "FP": FP, "TN": TN,
+           "precision": TP / (TP + FP) if TP + FP else np.nan,
+           "recall": TP / (TP + FN) if TP + FN else np.nan,
+           "flagged": int(flag.sum()), "events": len(ev)}
+    print(res)
+    return res
+
+
+def comparing_regime_results_to_volatility_only(df, feat1=SCORE, feat2="vol_30d",
+                                                q=0.9, vol_q=0.98, seed=0):
+    """Four checks on a two-feature regime (feat1 AND feat2 in their top 1-q):
+      1. how much feat1 moves between a stock's consecutive events (persistence);
+      2. precision against SHUFFLED labels — the no-skill null;
+      3. precision in the first vs second half of the years (stability);
+      4. precision of the top (1-vol_q) of feat2 alone (the volatility baseline)."""
+    ev = prepare_events(df).dropna(subset=[feat1, feat2]).sort_values(["stock", "earnings_date"])
+    ev["feat1_diff"] = ev.groupby("stock")[feat1].diff()
+    print("feat1 change between consecutive events:")
+    print(ev["feat1_diff"].abs().describe().round(5))
+
+    regime = _mask(ev, [(feat1, q), (feat2, q)])
+    shuffled = np.random.default_rng(seed).permutation(ev["y"].to_numpy())
+    prec = lambda m, y: (y[m].sum() / m.sum()) if m.sum() else np.nan
+    res = {"regime_n": int(regime.sum()),
+           "precision": prec(regime.to_numpy(), ev["y"].to_numpy()),
+           "shuffled_precision": prec(regime.to_numpy(), shuffled)}
+    mid = ev["year"].median()
+    for half, sub in (("first_half", ev[ev["year"] <= mid]), ("second_half", ev[ev["year"] > mid])):
+        m = _mask(sub, [(feat1, q), (feat2, q)])
+        res[f"{half}_precision"] = prec(m.to_numpy(), sub["y"].to_numpy())
+    top_vol = _mask(ev, [(feat2, vol_q)])
+    res["top_feat2_n"] = int(top_vol.sum())
+    res["top_feat2_precision"] = prec(top_vol.to_numpy(), ev["y"].to_numpy())
+    res["baseline"] = ev["y"].mean()
+    print({k: round(float(v), 4) for k, v in res.items()})
+    return res
+
+
+# ------------------------------------------------------
+# Robustness & out-of-sample
+# ------------------------------------------------------
+
+def check_feature_train_test(df, feature=SCORE, split_year=2017):
+    """Freeze min/max scaling and quintile edges on events before `split_year`, apply them
+    to later events: does the ordering and the bucket separation hold out of sample?"""
+    ev = prepare_events(df).dropna(subset=[feature])
+    pre, post = ev[ev["year"] < split_year].copy(), ev[ev["year"] >= split_year].copy()
+    lo, hi = pre[feature].min(), pre[feature].max()
+    scale = (lambda s: 100 * (s - lo) / (hi - lo)) if hi > lo else (lambda s: s * 0 + 50)
+    pre["score_oos"], post["score_oos"] = scale(pre[feature]), scale(post[feature]).clip(0, 100)
+    _, edges = pd.qcut(pre["score_oos"], q=5, retbins=True, duplicates="drop")
+    edges[0], edges[-1] = -np.inf, np.inf
+    pre["bucket"] = pd.cut(pre["score_oos"], bins=edges, labels=False)
+    post["bucket"] = pd.cut(post["score_oos"], bins=edges, labels=False)
+    out = {"train_spearman": pre["score_oos"].corr(pre["move"], method="spearman"),
+           "test_spearman": post["score_oos"].corr(post["move"], method="spearman")}
+    print(f"Train (<{split_year}) spearman: {out['train_spearman']:.3f}   "
+          f"Test (>={split_year}) spearman: {out['test_spearman']:.3f}")
+    print(pd.DataFrame({"train_mean_move": pre.groupby("bucket")["move"].mean(),
+                        "test_mean_move": post.groupby("bucket")["move"].mean(),
+                        "test_hit_rate": post.groupby("bucket")["y"].mean()}).round(4))
+    return out
+
+
+def yearly_oos_report(df, date_col="earnings_date", score_feature=SCORE, target_col=TARGET, q=5):
+    """Walk-forward by year: scaling and bucket edges fitted on all prior years, applied
+    to the test year; per-year correlation and top-vs-bottom bucket separation."""
+    d = prepare_events(df)[[date_col, score_feature, target_col]].dropna()
+    d[date_col] = pd.to_datetime(d[date_col])
+    rows = []
+    for y in sorted(d[date_col].dt.year.unique())[1:]:
         train = d[d[date_col] < pd.Timestamp(f"{y}-01-01")]
-        test  = d[(d[date_col] >= pd.Timestamp(f"{y}-01-01")) & (d[date_col] < pd.Timestamp(f"{y+1}-01-01"))]
-
+        test = d[d[date_col].dt.year == y]
         if len(train) < 500 or len(test) < 100:
             continue
-
-        train_min = train[score_feature].min()
-        train_max = train[score_feature].max()
-        denom = train_max - train_min
-        if denom == 0:
+        lo, hi = train[score_feature].min(), train[score_feature].max()
+        if hi == lo:
             continue
-
-        # Normalize using train params only
-        train_score = 100 * (train[score_feature] - train_min) / denom
-        test_score  = 100 * (test[score_feature]  - train_min) / denom
-
-        # Clip to avoid out-of-range due to new extremes
-        train_score = train_score.clip(0, 100)
-        test_score  = test_score.clip(0, 100)
-
-        # Freeze bucket edges from train
-        _, edges = pd.qcut(train_score, q=q, retbins=True, duplicates="drop")
-
-        test_bucket = pd.cut(test_score, bins=edges, labels=False, include_lowest=True)
-
-        test_eval = pd.DataFrame({
-            "score": test_score,
-            "bucket": test_bucket,
-            "target": test[target_col].values
-        }).dropna(subset=["bucket"])
-
-        if len(test_eval) < 100:
-            continue
-
-        corr = test_eval[["score", "target"]].corr().iloc[0, 1]
-
-        bucket_means = test_eval.groupby("bucket")["target"].mean()
-        # separation metrics
-        top = bucket_means.max()
-        bot = bucket_means.min()
-        lift_abs = top - bot
-        lift_ratio = (top / bot) if bot != 0 else np.nan
-
-        rows.append({
-            "year": y,
-            "n_test": len(test_eval),
-            "corr": corr,
-            "bot_bucket_mean": bot,
-            "top_bucket_mean": top,
-            "lift_abs": lift_abs,
-            "lift_ratio": lift_ratio,
-        })
-
+        tr = (100 * (train[score_feature] - lo) / (hi - lo)).clip(0, 100)
+        te = (100 * (test[score_feature] - lo) / (hi - lo)).clip(0, 100)
+        _, edges = pd.qcut(tr, q=q, retbins=True, duplicates="drop")
+        edges[0], edges[-1] = -np.inf, np.inf
+        ev = pd.DataFrame({"score": te, "bucket": pd.cut(te, bins=edges, labels=False),
+                           "target": test[target_col].values}).dropna(subset=["bucket"])
+        means = ev.groupby("bucket")["target"].mean()
+        rows.append({"year": y, "n_test": len(ev),
+                     "spearman": ev["score"].corr(ev["target"], method="spearman"),
+                     "bot_bucket_mean": means.iloc[0], "top_bucket_mean": means.iloc[-1],
+                     "separation": means.iloc[-1] - means.iloc[0],
+                     "top_over_bottom": means.iloc[-1] / means.iloc[0] if means.iloc[0] else np.nan})
     yearly = pd.DataFrame(rows).sort_values("year")
-    print(yearly)
-    print("Avg corr:", yearly["corr"].mean())
-    print("Median corr:", yearly["corr"].median())
-    print("Pct years corr>0.15:", (yearly["corr"] > 0.15).mean())
-
-# ------------------------------------------------------
-# Forward Evaluating
-# ------------------------------------------------------
-"""
-    Add this when using forward eval:
-    # Expanding prior only
-    prior_stats, prior_thr = forward_eval_onefactor(df, "abs_reaction_p75", q=0.90)
-    print("-------------------------------\nPRIOR thr:", prior_thr)
-    print(prior_stats[prior_stats["split"]=="TEST"][["year","n_regime","regime_extreme_rate","lift","regime_capture_of_extremes"]].to_string(index=False))
-    # Rolling prior only 
-    roll_stats, roll_thr = forward_eval_onefactor(df, "abs_reaction_p75_rolling", q=0.90)
-    print("-------------------------------\nROLL thr:", roll_thr)
-    print(roll_stats[roll_stats["split"]=="TEST"][["year","n_regime","regime_extreme_rate","lift","regime_capture_of_extremes"]].to_string(index=False))
-    # Prior + fragility (current core)
-    pf_stats, (p_thr, f_thr) = forward_eval_twofactor(df, "abs_reaction_p75", "momentum_fragility_score", q=0.90)
-    print("-------------------------------\nPRIOR thrs:", p_thr, "\tFRAG thrs: ", f_thr)
-    print(pf_stats[pf_stats["split"]=="TEST"][["year","n_regime","regime_extreme_rate","lift","regime_capture_of_extremes"]].to_string(index=False))
+    print(yearly.round(4).to_string(index=False))
+    print("Avg spearman:", round(yearly["spearman"].mean(), 3),
+          "| Median:", round(yearly["spearman"].median(), 3),
+          "| Years > 0.15:", round((yearly["spearman"] > 0.15).mean(), 3))
+    return yearly
 
 
-"""
-def forward_eval_onefactor(
-        df,
-        eval_feature,
-        train_years=range(2005, 2011),
-        test_years=range(2011, 2026),
-        q=0.90,
-        label_col="is_extreme_reaction",
-        earn_col="is_earnings_day",
-        date_col="date",
-    ):
-    earn = df[df[earn_col] == 1].dropna(subset=[date_col, label_col, eval_feature]).copy()
-    earn["year"] = pd.to_datetime(earn[date_col]).dt.year
-    earn["y"] = earn[label_col].astype(int)
-
-    train = earn[earn["year"].isin(train_years)].copy()
-    test  = earn[earn["year"].isin(test_years)].copy()
-
-    thr = float(train[eval_feature].quantile(q))
-
-    def add_regime(sub):
-        out = sub.copy()
-        out["is_regime"] = out[eval_feature] >= thr
-        return out
-
-    def stats(sub, split):
-        rows = []
-        for y, g in add_regime(sub).groupby("year"):
-            N = len(g)
-            K = int(g["y"].sum())
-            base = K / N if N else np.nan
-
-            r = g[g["is_regime"]]
-            n = len(r)
-            k = int(r["y"].sum())
-            reg = k / n if n else np.nan
-            lift = (reg / base) if (base and np.isfinite(reg)) else np.nan
-
-            rows.append({
-                "split": split,
-                "year": int(y),
-                "N_earnings": int(N),
-                "baseline_extreme_rate": base,
-                "n_regime": int(n),
-                "regime_extreme_rate": reg,
-                "lift": lift,
-                "regime_share_of_events": (n / N) if N else np.nan,
-                "regime_capture_of_extremes": (k / K) if K else np.nan,
-            })
-        return pd.DataFrame(rows).sort_values("year")
-    return pd.concat([stats(train, "TRAIN"), stats(test, "TEST")], ignore_index=True), thr
-
-
-def forward_eval_twofactor(
-        df,
-        feat1, feat2,
-        train_years=range(2005, 2011),
-        test_years=range(2011, 2026),
-        q=0.90,
-        label_col="is_extreme_reaction",
-        earn_col="is_earnings_day",
-        date_col="date",
-    ):
-    earn = df[df[earn_col] == 1].dropna(subset=[date_col, label_col, feat1, feat2]).copy()
-    earn["year"] = pd.to_datetime(earn[date_col]).dt.year
-    earn["y"] = earn[label_col].astype(int)
-
-    train = earn[earn["year"].isin(train_years)].copy()
-    test  = earn[earn["year"].isin(test_years)].copy()
-
-    thr1 = float(train[feat1].quantile(q))
-    thr2 = float(train[feat2].quantile(q))
-
-    def add_regime(sub):
-        out = sub.copy()
-        out["is_regime"] = (out[feat1] >= thr1) & (out[feat2] >= thr2)
-        return out
-
-    def stats(sub, split):
-        rows = []
-        for y, g in add_regime(sub).groupby("year"):
-            N = len(g)
-            K = int(g["y"].sum())
-            base = K / N if N else np.nan
-
-            r = g[g["is_regime"]]
-            n = len(r)
-            k = int(r["y"].sum())
-            reg = k / n if n else np.nan
-            lift = (reg / base) if (base and np.isfinite(reg)) else np.nan
-
-            rows.append({
-                "split": split,
-                "year": int(y),
-                "N_earnings": int(N),
-                "baseline_extreme_rate": base,
-                "n_regime": int(n),
-                "regime_extreme_rate": reg,
-                "lift": lift,
-                "regime_share_of_events": (n / N) if N else np.nan,
-                "regime_capture_of_extremes": (k / K) if K else np.nan,
-            })
-        return pd.DataFrame(rows).sort_values("year")
-
-    return pd.concat([stats(train, "TRAIN"), stats(test, "TEST")], ignore_index=True), (thr1, thr2)
-
-
-def high_conviction_regime_test(df, test_years=range(2011, 2026)):
-    """
-        Testing whether adding the pre_earnings_drift_flag 
-        condition on top of "High Alert" actually improve prediction, or is it noise?
-    """
-    earn = df[df["is_earnings_day"] == 1].copy()
-    earn["year"] = pd.to_datetime(earn["date"]).dt.year
-    earn["y"] = earn["is_extreme_reaction"].astype(int)
-    earn["high_alert"] = earn["earnings_explosiveness_bucket"] == "High Alert"
-    drift = earn["pre_earnings_drift_flag"].fillna("") != ""
-    surprise = earn["surprise_momentum_flag"].fillna("") != ""
-
-    regimes = {
-        "High Alert":                earn["high_alert"],
-        "HA + Drift flag":           earn["high_alert"] & drift,
-        "HA + Any surprise flag":    earn["high_alert"] & surprise,
-        "HA + Beat Streak":          earn["high_alert"] & (earn["surprise_momentum_flag"] == "Beat Streak"),
-        "HA + Miss Streak":          earn["high_alert"] & (earn["surprise_momentum_flag"] == "Miss Streak"),
-        "HA + Overdue Miss":         earn["high_alert"] & (earn["surprise_momentum_flag"] == "Overdue Miss"),
-        "HA + Erratic":              earn["high_alert"] & (earn["surprise_momentum_flag"] == "Erratic"),
-        "HA + Drift OR Surprise":    earn["high_alert"] & (drift | surprise),
-        "HA + Drift AND Surprise":   earn["high_alert"] & drift & surprise,
-        "HA + Drift OR (Surprise ex-OM)": earn["high_alert"] & (
-            drift |
-            earn["surprise_momentum_flag"].isin(["Beat Streak", "Miss Streak", "Erratic"])
-        ),
-    }
-
-    test = earn[earn["year"].isin(test_years)].copy()
-
+def _forward_stats(sub, split, mask_fn):
     rows = []
-    for y, g in test.groupby("year"):
-        N = len(g)
-        K = int(g["y"].sum())
+    for y, g in sub.groupby("year"):
+        r = g[mask_fn(g)]
+        N, K, n, k = len(g), int(g["y"].sum()), len(r), int(r["y"].sum())
         base = K / N if N else np.nan
-        for label, full_mask in regimes.items():
-            mask = full_mask[g.index]
-            sub = g[mask]
-            n = len(sub)
-            if n == 0:
-                continue
-            k = int(sub["y"].sum())
-            rate = k / n
-            rows.append({"regime": label, "year": int(y), "n": n,
-                         "extreme_rate": rate, "lift": rate / base if base else np.nan,
-                         "capture": k / K if K else np.nan})
+        reg = k / n if n else np.nan
+        rows.append({"split": split, "year": int(y), "N_earnings": N,
+                     "baseline_extreme_rate": base, "n_regime": n,
+                     "regime_extreme_rate": reg,
+                     "ratio": reg / base if base and np.isfinite(reg) else np.nan,
+                     "regime_share_of_events": n / N if N else np.nan,
+                     "regime_capture_of_extremes": k / K if K else np.nan})
+    return pd.DataFrame(rows).sort_values("year")
 
-    result = pd.DataFrame(rows).sort_values(["regime", "year"])
-    cols = ["year", "n", "extreme_rate", "lift", "capture"]
-    base_rate = test["y"].mean()
 
-    print("\n--- Summary (all OOS years pooled) ---")
-    summary_rows = []
-    for label in regimes:
-        grp = result[result["regime"] == label]
-        if grp.empty:
-            continue
-        tot_n = grp["n"].sum()
-        avg_extreme = (grp["extreme_rate"] * grp["n"]).sum() / tot_n
-        summary_rows.append({
-            "regime": label, "total_n": tot_n,
-            "n_per_yr": round(tot_n / len(grp), 0),
-            "extreme_rate": round(avg_extreme, 3),
-            "lift": round(avg_extreme / base_rate, 2),
-            "avg_capture": round(grp["capture"].mean(), 3),
-        })
-    print(pd.DataFrame(summary_rows).to_string(index=False))
-    print(f"\nBaseline extreme rate: {base_rate:.3f}")
+def forward_eval_onefactor(df, eval_feature=SCORE, train_years=TRAIN_YEARS,
+                           test_years=TEST_YEARS, q=0.90):
+    """Threshold = the feature's q-quantile over TRAIN years only; per-year regime rate,
+    ratio to base and capture in train and test years."""
+    ev = prepare_events(df).dropna(subset=[eval_feature])
+    train, test = ev[ev["year"].isin(train_years)], ev[ev["year"].isin(test_years)]
+    thr = float(train[eval_feature].quantile(q))
+    fn = lambda g: g[eval_feature] >= thr
+    return pd.concat([_forward_stats(train, "TRAIN", fn), _forward_stats(test, "TEST", fn)],
+                     ignore_index=True), thr
 
-    print("\n--- Year-by-year: HA + Any surprise flag ---")
-    grp = result[result["regime"] == "HA + Any surprise flag"]
-    print(grp[cols].to_string(index=False))
 
-    print("\n--- Year-by-year: HA + Drift OR Surprise ---")
-    grp = result[result["regime"] == "HA + Drift OR Surprise"]
-    print(grp[cols].to_string(index=False))
+def forward_eval_twofactor(df, feat1=SCORE, feat2="vol_30d", train_years=TRAIN_YEARS,
+                           test_years=TEST_YEARS, q=0.90):
+    """Same as forward_eval_onefactor for the regime feat1 AND feat2 above their
+    train-year q-quantiles — e.g. does a second feature sharpen Model B's top decile?"""
+    ev = prepare_events(df).dropna(subset=[feat1, feat2])
+    train, test = ev[ev["year"].isin(train_years)], ev[ev["year"].isin(test_years)]
+    thr1, thr2 = float(train[feat1].quantile(q)), float(train[feat2].quantile(q))
+    fn = lambda g: (g[feat1] >= thr1) & (g[feat2] >= thr2)
+    return pd.concat([_forward_stats(train, "TRAIN", fn), _forward_stats(test, "TEST", fn)],
+                     ignore_index=True), (thr1, thr2)

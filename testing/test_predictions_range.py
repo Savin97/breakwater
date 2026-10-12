@@ -19,7 +19,7 @@ import pandas as pd
 import pytest
 
 from utilities.data_utilities import week_block_window, work_week_window
-from analysis.predictions_range import predictions_range, format_report, _pre_audit_upcoming
+from analysis.predictions_range import predictions_range, format_report
 
 # 2026-09-07 is a Monday.
 MON, TUE, WED, THU, FRI, SAT, SUN = [f"2026-09-{d:02d}" for d in range(7, 14)]
@@ -93,156 +93,112 @@ def test_zero_or_negative_weeks_is_refused(kw):
 # ── predictions_range ─────────────────────────────────────────────────────────
 
 TODAY = "2026-09-06"   # a Sunday: back window = Aug 31-Sep 4, forward = Sep 7-11
+NO_DB = "/nonexistent/predictions.duckdb"
 
 
 @pytest.fixture
 def events():
-    """Two stocks. AAA reported in the last complete week and has an upcoming call next
-    week; BBB reported last week only. CCC is a dead feed: a pending row whose
-    earnings_date has already gone by."""
+    """AAA reported in the last complete week and has an upcoming call next week; BBB
+    reported last week only, with no verified timing; CCC is a dead feed: a pending row
+    whose earnings_date has already gone by."""
     rows = [
-        # stock, earnings_date, date(score asof), pending, bucket, score, r3d
-        ("AAA", "2026-06-03", "2026-06-03", False, "Normal",     50.0,  0.02),
-        ("AAA", "2026-09-02", "2026-09-02", False, "High Alert", 90.0,  0.11),
-        ("AAA", "2026-09-09", "2026-09-04", True,  "Elevated",   75.0,  np.nan),
-        ("BBB", "2026-09-03", "2026-09-03", False, "Elevated",   74.0, -0.06),
-        ("CCC", "2026-02-11", "2026-02-05", True,  "Normal",     40.0,  np.nan),
+        # stock, earnings_date, cutoff, pending, tier, pct, anchored r3, status, legacy r3
+        ("AAA", "2026-06-03", "2026-05-29", False, "Normal",     50.0,  0.02, "available", 0.02),
+        ("AAA", "2026-09-02", "2026-08-28", False, "High Alert", 93.0,  0.11, "available", 0.01),
+        ("AAA", "2026-09-09", "2026-09-04", True,  "Elevated",   85.0,  np.nan, "pending", np.nan),
+        ("BBB", "2026-09-03", "2026-08-28", False, "Unscored",  np.nan, np.nan,
+         "unresolved_no_timestamp", -0.20),
+        ("CCC", "2026-02-11", "2026-02-06", True,  "Normal",     40.0,  np.nan, "pending", np.nan),
     ]
-    df = pd.DataFrame(rows, columns=["stock", "earnings_date", "date", "is_pending",
-                                     "earnings_explosiveness_bucket",
-                                     "earnings_explosiveness_score", "reaction_3d"])
+    df = pd.DataFrame(rows, columns=["stock", "earnings_date", "score_asof_date", "is_pending",
+                                     "risk_tier", "risk_score", "reaction_3d_anchored",
+                                     "reaction_3d_anchored_status", "reaction_3d"])
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
-    df["score_asof_date"] = pd.to_datetime(df["date"])
+    df["score_asof_date"] = pd.to_datetime(df["score_asof_date"])
     df["sector"] = "Tech"
-    df["risk_score"] = df["earnings_explosiveness_score"]
-    df["earnings_explosiveness_bucket_structural"] = df["earnings_explosiveness_bucket"]
-    df["stock_bucket_lift"] = 1.0
-    df["is_high_conviction"] = False
-    df["pre_earnings_drift_flag"] = ""
-    df["surprise_momentum_flag"] = ""
-    df["reaction_1d"] = df["reaction_3d"]
-    df["reaction_5d"] = df["reaction_3d"]
-    df["abs_reaction_3d"] = df["reaction_3d"].abs()
+    df["model_b_hist_mean_abs"] = [0.03, 0.07, 0.06, np.nan, 0.02]
+    df["model_b_n_prior"] = [12, 13, 14, 3, 20]
+    df["abs_reaction_3d_anchored"] = df["reaction_3d_anchored"].abs()
+    df["abs_reaction_3d"] = df["reaction_3d"].abs()          # legacy, must be ignored
+    df["announce_window"] = ["AMC", "BMO", "UNKNOWN", "UNKNOWN", "UNKNOWN"]
     return df
 
 
+def _range(events, **kw):
+    return predictions_range(events_df=events, today=TODAY, db_path=NO_DB, **kw)
+
+
 def test_weeks_back_returns_completed_events_only(events):
-    out = predictions_range(weeks_back=1, events_df=events, today=TODAY, pre_audit=False)
+    out = _range(events, weeks_back=1)
     assert set(out["stock"]) == {"AAA", "BBB"}
     assert (out["row_kind"] == "history").all()
     assert out["earnings_date"].between("2026-08-31", "2026-09-04").all()
-    # The June AAA event is outside the window and must not leak in.
-    assert not (out["earnings_date"] < "2026-08-31").any()
 
 
 def test_weeks_forward_returns_pending_events_only(events):
-    out = predictions_range(weeks_forward=1, events_df=events, today=TODAY, pre_audit=False)
+    out = _range(events, weeks_forward=1)
     assert list(out["stock"]) == ["AAA"]
     assert (out["row_kind"] == "upcoming").all()
     assert out["days_to_earnings"].tolist() == [3.0]
 
 
 def test_a_pending_row_whose_date_has_passed_is_dropped(events):
-    """CCC's feed stopped; its pending row still carries a February date. It is a stale
-    feed, not a call, and must never be reported as either history or upcoming."""
     for kw in (dict(weeks_back=40), dict(monday="2026-02-09")):
-        out = predictions_range(events_df=events, today=TODAY, pre_audit=False, **kw)
-        assert "CCC" not in set(out["stock"])
+        assert "CCC" not in set(_range(events, **kw)["stock"])
 
 
-def test_realized_outcome_flags_use_the_legacy_target(events):
-    out = predictions_range(weeks_back=1, events_df=events, today=TODAY, pre_audit=False)
-    aaa = out[out["stock"] == "AAA"].iloc[0]
-    bbb = out[out["stock"] == "BBB"].iloc[0]
-    assert bool(aaa["moved_5pct"]) and bool(aaa["moved_8pct"])       # +11%
-    assert bool(bbb["moved_5pct"]) and not bool(bbb["moved_8pct"])   # -6%, absolute
+def test_outcomes_use_the_corrected_target_and_leave_unresolved_blank(events):
+    out = _range(events, weeks_back=1).set_index("stock")
+    assert bool(out.at["AAA", "moved_5pct"]) and bool(out.at["AAA", "moved_8pct"])   # +11%
+    # BBB's legacy reaction is -20% but it has no verified timing: unknown, not a hit
+    assert out.at["BBB", "moved_8pct"] is None and out.at["BBB", "moved_5pct"] is None
 
 
-def test_no_anchored_columns_are_reported(events):
-    """Phase 2's corrected target is a parallel measurement no threshold has been re-fit
-    against. It must not appear on a 0.3.1 predictions sheet."""
-    events = events.copy()
-    events["abs_reaction_3d_anchored"] = 0.99
-    events["reaction_3d_anchored"] = 0.99
-    out = predictions_range(weeks_back=1, events_df=events, today=TODAY, pre_audit=False)
-    assert not [c for c in out.columns if "anchored" in c]
+def test_reports_model_b_fields_and_nothing_legacy(events):
+    out = _range(events, monday="2026-08-31", weeks=2)
+    for col in ("risk_tier", "risk_score", "model_b_hist_mean_abs", "model_b_n_prior",
+                "score_asof_date"):
+        assert col in out.columns
+    banned = ("explosiveness", "lift", "high_conviction", "drift_flag", "surprise", "pre_audit")
+    assert not [c for c in out.columns if any(b in c for b in banned)]
+    assert "abs_reaction_3d" not in out.columns and "reaction_3d" not in out.columns
+    assert (out["model_version"] == "0.4.0").all()
 
 
-def test_upcoming_carries_both_the_current_and_the_pre_audit_call(events):
-    """The pre-audit selection reaches back to the stock's last COMPLETED event, so AAA's
-    upcoming call reads High Alert (its Sep 2 event) instead of the pending Elevated."""
-    daily = pd.DataFrame([
-        # the stock's final daily row: upcoming date present, tier columns blank
-        {"stock": "AAA", "date": pd.Timestamp("2026-09-04"),
-         "earnings_date": pd.Timestamp("2026-09-09"),
-         "earnings_explosiveness_bucket": np.nan, "earnings_explosiveness_score": np.nan,
-         "earnings_explosiveness_bucket_structural": np.nan, "risk_score": np.nan,
-         "stock_bucket_lift": np.nan, "is_high_conviction": False,
-         "pre_earnings_drift_flag": np.nan, "surprise_momentum_flag": np.nan},
-        # the last completed earnings day, where the tier columns actually live
-        {"stock": "AAA", "date": pd.Timestamp("2026-09-02"),
-         "earnings_date": pd.Timestamp("2026-09-02"),
-         "earnings_explosiveness_bucket": "High Alert", "earnings_explosiveness_score": 90.0,
-         "earnings_explosiveness_bucket_structural": "High Alert", "risk_score": 90.0,
-         "stock_bucket_lift": 1.0, "is_high_conviction": False,
-         "pre_earnings_drift_flag": "", "surprise_momentum_flag": ""},
-    ])
-    out = predictions_range(weeks_forward=1, events_df=events, daily_df=daily, today=TODAY)
-    row = out.iloc[0]
-    assert row["earnings_explosiveness_bucket"] == "Elevated"
-    assert row["earnings_explosiveness_bucket_pre_audit"] == "High Alert"
-    assert bool(row["pre_audit_differs"]) is True
-
-
-def test_pre_audit_reproduction_skips_nan_per_column(events):
-    """The NaN skipping IS the bug being reproduced — a .last() that respected the final
-    row would return NaN, not the stale tier, and the comparison would be empty."""
-    daily = pd.DataFrame({
-        "stock": ["AAA", "AAA"],
-        "date": pd.to_datetime(["2026-09-02", "2026-09-04"]),
-        "earnings_date": pd.to_datetime(["2026-09-02", "2026-09-09"]),
-        "earnings_explosiveness_bucket": ["High Alert", np.nan],
-        "earnings_explosiveness_score": [90.0, np.nan],
-        "earnings_explosiveness_bucket_structural": ["High Alert", np.nan],
-        "risk_score": [90.0, np.nan], "stock_bucket_lift": [1.0, np.nan],
-        "is_high_conviction": [False, False],
-        "pre_earnings_drift_flag": ["", np.nan], "surprise_momentum_flag": ["", np.nan],
-    })
-    pa = _pre_audit_upcoming(daily).iloc[0]
-    assert pa["earnings_date_pre_audit"] == pd.Timestamp("2026-09-09")   # upcoming event
-    assert pa["earnings_explosiveness_bucket_pre_audit"] == "High Alert"  # stale tier
-
-
-def test_history_rows_get_no_pre_audit_call(events):
-    """Reproducing what .last() would have said in a past week needs the daily frame as
-    it stood then. Today's frame would answer with an event that has since completed, so
-    the column is left blank rather than filled with a lookahead."""
-    out = predictions_range(monday="2026-08-31", weeks=2, events_df=events,
-                            daily_df=pd.DataFrame(columns=["stock", "date", "earnings_date"]),
-                            today=TODAY)
-    hist = out[out["row_kind"] == "history"]
-    assert len(hist) == 2
-    assert hist["earnings_explosiveness_bucket_pre_audit"].isna().all()
-    assert hist["pre_audit_differs"].isna().all()
+def test_published_calls_carry_their_model_version(events, tmp_path):
+    import duckdb
+    from utilities.db_utilities import create_predictions_table_if_not_exists
+    db = str(tmp_path / "p.duckdb")
+    con = duckdb.connect(db)
+    create_predictions_table_if_not_exists(con)
+    con.execute("""INSERT INTO predictions (prediction_asof_date, stock, earnings_date, tier,
+                   risk_score, model_version, score_asof_date)
+                   VALUES ('2026-08-29', 'AAA', '2026-09-02', 'High Alert', 81, '0.3.1',
+                           '2026-08-28')""")
+    con.close()
+    out = predictions_range(weeks_back=1, events_df=events, today=TODAY, db_path=db)
+    aaa = out.set_index("stock").loc["AAA"]
+    assert aaa["published_tier"] == "High Alert" and aaa["published_model_version"] == "0.3.1"
+    text = format_report(out, pd.Timestamp("2026-08-31"), pd.Timestamp("2026-09-04"))
+    assert "(0.3.1)" in text
 
 
 def test_a_window_spanning_today_carries_both_halves(events):
-    out = predictions_range(monday="2026-08-31", weeks=2, events_df=events,
-                            today=TODAY, pre_audit=False)
+    out = _range(events, monday="2026-08-31", weeks=2)
     assert set(out["row_kind"]) == {"history", "upcoming"}
     assert out.sort_values("week_start")["week_start"].is_monotonic_increasing
 
 
 def test_empty_window_returns_empty_and_formats(events):
-    out = predictions_range(monday="2026-07-06", events_df=events, today=TODAY, pre_audit=False)
+    out = _range(events, monday="2026-07-06")
     assert out.empty
     text = format_report(out, pd.Timestamp("2026-07-06"), pd.Timestamp("2026-07-10"))
     assert "No events." in text
 
 
 def test_report_renders_both_halves(events):
-    out = predictions_range(monday="2026-08-31", weeks=2, events_df=events,
-                            today=TODAY, pre_audit=False)
+    out = _range(events, monday="2026-08-31", weeks=2)
     text = format_report(out, pd.Timestamp("2026-08-31"), pd.Timestamp("2026-09-11"))
     assert "Week of Aug 31, 2026" in text and "Week of Sep 7, 2026" in text
-    assert "HISTORY — realized hit rates" in text
+    assert "retro-scored Model B calls vs the corrected 3-session target" in text
+    assert "1 of 2 events have no corrected outcome" in text

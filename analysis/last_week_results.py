@@ -1,28 +1,41 @@
 """
-Last week's earnings results: writes last_week_results.txt + saves results_chart.png.
+Last week's results, for internal review: the calls we ARCHIVED for last week's events
+(db/predictions.duckdb, view predictions_track_record — first 0.4.0 call per event) next
+to each event's corrected outcome (`abs_reaction_3d_anchored` from the event frame).
 
-Usage:
-    python analysis/last_week_results.py
-    python analysis/last_week_results.py --lookback 2   # go back 2 weeks
+    python -m analysis.last_week_results
+    python -m analysis.last_week_results --lookback 2   # go back 2 weeks
+
+Writes last_week_results.txt into this run's output folder. Nothing else.
+
+What it deliberately does not do:
+  * It never re-scores the past. A call is shown exactly as it was archived; a week with
+    no archived 0.4.0 call shows nothing. Pre-0.4 calls (the legacy 0.3.1 model) are
+    excluded — they are void for the 0.4.0 record.
+  * It never uses the legacy report-date reaction, which mismeasures before-open
+    reporters. An event without a verified announcement time has no corrected outcome and
+    is listed as unresolved, never counted as a miss.
+  * It publishes nothing. The public track record is paused
+    (marketing/generate_public_track_record.py); the social results chart this module
+    used to draw was retired with the 0.3.1 model.
 """
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 import argparse
-import numpy as np
-import pandas as pd
+import os
 from datetime import date, timedelta
 
-from analysis.chart_results import generate_results_chart
+import duckdb
+import pandas as pd
+
+import config
+from feature_engineering.announcement_timing import TARGET_AVAILABLE
+from scoring.model_b import HIGH_ALERT, ELEVATED, display_score, sort_by_risk
 from utilities.output_utilities import get_run_output_dir
 
-PARQUET          = os.path.join(os.path.dirname(__file__), "..", "output", "full_df.parquet")
-MOVED_THRESHOLD  = 0.05
+EVENTS_PARQUET = "output/events_df.parquet"
 
 
-def _week_bounds(lookback_weeks: int = 1) -> tuple[pd.Timestamp, pd.Timestamp]:
-    today = pd.Timestamp(date.today())
+def _week_bounds(lookback_weeks: int = 1, today=None) -> tuple[pd.Timestamp, pd.Timestamp]:
+    today = pd.Timestamp(today if today is not None else date.today()).normalize()
     # On Sat/Sun snap forward to Monday so the formula sees the just-completed trading week
     if today.weekday() >= 5:
         today = today + timedelta(days=7 - today.weekday())
@@ -30,146 +43,88 @@ def _week_bounds(lookback_weeks: int = 1) -> tuple[pd.Timestamp, pd.Timestamp]:
     return monday, monday + timedelta(days=4)
 
 
-def _fmt(val) -> str:
-    if val is None or (isinstance(val, float) and np.isnan(val)):
-        return "   n/a"
-    sign = "+" if val >= 0 else "–"
-    return f"{sign}{abs(val) * 100:4.1f}%"
-
-
-def _surrounding_daily_rets(stock_df, earn_pos, offsets):
-    out = {}
-    for o in offsets:
-        idx = earn_pos + o
-        if 0 <= idx < len(stock_df):
-            val = stock_df.at[idx, "daily_ret"]
-            out[o] = float(val) if pd.notna(val) else None
-        else:
-            out[o] = None
+def archived_calls(start, end, db_path=None) -> pd.DataFrame:
+    """First archived track-record-eligible call per event reporting in [start, end]."""
+    db_path = db_path or config.PREDICTIONS_DB_PATH
+    cols = ["stock", "earnings_date", "tier", "risk_score", "model_b_hist_mean_abs",
+            "model_b_n_prior", "score_asof_date", "prediction_asof_date", "model_version"]
+    if not os.path.exists(db_path):
+        return pd.DataFrame(columns=cols)
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        out = con.execute(f"""
+            SELECT {', '.join(cols)} FROM predictions_track_record
+            WHERE earnings_date BETWEEN ? AND ?
+        """, [pd.Timestamp(start).date(), pd.Timestamp(end).date()]).df()
+    except duckdb.Error:          # a DB that predates the 0.4.0 view / columns
+        out = pd.DataFrame(columns=cols)
+    finally:
+        con.close()
+    out["earnings_date"] = pd.to_datetime(out["earnings_date"])
     return out
 
 
-def _cumulative(daily_rets_post):
-    cum     = {}
-    product = 1.0
-    for k in sorted(daily_rets_post):
-        r = daily_rets_post[k]
-        if r is None:
-            break
-        product *= (1 + r)
-        cum[k]   = product - 1
-    return cum
+def results_table(calls: pd.DataFrame, events_df: pd.DataFrame) -> pd.DataFrame:
+    """Archived calls joined to their corrected outcome (NaN where unresolved)."""
+    ev = events_df[~events_df["is_pending"]][[
+        "stock", "earnings_date", "announce_window", "reaction_3d_anchored",
+        "abs_reaction_3d_anchored", "reaction_3d_anchored_status"]].copy()
+    ev["earnings_date"] = pd.to_datetime(ev["earnings_date"])
+    out = calls.merge(ev, on=["stock", "earnings_date"], how="left")
+    resolved = out["reaction_3d_anchored_status"].eq(TARGET_AVAILABLE)
+    out["moved_8pct"] = (out["abs_reaction_3d_anchored"]
+                         >= config.EXTREME_EARNINGS_REACTION_THRESHOLD).where(resolved)
+    return sort_by_risk(out.rename(columns={"tier": "risk_tier"})).rename(
+        columns={"risk_tier": "tier"})
 
 
-def generate_last_week_results(lookback_weeks: int = 1, df: pd.DataFrame | None = None):
-    if df is None:
-        df = pd.read_parquet(PARQUET)
-    else:
-        df = df.copy()
-    df["date"]          = pd.to_datetime(df["date"])
-    df["earnings_date"] = pd.to_datetime(df["earnings_date"])
-
-    week_start, week_end = _week_bounds(lookback_weeks)
-
-    earnings = df[
-        (df["is_earnings_day"] == 1)
-        & (df["earnings_date"] >= week_start)
-        & (df["earnings_date"] <= week_end)
-        & df["earnings_explosiveness_bucket"].notna()
-    ].copy()
-
-    if earnings.empty:
-        print("No earnings events found for that week.")
-        return
-
-    bucket_order = {"High Alert": 0, "Elevated": 1, "Normal": 2}
-    earnings["_rank"] = earnings["earnings_explosiveness_bucket"].map(bucket_order).fillna(9)
-    earnings = earnings.sort_values(["_rank", "earnings_date", "stock"])
-
-    stock_histories = {
-        stock: grp.sort_values("date").reset_index(drop=True)
-        for stock, grp in df.groupby("stock")
-    }
-
+def format_results(tbl: pd.DataFrame, week_start, week_end) -> str:
     week_range = f"{week_start.strftime('%b %-d')} – {week_end.strftime('%b %-d')}"
-    lines = [f"LAST WEEK'S RESULTS  ({week_range})", "═" * 70]
-    header = (f"  {'':6}  {'DATE':7}  {'TIER':12}  "
-              f"{'–2d':>6} {'–1d':>6} {'ERN':>6}  "
-              f"{'  +1d':>6} {'  +2d':>6} {'  +3d':>6} {'  +4d':>6} {'  +5d':>6}")
-    lines.append(header)
-    lines.append("  " + "─" * 68)
+    lines = [f"LAST WEEK'S RESULTS  ({week_range})  — INTERNAL, not for publication",
+             "═" * 74]
+    if tbl.empty:
+        lines += ["  No archived 0.4.0 call for an event reporting this week.",
+                  "  (Calls made by earlier model versions are not shown: void for the "
+                  "0.4.0 record.)"]
+        return "\n".join(lines)
+    lines.append(f"  {'':6}  {'DATE':7}  {'TIER':11} {'PCTL':>4}  {'CALL ASOF':10}  "
+                 f"{'WINDOW':7} {'3-SESSION':>9}  ≥8%")
+    lines.append("  " + "─" * 72)
+    for _, r in tbl.iterrows():
+        pct = display_score(r["risk_score"])
+        move = r["reaction_3d_anchored"]
+        move_s = f"{move * 100:+8.1f}%" if pd.notna(move) else "  unresol."
+        hit = "?" if pd.isna(r["moved_8pct"]) else ("✓" if r["moved_8pct"] else "·")
+        lines.append(
+            f"  {r['stock']:<6}  {r['earnings_date'].strftime('%b %-d'):<7}  {r['tier']:<11} "
+            f"{('—' if pct is None else str(pct)):>4}  {str(r['score_asof_date'])[:10]:10}  "
+            f"{str(r['announce_window'] if pd.notna(r['announce_window']) else '—'):7} "
+            f"{move_s:>9}  {hit:>3}")
+    lines.append("  " + "─" * 72)
+    lines.append("  3-session = corrected move from the last close before the announcement.")
+    lines.append("  unresol. / ? = no verified announcement time (or window not closed): "
+                 "not counted either way.")
+    for label, tiers in [("High Alert", [HIGH_ALERT]), ("High Alert + Elevated", [HIGH_ALERT, ELEVATED])]:
+        sel = tbl[tbl["tier"].isin(tiers) & tbl["moved_8pct"].notna()]
+        if len(sel):
+            k = int(sel["moved_8pct"].sum())
+            lines.append(f"  {label}: {k} of {len(sel)} resolved calls moved ≥ 8% "
+                         f"(one week — too few events to judge the model by).")
+    return "\n".join(lines)
 
-    chart_rows = []
-    flagged_moved = flagged_total = ha_moved = ha_total = 0
 
-    for _, row in earnings.iterrows():
-        stock  = row["stock"]
-        edate  = row["earnings_date"]
-        bucket = row["earnings_explosiveness_bucket"]
-
-        s = stock_histories.get(stock)
-        if s is None:
-            continue
-
-        earn_positions = s.index[s["date"] == edate].tolist()
-        if not earn_positions:
-            continue
-        pos = earn_positions[0]
-
-        pre       = _surrounding_daily_rets(s, pos, [-2, -1, 0])
-        post_daily = _surrounding_daily_rets(s, pos, [1, 2, 3, 4, 5])
-        post_cum  = _cumulative(post_daily)
-
-        abs_3d = post_cum.get(3)
-        moved  = abs_3d is not None and abs(abs_3d) >= MOVED_THRESHOLD
-
-        if bucket in ("High Alert", "Elevated"):
-            flagged_total += 1
-            if moved:
-                flagged_moved += 1
-        if bucket == "High Alert":
-            ha_total += 1
-            if moved:
-                ha_moved += 1
-
-        tier_short = {"High Alert": "HIGH ALERT", "Elevated": "ELEVATED",
-                      "Normal": "NORMAL"}.get(bucket, bucket)
-        date_str  = edate.strftime("%b %-d")
-        pre_fmt   = " ".join(_fmt(pre.get(o)) for o in [-2, -1, 0])
-        post_fmt  = " ".join(_fmt(post_cum.get(k)) for k in [1, 2, 3, 4, 5])
-        lines.append(f"  {stock:<6}  {date_str:<7}  {tier_short:<12}  {pre_fmt}  {post_fmt}")
-
-        move = row["reaction_3d"] if pd.notna(row.get("reaction_3d")) else row.get("reaction_1d")
-        move_val = float(move) if pd.notna(move) else None
-        chart_rows.append({
-            "stock":                      stock,
-            "earnings_date":              edate,
-            "earnings_explosiveness_bucket": bucket,
-            "earnings_explosiveness_score": row["earnings_explosiveness_score"],
-            "is_high_conviction":         row.get("is_high_conviction", False),
-            "move":                       move_val,
-            })
-
-    lines.append("  " + "─" * 68)
-    lines.append("  Columns: pre-earnings (–2d –1d 0d) | cumulative post-earnings (+1d thru +5d)")
-    lines.append("")
-
-    if flagged_total > 0:
-        lines.append(f"  Hit rate >5% move (flagged):  {flagged_moved}/{flagged_total}  "
-                      f"({flagged_moved / flagged_total * 100:.0f}%)")
-    if ha_total > 0:
-        lines.append(f"  High Alert hit rate:          {ha_moved}/{ha_total}  "
-                      f"({ha_moved / ha_total * 100:.0f}%)")
-    lines.append("")
-
-    results_path = os.path.join(get_run_output_dir(), "last_week_results.txt")
-    with open(results_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    print(f"Saved last week's results → {results_path}")
-
-    if chart_rows:
-        chart_df = pd.DataFrame(chart_rows)
-        generate_results_chart(chart_df, week_start)
+def generate_last_week_results(lookback_weeks: int = 1, events_df: pd.DataFrame | None = None,
+                               db_path=None, today=None) -> str:
+    if events_df is None:
+        events_df = pd.read_parquet(EVENTS_PARQUET)
+    week_start, week_end = _week_bounds(lookback_weeks, today)
+    tbl = results_table(archived_calls(week_start, week_end, db_path), events_df)
+    text = format_results(tbl, week_start, week_end)
+    path = os.path.join(get_run_output_dir(), "last_week_results.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text + "\n")
+    print(f"Saved last week's results → {path} ({len(tbl)} archived 0.4.0 calls)")
+    return text
 
 
 if __name__ == "__main__":
@@ -177,4 +132,4 @@ if __name__ == "__main__":
     parser.add_argument("--lookback", type=int, default=1,
                         help="How many weeks back (default: 1 = last week)")
     args = parser.parse_args()
-    generate_last_week_results(lookback_weeks=args.lookback)
+    print(generate_last_week_results(lookback_weeks=args.lookback))

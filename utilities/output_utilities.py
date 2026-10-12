@@ -47,3 +47,17 @@ def latest_run_output_dir(base="output"):
         if d.startswith("output_") and os.path.isdir(os.path.join(base, d))
     )
     return os.path.join(base, run_dirs[-1]) if run_dirs else base
+
+
+def write_daily_parquet(daily_df, path="output/full_df.parquet"):
+    """The daily frame (no score) — research and price context only."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)   # ingest=False skips stage 1's directory_checks
+    daily_df.to_parquet(path, index=False)
+    print(f"Wrote {path}")
+
+
+def write_events_parquet(events_df, path="output/events_df.parquet"):
+    """The Model B-scored event frame every output reads."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    events_df.to_parquet(path, index=False)
+    print(f"Wrote {path} ({len(events_df)} events)")

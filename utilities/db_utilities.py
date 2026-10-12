@@ -10,6 +10,7 @@
 """
 import pandas as pd
 import logging
+from config import TRACK_RECORD_MODEL_VERSIONS
 from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
@@ -195,7 +196,7 @@ def create_iv_table_if_not_exists(con):
 
 def create_predictions_table_if_not_exists(con):
     """The calls we published, one row per stock per earnings event per run day.
-    Scoped to one whole Mon-Fri work week (see save_predictions.py and
+    Scoped to one whole Mon-Fri work week (see publishing/archive_calls.py and
     work_week_window) — the same window the digest emails, so this is the product
     record rather than a dump of every scored event. Two week columns, easy to confuse:
       week_start — Monday of the week the COMPANY REPORTS (derived from earnings_date)
@@ -263,7 +264,7 @@ def create_predictions_table_if_not_exists(con):
     """)
 
     # One row per (stock, earnings_date) per run DAY. A same-day re-run upserts in place
-    # (see save_predictions.py) so a re-score after a fix corrects the row rather than
+    # (see publishing/archive_calls.py) so a re-score after a fix corrects the row rather than
     # being dropped; a run on a new date inserts a fresh row, preserving the trajectory.
     con.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS predictions_uq
@@ -284,14 +285,28 @@ def create_predictions_table_if_not_exists(con):
         ORDER BY stock, earnings_date, prediction_asof_date;
     """)
 
-    # The track-record-safe slice: first call per event, minus everything voided by
-    # P4.2. ANY published/marketing number must come from this view, never from
-    # `predictions` or `predictions_first_call` directly. Re-created on every call, so
-    # a newly voided row drops out of it without anyone remembering to do anything.
-    con.execute("""
+    # ---- 0.4.0 Model B fields (added 2026-10-04) ------------------------------------
+    # The raw signal and usable-prior count behind each call, so a call can be checked
+    # against the model as it was. NULL on every row written before 0.4.0. Added, never
+    # dropped: the legacy columns (is_high_conviction, the drift/surprise flags) stay for
+    # the old rows and are NULL on Model B rows.
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS model_b_hist_mean_abs DOUBLE")
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS model_b_n_prior INTEGER")
+
+    # The track-record-safe slice: the FIRST call per event made by a model version in
+    # TRACK_RECORD_MODEL_VERSIONS, scored from data before the event, minus anything
+    # voided. Pre-0.4 calls (0.3.1, 0.3.1-preaudit) never enter it — they stay in
+    # `predictions` as history. ANY published/marketing number must come from this view.
+    # Re-created on every call, so a change here reaches existing databases.
+    versions = ", ".join(f"'{v}'" for v in TRACK_RECORD_MODEL_VERSIONS)
+    con.execute(f"""
         CREATE OR REPLACE VIEW predictions_track_record AS
-        SELECT * FROM predictions_first_call
-        WHERE NOT COALESCE(void_for_track_record, FALSE);
+        SELECT DISTINCT ON (stock, earnings_date) *
+        FROM predictions
+        WHERE model_version IN ({versions})
+          AND NOT COALESCE(void_for_track_record, FALSE)
+          AND score_asof_date < earnings_date
+        ORDER BY stock, earnings_date, prediction_asof_date;
     """)
 
 def merge_tables(con):
@@ -614,7 +629,7 @@ def verify_tables_existence(con):
     create_iv_table_if_not_exists(con)
     create_eps_estimates_table_if_not_exists(con)
     # create_predictions_table_if_not_exists is deliberately NOT called here: predictions
-    # live in PREDICTIONS_DB_PATH, not this DB. save_predictions.py creates it there.
+    # live in PREDICTIONS_DB_PATH, not this DB. publishing/archive_calls.py creates it there.
     print("DB Tables Set Up")
 
 

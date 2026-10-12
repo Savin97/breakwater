@@ -51,7 +51,7 @@ Breakwater flagged $TICKER as elevated risk. It did not move much after earnings
 
 That matters. A useful risk model should keep a public record of misses as well as hits.
 
-The question is whether the flagged bucket beats the base rate over time.
+The question is whether the flagged tiers beat the base rate over time, on calls archived before each event.
 
 ## Base Rate
 

@@ -1,43 +1,34 @@
 # pipeline/stage5.py
+from utilities.output_utilities import write_daily_parquet, write_events_parquet
 from report.report_builder import generate_reports
 from report.calendar_builder import generate_calendar
 from streamlit_dash.streamlit_export import generate_streamlit_df
 from analysis.chart_weekly import generate_weekly_earnings_chart
-from marketing.generate_public_track_record import generate_public_track_record
 from analysis.last_week_results import generate_last_week_results
-from analysis.save_predictions import save_predictions_snapshot
-from pipeline.events import (build_and_score_event_frame, load_pipeline_announcement_timing,
-                             load_pipeline_active_stocks)
+from marketing.generate_public_track_record import generate_public_track_record
+from pipeline.events import pending_events
 
 
-def stage5(df):
+def stage5(daily_df, events_df):
     """
-    Outputs.
+    Stage 5 — outputs, all from the Model B-scored event frame.
 
-    First builds the event frame (pipeline/events.py): one row per earnings event,
-    completed or pending. It is built from the daily frame and never merged back into
-    it, so no future-dated row can reach the rolling price windows or the per-date
-    cross-sectional ranks; building it asserts that no completed event's score changed.
-    Every forward-looking consumer reads its pending rows instead of
-    `df.sort_values("date").groupby("stock").last()`, which returned the stock's last
-    COMPLETED event's state.
+    Everything here is LOCAL: files under output/. Nothing is deployed, mailed or
+    archived — publication is scripts/full_workflow.sh, and the prediction archive is
+    written only by publishing/archive_calls.py after the dashboard push.
+
+    Forward-looking outputs read the PENDING rows, never
+    `df.sort_values("date").groupby("stock").last()`. The dashboard parquets are written
+    before the weekly chart, which reads upcoming_df.parquet.
     """
     print("--------------------\nStage 5 - Outputs...")
-    events_df = build_and_score_event_frame(
-        df, load_pipeline_announcement_timing(), active_stocks=load_pipeline_active_stocks())
-
-    def generate_full_parquet(df):
-        df.to_parquet("output/full_df.parquet", index=False)
-        print("Wrote output/full_df.parquet")
-    generate_full_parquet(df)
-    events_df.to_parquet("output/events_df.parquet", index=False)
-    print(f"Wrote output/events_df.parquet ({len(events_df)} events)")
-    generate_reports(df, events_df)
-    generate_calendar(df, events_df=events_df)
+    write_daily_parquet(daily_df)
+    write_events_parquet(events_df)
+    generate_reports(events_df)
+    generate_calendar(pending_events(events_df))
+    generate_streamlit_df(events_df)
     generate_weekly_earnings_chart()
-    generate_last_week_results(df=df)
-    generate_public_track_record(df=df)
-    generate_streamlit_df(df, events_df)
-    save_predictions_snapshot(events_df)
+    generate_last_week_results(events_df=events_df)
+    generate_public_track_record(events_df=events_df)
     print("Stage 5 DONE")
-    return df
+    return events_df

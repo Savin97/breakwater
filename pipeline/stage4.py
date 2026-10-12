@@ -1,80 +1,30 @@
 # pipeline/stage4.py
-from scoring.scoring_features import (
-    engineer_large_reaction,
-    engineer_extreme_reaction,
-    engineer_vol_stress,
-    engineer_momentum_pressure,
-    engineer_earnings_explosiveness,
-    engineer_sector_vol_stress,
-    engineer_proximity_score,
-    engineer_vol_expansion_score,
-    engineer_momentum_fragility_score,
-    engineer_earnings_explosiveness_score,
-    engineer_stock_bucket_lift,
-    engineer_lift_adjusted_bucket,
-    classify_large_relative_earnings_move_bucket,
-    engineer_surprise_momentum_flag,
-    engineer_pre_earnings_drift_flag,
-    engineer_total_risk_score,
-    engineer_high_conviction)
+from pipeline.events import build_pipeline_event_frame
+from scoring.model_b import (
+    engineer_score_asof_date,
+    engineer_prior_history,
+    engineer_risk_score,
+    engineer_risk_tier,
+    engineer_model_version,
+    print_call_summary)
 
 
-def stage4(stage3_df, incremental=False):
+def stage4(daily_df):
     """
-    Stage 4 — Risk Scoring.
+    Stage 4 — the event frame and Model B (scoring/model_b.py).
 
-    incremental=False (default): full run — all scoring functions applied.
-    incremental=True:  fast path — skips functions that require abs_reaction_3d
-                       (is_large_reaction, is_extreme_reaction, earnings_move_bucket),
-                       which is not available in the 90-day incremental window.
+    One row per earnings event (completed + one pending per active stock), with corrected
+    outcomes; then, for every event: its call cutoff, its usable corrected prior history,
+    the Breakwater Risk Percentile and the tier. The one production magnitude scorer.
+    `daily_df` supplies the prices, timing anchors and the market-session grid.
     """
-    print("--------------------\nStage 4 - Risk Scoring...")
-    stage4_df = stage3_df.copy()
-
-    if incremental:
-        # engineer_earnings_explosiveness_score skipped: score and bucket are
-        # read from cache in stage3 so the last-complete-event values are preserved.
-        # engineer_stock_bucket_lift / engineer_lift_adjusted_bucket skipped for the
-        # same reason — both need is_extreme_reaction, which needs abs_reaction_3d,
-        # unavailable in the 90-day incremental window. The already-adjusted bucket
-        # comes back from the cache, so no re-derivation is needed here.
-        features = [
-            engineer_vol_stress,
-            engineer_sector_vol_stress,
-            engineer_momentum_pressure,
-            engineer_earnings_explosiveness,
-            engineer_proximity_score,
-            engineer_vol_expansion_score,
-            engineer_momentum_fragility_score,
-            engineer_surprise_momentum_flag,
-            engineer_pre_earnings_drift_flag,
-            engineer_total_risk_score,
-            engineer_high_conviction,
-        ]
-    else:
-        features = [
-            engineer_large_reaction,
-            engineer_extreme_reaction,
-            engineer_vol_stress,
-            engineer_sector_vol_stress,
-            engineer_momentum_pressure,
-            engineer_earnings_explosiveness,
-            engineer_proximity_score,
-            engineer_vol_expansion_score,
-            engineer_momentum_fragility_score,
-            engineer_earnings_explosiveness_score,
-            engineer_stock_bucket_lift,        # needs the structural bucket above
-            engineer_lift_adjusted_bucket,     # overwrites the bucket using that lift
-            classify_large_relative_earnings_move_bucket,
-            engineer_surprise_momentum_flag,
-            engineer_pre_earnings_drift_flag,
-            engineer_total_risk_score,
-            engineer_high_conviction,
-        ]
-
-    for f in features:
-        stage4_df = f(stage4_df)
-    if stage4_df is None:
-        raise ValueError("\n---ERROR! Stage 4 Returned None.---\n")
+    print("--------------------\nStage 4 - Event frame + Model B scoring...")
+    events = build_pipeline_event_frame(daily_df)
+    events = engineer_score_asof_date(events, daily_df)
+    events = engineer_prior_history(events, daily_df)
+    events = engineer_risk_score(events)
+    events = engineer_risk_tier(events)
+    events = engineer_model_version(events)
+    print_call_summary(events)
     print("Stage 4 DONE")
-    return stage4_df
+    return events

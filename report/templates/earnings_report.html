@@ -28,8 +28,6 @@
           <span style="font-size:8pt; color:#888; margin-left:6px;">(in {{ days_to_earnings }} days)</span>
         {% elif days_to_earnings == 0 %}
           <span style="font-size:8pt; color:#e67e22; margin-left:6px;">(today)</span>
-        {% else %}
-          <span style="font-size:8pt; color:#aaa; margin-left:6px;">({{ days_to_earnings | abs }} days ago)</span>
         {% endif %}
       {% endif %}
     </div>
@@ -37,156 +35,104 @@
     {% if sub_sector %}<div class="meta-item"><span class="label">Sub-Sector</span><span class="value">{{ sub_sector }}</span></div>{% endif %}
   </div>
 
-  {% if recommendation %}
-  <div class="recommendation recommendation-{{ risk_level | lower | replace(' ', '-') }}">
+  <div class="recommendation recommendation-{{ risk_tier_css }}">
     <div class="rec-headline">{{ recommendation.headline }}</div>
     <div class="rec-body">{{ recommendation.body }}</div>
-    {% if recommendation.flag_lines %}
-    <ul class="rec-flags">
-      {% for line in recommendation.flag_lines %}
-      <li>{{ line }}</li>
-      {% endfor %}
-    </ul>
-    {% endif %}
-    <div class="rec-action"><strong>Suggested action:</strong> {{ recommendation.action }}</div>
+    <div class="rec-action">{{ recommendation.action }}</div>
   </div>
-  {% endif %}
 
   <div class="section">
-    <h2>Tail Risk Profile</h2>
+    <h2>Earnings-Move Risk</h2>
     <div class="score-row">
       <div class="score-block">
-        <div class="label">Risk Score</div>
+        <div class="label">Risk Tier</div>
+        <div class="badge badge-{{ risk_tier_css }}">{{ risk_tier }}</div>
+      </div>
+      <div class="score-block">
+        <div class="label">Breakwater Risk Percentile</div>
+        {% if risk_score is not none %}
         <div class="score-number">{{ risk_score }}<span class="score-denom"> / 100</span></div>
+        {% else %}
+        <div class="score-number" style="color:#999;">&mdash;</div>
+        {% endif %}
       </div>
       <div class="score-block">
-        <div class="label">Risk Level</div>
-        <div class="badge badge-{{ risk_level | lower | replace(' ', '-') }}">{{ risk_level }}</div>
+        <div class="label">Avg. past earnings move</div>
+        {% if hist_mean_abs_pct is not none %}
+        <div class="score-number" style="font-size:18pt;">{{ hist_mean_abs_pct }}</div>
+        {% else %}
+        <div class="score-number" style="font-size:18pt; color:#999;">&mdash;</div>
+        {% endif %}
       </div>
-      {% if peer_percentile is not none %}
       <div class="score-block">
-        <div class="label">vs. S&amp;P 500</div>
-        <div class="score-number" style="font-size:18pt;">{{ peer_percentile }}<span class="score-denom">{% set p = peer_percentile % 100 %}{% if p == 11 or p == 12 or p == 13 %}th{% elif peer_percentile % 10 == 1 %}st{% elif peer_percentile % 10 == 2 %}nd{% elif peer_percentile % 10 == 3 %}rd{% else %}th{% endif %} pct</span></div>
-        <div class="peer-note">Higher earnings tail risk than {{ peer_percentile }}% of S&amp;P 500 stocks</div>
+        <div class="label">Usable past reports</div>
+        <div class="score-number" style="font-size:18pt;">{{ n_prior }}</div>
       </div>
-      {% endif %}
     </div>
+    <p class="explainer">{{ percentile_explainer }}</p>
+    <p class="explainer">
+      {{ risk_tier }}: {{ tier_band }}.
+      {% if score_asof_date %}Scored from data through the close of {{ score_asof_date }}.{% endif %}
+    </p>
+    <table class="stats-table" style="width:100%;">
+      <tr><td class="stat-label">High Alert</td><td class="stat-value">{{ tier_bands["High Alert"] }}</td></tr>
+      <tr><td class="stat-label">Elevated</td><td class="stat-value">{{ tier_bands["Elevated"] }}</td></tr>
+      <tr><td class="stat-label">Normal</td><td class="stat-value">{{ tier_bands["Normal"] }}</td></tr>
+      <tr><td class="stat-label">Unscored</td><td class="stat-value">{{ tier_bands["Unscored"] }}</td></tr>
+    </table>
   </div>
 
-  {% if high_conviction or surprise_flag or drift_flag %}
   <div class="section">
-    <h2>This Quarter's Setup</h2>
-    <p class="explainer">Dynamic overlays for this specific earnings cycle — independent of the structural risk score.</p>
-    <div style="display:table; width:100%;">
-      {% if high_conviction %}
-      <div style="display:table-cell; padding-right:28px; vertical-align:top;">
-        <span class="label">Conviction Tier</span>
-        <div style="margin-top:4px;">
-          <span class="badge" style="background:#6c3483; color:#fff;">&#9733; High Conviction</span>
-        </div>
-        <div style="font-size:7.5pt; color:#666; margin-top:4px;">High Alert + pre-earnings drift signal</div>
-      </div>
+    <h2>Historical Earnings Reactions</h2>
+    <p class="explainer">
+      3-session price move after each past report, measured from the last close before the
+      announcement. Only reports with a verified announcement time are shown; the others are
+      left out, not drawn as zero. Dashed lines mark &plusmn;8%.
+      {% if chart_summary.n_shown %}
+      Showing the latest {{ chart_summary.n_shown }} of {{ chart_summary.n_usable }} usable reactions{% if chart_summary.n_omitted_in_span %}; {{ chart_summary.n_omitted_in_span }} report{{ "s" if chart_summary.n_omitted_in_span != 1 else "" }} in this period had no verified timing and {{ "are" if chart_summary.n_omitted_in_span != 1 else "is" }} omitted{% endif %}.
       {% endif %}
-      {% if surprise_flag %}
-      <div style="display:table-cell; padding-right:28px; vertical-align:top;">
-        <span class="label">Surprise Pattern</span>
-        <div style="margin-top:6px;">
-          <span class="flag flag-{{ surprise_flag | lower | replace(' ', '-') }}">{{ surprise_flag }}</span>
-        </div>
-      </div>
-      {% endif %}
-      {% if drift_flag %}
-      <div style="display:table-cell; padding-right:28px; vertical-align:top;">
-        <span class="label">Pre-Earnings Drift</span>
-        <div style="margin-top:6px;">
-          <span class="flag flag-{{ drift_flag | lower }}">{{ drift_flag }}</span>
-        </div>
-      </div>
-      {% endif %}
-    </div>
+    </p>
+    {% if reactions_chart_svg %}
+    <div class="chart-container">{{ reactions_chart_svg | safe }}</div>
+    {% else %}
+    <p class="explainer">No past report with a verified announcement time yet.</p>
+    {% endif %}
   </div>
-  {% endif %}
 
   {% if iv_implied_move_pct is not none %}
   <div class="section">
-    <h2>Options Market Signal</h2>
-    <p class="explainer">What the options market is currently pricing for this earnings event vs. this stock's historical reaction profile.</p>
+    <h2>Options Market Context</h2>
+    <p class="explainer">
+      What the options market was pricing at the last snapshot. Shown for context only: it
+      does not enter the Breakwater score or tier and is not part of Model B's evidence.
+    </p>
     <table class="stats-table">
       <tr>
         <td class="stat-label">Implied move (ATM straddle)</td>
         <td class="stat-value">{{ "%.1f"|format(iv_implied_move_pct * 100) }}%</td>
       </tr>
+      {% if atm_iv_pct is not none %}
       <tr>
         <td class="stat-label">ATM implied volatility</td>
         <td class="stat-value">{{ "%.1f"|format(atm_iv_pct * 100) }}%</td>
       </tr>
-{% if iv_vs_hist_ratio is not none %}
-      <tr class="{% if iv_vs_hist_ratio < 1.0 %}iv-underpriced{% else %}iv-overpriced{% endif %}">
-        <td class="stat-label">Implied vs. historical p75</td>
-        <td class="stat-value">{{ "%.2f"|format(iv_vs_hist_ratio) }}x
-          {% if iv_vs_hist_ratio < 1.0 %}
-            <span class="iv-signal-note"> — options appear to underprize historical tail risk</span>
-          {% else %}
-            <span class="iv-signal-note"> — options pricing above historical p75</span>
-          {% endif %}
-        </td>
+      {% endif %}
+      {% if iv_snapshot_date %}
+      <tr>
+        <td class="stat-label">Snapshot</td>
+        <td class="stat-value">{{ iv_snapshot_date }}{% if iv_snapshot_age_days is not none %} ({{ iv_snapshot_age_days }} day{{ "s" if iv_snapshot_age_days != 1 else "" }} old){% endif %}</td>
       </tr>
       {% endif %}
     </table>
   </div>
   {% endif %}
 
-  {% if reactions_chart_svg %}
   <div class="section">
-    <h2>Historical Earnings Reactions</h2>
-    <p class="explainer">3-day post-earnings price move per quarter. Dashed lines mark the ±8% extreme threshold.</p>
-    <div class="chart-container">{{ reactions_chart_svg | safe }}</div>
-  </div>
-  {% endif %}
-
-  <div class="section">
-    <h2>Extreme Reaction Probabilities</h2>
-    <p class="explainer">
-      An "extreme reaction" is a 3-day post-earnings price move of 8% or more in either direction.
-    </p>
-    <p class="explainer" style="color:#888;">
-      Measured on the legacy 3-day target, which mismeasures before-open announcements
-      (audit/PHASE0_AUDIT_REV2.md &sect;Q1&ndash;Q2). On 11,496 events with verified announcement
-      timestamps the market-wide rate is 20.4% (95% CI 19.7&ndash;21.1) once correctly anchored.
-      Treat the figures below as provisional until the Phase 3 rebuild.
-    </p>
-    <table class="stats-table">
-      <tr>
-        <td class="stat-label">Historical probability for this stock (Bayesian)</td>
-        <td class="stat-value">{{ (hist_extreme_prob | float * 100) | round(1) }}%</td>
-      </tr>
-      <tr>
-        <td class="stat-label">Global baseline (all stocks)</td>
-        <td class="stat-value">{{ (base_extreme_prob | float * 100) | round(1) }}%</td>
-      </tr>
-      {#
-        Lift rows ("Lift vs. global baseline", "Lift vs. same-bucket peers") removed:
-        audit/PHASE0_AUDIT_REV2.md P4.1 retires every lift figure. They were per-stock
-        values built from `is_extreme_reaction` on the legacy target, which mismeasures
-        before-open announcements, grouped by the lift-promoted tier. A Jinja comment,
-        not an HTML one, so nothing reaches the rendered page or its source. Do not
-        restore them; Model C will bring its own, freshly audited figures.
-      #}
-    </table>
-  </div>
-
-  <div class="section">
-    <h2>Historical Bucket Breakdown</h2>
-    <p class="explainer">
-      Probability of an extreme reaction by risk bucket, based on this stock's earnings history.
-      Shrunk toward the global average using a Bayesian prior (strength = 20 events).
-    </p>
-    <p class="explainer" style="color:#888;">
-      Provisional. Computed on the legacy 3-day target, which mismeasures before-open
-      announcements (audit/PHASE0_AUDIT_REV2.md &sect;Q1&ndash;Q3), pending the Phase 3 rebuild.
-    </p>
-    {# The table carries no lift columns (report_builder.RETIRED_BUCKET_TABLE_COLUMNS). #}
-    {{ bucket_table | safe }}
+    <h2>How This Is Measured</h2>
+    <p class="method-note">{{ signal_explainer }}
+      An event needs at least {{ min_prior }} such past reports to be scored; with fewer it is
+      Unscored. The percentile bands are fixed and were not tuned on outcomes.
+      Model version {{ model_version }}.</p>
   </div>
 
   <div class="footer">

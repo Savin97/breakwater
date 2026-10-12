@@ -18,44 +18,52 @@ done*, replace it with the thing being done.
   (tickers, scores, outcomes) explained the score-ceiling problem instantly after
   several paragraphs of AUCs and confidence intervals had not.
 
-## Current state — updated 2026-10-03 (end of session)
+## Current state — updated 2026-10-04 (end of session)
 
-- **Model C refit on the production event frame done 2026-10-03, uncommitted
-  (`analysis/model_c_refit/`, RESULTS.md): SURVIVES WEAKLY.** OOF 2017–2025 n 16,315: B
-  0.715 / C 0.725 AUC, C−B +0.010 [+0.005, +0.015]; top-10/20 capture flat (C−B −0.8 /
-  −0.1 pt, CIs cross 0). 2026 (n 1,436): B 0.717 / C 0.720. Both beat 0.3.1 by ~0.05 AUC.
-  Same signal as the archived run on shared rows. Raw probability drifts by year (2026
-  p 0.212 vs observed 0.247) → expose a rank, not a probability. Next decision is the
-  user's: ship B or C (top-k identical), then productionise. Nothing in production changed.
-- **Research is finished and archived.** Tag `methodology-audit-archive-october-2026` →
-  `39fe089` (pushed). Free historical magnitude-feature research is complete: Phase 5B
-  price/peer, SEC text/8-K and XBRL fundamentals all added nothing to Model C. Options
-  expected move is the one open idea, paused until professional data is bought; its
-  pre-registered design is in the tag (`research/options_confirmatory/`). Future research
-  branches from future master and recovers archived code selectively.
-- **`methodology-rebuild` was reset to master (`8fcf3b7`) on 2026-10-03 and rebuilt as the
-  clean non-Model-C production integration** per `audit/NON_MODEL_C_INTEGRATION_PLAN.md`.
-  UNCOMMITTED, not pushed (the remote branch still holds the old research tip; pushing
-  will need a force-push — the user's call). Tests: 442 pass, 0 skip.
-- **Model C is NOT productionized.** Production still runs 0.3.1 on the legacy target.
-  Next step after this integration is merged: refit Model C on the PRODUCTION event frame
-  (strict timing rules — no ±1-day vendor matching, no proxy dates), then integrate it.
-  The research coefficients/cuts were measured on the research frame; do not copy them.
-  Deferred list: §6 of the integration plan.
-- **Prediction archive** `db/predictions.duckdb` (tracked, the only copy): 38 calls,
-  2026-08-31 → 2026-09-28, 10 voided as `0.3.1-preaudit`. Merged by key on 2026-10-03.
-  The droplet copy is master's old 10-row blob, untouched (nothing there writes it).
-  Backups: `~/breakwater_backups/integration_20261003_191434/`.
-- **Never `git add -A` / `git add .`**: 16 GB of licensed vendor data sits in `data/vendor/`
-  (ignored only by the restored `.gitignore`).
-- Timestamp history in both DBs: 26,657 / 47,503 rows; 25,987 of 45,715 completed events
-  anchored (56.8%). Date corrections and the IV live-price fix are live on the droplet.
-- Fixed in the integration (2026-10-03): only `stock_data.status = 'active'` stocks get a
-  pending event (485 of 503; the 18 inactive keep their history), and no lift figure is
-  displayed anywhere (PDF, calendar, dashboard, its parquet). The legacy scorer still
-  computes lift internally until Model C.
-- Not fixed, outside scope: the renamed tickers' new symbols (BNY, ECHO) are `active` but
-  have no price rows at all, so they get no upcoming call.
+- **Model B is productionized as 0.4.0 on `methodology-rebuild`, UNCOMMITTED** (Michael
+  commits). `scoring/model_b.py`: mean prior `abs_reaction_3d_anchored` (status available,
+  endpoint <= call cutoff = last session before the report-week Monday), >= 8 priors else
+  Unscored; `risk_score` = Breakwater Risk Percentile vs frozen `scoring/model_b_reference.json`
+  (2014–2025, n 20,491, checksummed); tiers HA >= 90 / Elevated 80–90 / Normal / Unscored.
+- Pipeline: stage3 = daily prep only → `build_pipeline_event_frame` → stage4 Model B →
+  stage5. Legacy scorer, lift, HC, drift/surprise flags, 73/79, incremental path,
+  scoring_slice, results_check DELETED. Restored on request (not on the pipeline path):
+  scoring_features.py (self-contained: event_features cores + 73/79/lift constants
+  inlined; test-guarded off the pipeline path),
+  pre_earnings_sector_features.py, chart_results.py; backtesting.py + calibration.py marked as
+  candidates for a Model B update.
+- Equivalence with the frozen refit: exact on all 46,200 events (cutoff, n_prior, signal
+  bit-identical); OOF AUC 0.715 / 2026 0.717 reproduced (`analysis/model_b_validation/`).
+- Predictions DB: + `model_b_hist_mean_abs`, `model_b_n_prior`; `predictions_track_record`
+  = first 0.4.0 call per event only (`config.TRACK_RECORD_MODEL_VERSIONS`). Old 41 rows
+  untouched. `BREAKWATER_PREDICTIONS_DB` redirects validation runs. Canonical hash still
+  `112b9c13…`.
+- Tests: `testing` 483 pass 0 skip; `analysis/model_b_validation/tests` +
+  `analysis/model_c_refit/tests` 19 pass.
+- **Open, Michael's call:** commit/merge; droplet runs master's dashboard, which will break
+  on the new parquet columns until master is updated (don't push parquets from this branch
+  before merging); archive `analysis/model_c_refit/` + `model_b_validation/` evidence;
+  `testing/metric_testing.py` + `testing_functions.py` left untouched but now read columns
+  full_df no longer has; dashboard "Retro-scored history" tab shows retro calls vs outcomes
+  — decide whether that belongs on the public dashboard.
+- 2026-10-04 later: lists ordered by `sort_by_risk` (raw signal, not percentile); public
+  dashboard has no retro-scored history (history parquet = corrected reactions only);
+  `scripts/deploy_guard.sh` blocks publishing from non-master (exit 3). metric_testing.py
+  rewritten and testing_functions.py adapted to Model B (nothing removed; Michael's call),
+  covered by testing/test_evaluation_tools.py. Findings: Model B's corr is between-stock
+  (0.88) not within-stock (-0.08); vol-only top decile hit 0.33 vs B 0.44; Unscored hit 0.26.
+- 2026-10-06: scoring != publishing != archival. `run_pipeline`/stage 5 never write the
+  prediction archive. Only `python -m publishing.archive_calls --published` (master only,
+  calls file < 24h old) writes db/predictions.duckdb, run by full_workflow.sh right after the
+  dashboard push; it archives the pushed upcoming_df.parquet. Scratch via
+  BREAKWATER_PREDICTIONS_DB anywhere. Digest re-checks branch before a real send.
+  backtesting.py + calibration.py migrated to Model B (Michael chose migrate over delete).
+  Unscored labelled "insufficient history — not low risk" everywhere (UNSCORED_NOTE).
+  Model B scope note (cross-sectional, not quarter timing) in model_b.py + CLAUDE.md.
+  Tests 547 + 19. Canonical hash 112b9c13… unchanged; backup in output/model_b_validation/.
+- **Never `git add -A` / `git add .`**: 16 GB of licensed vendor data sits in `data/vendor/`.
+- Not fixed, outside scope: renamed tickers' new symbols (BNY, ECHO) are `active` but have
+  no price rows, so they get no upcoming call.
 
 ## Retracted figures — do not reuse
 
@@ -66,6 +74,26 @@ history reads straight. `audit/PHASE0_AUDIT_REV2.md` is the authority; CLAUDE.md
 verified replacements.
 
 ---
+
+## 2026-10-04 — Model B productionized as 0.4.0 (uncommitted)
+
+- New: `scoring/model_b.py`, `scoring/model_b_reference.json`,
+  `scoring/build_model_b_reference.py` (`--check` rebuilds + diffs), `testing/test_model_b.py`,
+  `testing/test_predictions_db.py`, `analysis/model_b_validation/` (validate.py + tests; reads
+  the refit oracle, research only).
+- Rewritten: pipeline (stage3/4/5, events.py, pipeline.py `ingest=` flag), PDF (template,
+  report_builder, chart = corrected reactions only, recommendations_builder = all customer
+  wording), calendar, dashboard + export, digest, weekly chart (80/90 zones; now runs after the
+  parquet export — it used to plot the previous run's file), save_predictions, last_week_results
+  (archived 0.4.0 calls vs corrected outcomes, internal text only), track record generator
+  (still paused; reads only 0.4.0 archive calls), predictions_range, config (0.4.0), readme,
+  CLAUDE.md, marketing wording.
+- Band behaviour (fixed reference bands, descriptive): OOF 2017–2025 HA 10.3% of events (hit
+  0.441, capture 0.253), HA+E capture 0.426; 2026 HA 12.5% (hit 0.520). Alert share drifts up
+  with the market (9.6% 2017 → 12.0% 2025 → 12.5% 2026). AMC HA share 17.9% vs BMO 4.7%.
+- Scratch run 2026-10-04 (prices to 2026-09-28): 485 pending, 57 HA / 72 E / 352 N / 4
+  Unscored (BRK-B, PSKY, Q, SNDK). Week of Oct 5: STZ 75, DAL 60, PEP 12 (all Normal).
+- Trap: `git rm` stages deletions — use plain `rm`; Michael stages and commits.
 
 ## 2026-10-03 — Model C refit on the production event frame (uncommitted)
 

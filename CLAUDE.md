@@ -16,6 +16,28 @@ one. **Do not create other branches, worktrees or copies of the repo without ask
 Small fixes go on master; afterwards master is merged into methodology-rebuild, never the
 other way round until the rebuild is ready. The user commits; give them the `-m` message.
 
+**Scoring ≠ publishing ≠ archival.**
+- *Scoring + local outputs*: `run_pipeline` (stages 1–5). Writes only under `output/`; never
+  deploys, mails or writes the prediction archive — on any branch.
+- *Publishing*: `scripts/full_workflow.sh`, master only. It sources `scripts/deploy_guard.sh`;
+  from any other branch (or a detached HEAD) it pulls the DB and runs the pipeline locally,
+  then refuses loudly (exit 3, branch printed) before anything public. No override.
+- *Archival*: `python -m publishing.archive_calls --published`, run by the workflow right after
+  the dashboard push succeeds — the moment the calls are public. It archives exactly the pushed
+  `output/upcoming_df.parquet` (work-week window, same as the digest) into `db/predictions.duckdb`,
+  and refuses the canonical DB unless `--published`, branch master (`publishing/guard.py`) and
+  a calls file from today's run. Any other target (`BREAKWATER_PREDICTIONS_DB=…`) is scratch and
+  allowed anywhere. Same-day reruns upsert.
+- *Digest*: re-checks the branch itself before a real SMTP send (`python -m cron.cron_weekly_digest`
+  run by hand on a non-master branch exits 3); without credentials it only prints.
+- Partial failure: dashboard push fails → nothing archived, nothing mailed (set -e). Push
+  succeeds but archive fails → calls are public but unarchived; rerun
+  `python -m publishing.archive_calls --published` the same day. Archive succeeds, digest
+  fails → archived calls were public on the dashboard; the email can be resent.
+  Residual ambiguity: an rsync that dies after the remote file landed reports failure, so a
+  public call can go unarchived until the same-day rerun.
+`testing/test_deploy_guard.py` and `testing/test_publication.py` pin all of this.
+
 The complete methodology research (Phase 3–5 evaluation, Model C research code, options,
 SEC and fundamentals experiments, vendor tooling, audit scripts and artifacts) is preserved
 at the tag `methodology-audit-archive-october-2026`. Since 2026-10-03 `methodology-rebuild`
@@ -33,7 +55,11 @@ against the implied move.
 
 ## What This Is
 
-Breakwater is an earnings tail-risk model for S&P 500 stocks. It ingests price/earnings/sector data, engineers features, scores each stock's upcoming earnings event on a risk scale, and produces reports and a Streamlit dashboard.
+Breakwater is an earnings-move risk model for S&P 500 stocks. It ingests price/earnings/sector
+data, builds one row per earnings event with corrected (timestamp-anchored) reactions, scores
+every event with **Model B** (0.4.0, `scoring/model_b.py`), and produces PDF reports, a weekly
+calendar and digest, a Streamlit dashboard and an archive of every published call. It ranks the
+SIZE of a potential move, never its direction.
 
 ## Performance Claims — `audit/PHASE0_AUDIT_REV2.md` Is The Authority
 
@@ -42,7 +68,8 @@ or in any customer-facing or marketing surface.** Every figure published before 
 from a target that mismeasured before-open (BMO) announcements and was overstated by roughly
 3x. Remediation item **P4.1 is "Retire every published lift figure until P3.3."**
 
-Verified figures (audit §Q2, n=11,496 events with provider announcement timestamps):
+Verified figures for the **retired legacy 0.3.1 tiers** (audit §Q2, n=11,496 events with provider
+announcement timestamps) — history, not evidence about Model B:
 
 | quantity | verified | retracted value it replaces |
 |---|---|---|
@@ -62,20 +89,25 @@ Rules that follow from it:
 - **There is no 15-year and no 2015–2025 out-of-sample record.** The figures above were
   measured when verified timestamps covered 25.4% of scored events and reached back only to
   ~2020 for most tickers (audit §Q3 coverage constraint). Nothing above is out-of-sample: the
-  73/79 cuts were selected on this distribution and are being re-fit. Coverage has since
+  73/79 cuts were selected on this distribution (and were retired in 0.4.0). Coverage has since
   grown (see the Benzinga section), but that does not change these figures or license new
   ones — a figure measured on the wider history is a Phase 3 result and needs the same
   scrutiny.
 - **The demonstrated edge is 1.87x within AMC and unestablished within BMO** (audit §Q3). On
   BMO, 96.0% of events are `Normal` and `Normal` lift is 0.94x.
-- **No lift figure is displayed to users** (P4.1). The whole feature chain behind
-  `stock_bucket_lift` was computed from mismeasured prior outcomes (audit §Q3), so no
-  per-stock or per-tier lift appears in the PDF report (tables, recommendation text,
-  High Conviction badge), the weekly calendar, the dashboard or the parquet it reads.
-  The legacy scorer still computes lift internally for tier promotion until Model C
-  replaces it. `testing/test_customer_outputs.py` enforces this.
-- The pre-audit archived predictions are void for track-record purposes and
-  `marketing/generate_public_track_record.py` is paused (P4.2, P4.3).
+- **No lift figure is displayed to users** (P4.1), and since 0.4.0 no lift is computed at
+  all: the legacy scorer (explosiveness score, `stock_bucket_lift`, promotions, High
+  Conviction, drift/surprise flags, 73/79 cuts) was deleted. `testing/test_customer_outputs.py`
+  enforces that no customer surface names any of it.
+- **Model B has no published performance figure.** Its research validation
+  (`analysis/model_c_refit/RESULTS.md`: OOF 2017–2025 ROC-AUC 0.715, 2026 holdout 0.717) is a
+  historical backtest — never quote it as live performance or in marketing. The customer
+  score is a percentile RANK; never present it, or anything else, as a probability, chance,
+  multiple of a market rate, expected move or direction.
+- **Track record: prospective 0.4.0 calls only.** Pre-0.4 archived calls (0.3.1 and
+  0.3.1-preaudit) are void for the 0.4.0 record; the `predictions_track_record` view holds
+  only the first 0.4.0 call per event, and `marketing/generate_public_track_record.py` stays
+  paused until enough of them have resolved and Michael decides to publish.
 
 ## Commands
 
@@ -84,26 +116,37 @@ Rules that follow from it:
 python main.py
 
 # Re-score WITHOUT re-ingesting — no API calls, uses the existing DuckDB.
-# This is what you want after changing anything in stage3/stage4.
-python -c "from pipeline.stage2 import stage2; from pipeline.stage3 import stage3; \
-from pipeline.stage4 import stage4; from pipeline.stage5 import stage5; stage5(stage4(stage3(stage2())))"
+python -c "from pipeline.pipeline import run_pipeline; run_pipeline(ingest=False)"
 
-# Run backtesting suite (reads output/full_df.parquet)
-python -m testing.backtesting
-
-# Historical calibration tables (reads output/full_df.parquet)
-python -m testing.calibration
+# ANY validation run: point the prediction archive at a scratch copy first, so the
+# canonical db/predictions.duckdb is never written.
+BREAKWATER_PREDICTIONS_DB=output/scratch_predictions.duckdb python -c "..."
 
 # Launch the Streamlit dashboard
 streamlit run streamlit_dash/app.py
 
-# Predictions for a range of whole Mon-Fri work weeks (reads output/events_df.parquet)
+# Model B calls + corrected outcomes for whole Mon-Fri work weeks (reads output/events_df.parquet)
 python -m analysis.predictions_range --weeks-back 12
 python -m analysis.predictions_range --weeks-forward 4
 python -m analysis.predictions_range --monday 2026-06-01 --weeks 3
 
-# Ad-hoc feature/score metric script (not a test suite)
+# Archived 0.4.0 calls vs corrected outcomes for last week (internal, never published)
+python -m analysis.last_week_results
+
+# Archive calls into a SCRATCH DB (validation; the canonical DB needs --published on master)
+BREAKWATER_PREDICTIONS_DB=output/scratch_predictions.duckdb python -m publishing.archive_calls
+
+# Internal Model B evaluation (retro-scored, never published)
 python -m testing.metric_testing
+python -m testing.calibration
+python -m testing.backtesting
+
+# Rebuild the percentile reference and diff it against the committed artifact (writes nothing)
+python -m scoring.build_model_b_reference --check
+
+# Production Model B vs the frozen refit oracle (research evidence; reads output/model_c_refit/)
+PYTHONPATH=. python -m analysis.model_b_validation.validate
+PYTHONPATH=. python -m pytest analysis/model_b_validation/tests analysis/model_c_refit/tests -q
 
 # Run the whole test suite
 pytest testing
@@ -113,25 +156,27 @@ The project uses a `.venv` (Python 3.14). Activate with `source .venv/bin/activa
 
 ## Pipeline Architecture
 
-`main.py` → `pipeline/pipeline.py` → five sequential stages:
+`main.py` → `pipeline/pipeline.py` (`run_pipeline(incremental=True, ingest=True)`). Each stage is a plain list of steps — one `df = engineer_...(df)` / `generate_...()` call per line:
 
-| Stage | File | What it does |
+| Step | File | What it does |
 |---|---|---|
-| 1 | `pipeline/stage1.py` | Creates/updates DuckDB at `db/breakwater.duckdb`. **Both settings ingest — the flag picks the provider.** `incremental=True` uses the free yfinance fetchers (`incremental_ingest_all_prices_yf`, `incremental_ingest_all_earnings_dates_yf`). `incremental=False` uses the legacy AlphaVantage full-history fetchers, which **require a paid AlphaVantage key**. `main.py` passes `incremental=True`. To re-score without ingesting at all, skip stage 1 entirely (see Commands). |
-| 2 | `pipeline/stage2.py` | Reads `prices`, `earnings`, `stock_data` tables from DB; merges into a single DataFrame. Also dedups earnings and asserts data freshness. |
-| 3 | `pipeline/stage3.py` | Calls ~20 feature-engineering functions in sequence; each appends columns and returns the df. Its `incremental=True` mode (price features only, earnings stats from `config.INCREMENTAL_CACHED_COLS`) is dead code: `run_pipeline` never passes the flag past stage 1. |
-| 4 | `pipeline/stage4.py` | Calls the risk-scoring functions; produces `risk_score` (0–100), `earnings_explosiveness_bucket`, and component scores. Its `incremental=True` mode is likewise never called. |
-| 5a | `pipeline/events.py` (called at the top of stage 5) | Builds the **event frame** — one row per earnings event, every completed event plus one pending row per **active** stock (`stock_data.status = 'active'`, passed in as `active_stocks`; a stock that left the index keeps its history but gets no upcoming call) — attaches verified announcement timing, and asserts completed-event parity against the daily frame. Written to `output/events_df.parquet`. |
-| 5 | `pipeline/stage5.py` | Writes `output/full_df.parquet`, then generates PDF reports, the weekly calendar, charts, the public track record (paused under P4.3 — it returns without writing), the Streamlit export, and a predictions snapshot. |
+| 1 | `pipeline/stage1.py` | Creates/updates DuckDB at `db/breakwater.duckdb`. **Both settings ingest — the flag picks the provider.** `incremental=True` uses the free yfinance fetchers; `incremental=False` uses the legacy AlphaVantage full-history fetchers, which **require a paid AlphaVantage key**. `ingest=False` skips stage 1 entirely. |
+| 2 | `pipeline/stage2.py` | Reads `prices`, `earnings`, `stock_data` (+ IV and EPS snapshots, joined as-of each row's date) into the daily frame. Dedups earnings and asserts data freshness. |
+| 3 | `pipeline/stage3.py` | Daily preparation only: `days_to_earnings`/`is_earnings_day` (what the event frame is built from), `daily_ret`, `vol_10d/30d`, and the LEGACY report-date reactions, kept solely as the anchoring control. No score. |
+| 4 | `pipeline/stage4.py` | Builds the **event frame** (`pipeline/events.build_pipeline_event_frame`) — one row per earnings event, every completed event plus one pending row per **active** stock (`stock_data.status = 'active'`; a stock that left the index keeps its history but gets no upcoming call), with verified announcement timing, the corrected anchored outcomes and `is_extreme_move_anchored` — then runs the **Model B** steps from `scoring/model_b.py` in order: `engineer_score_asof_date`, `engineer_prior_history`, `engineer_risk_score`, `engineer_risk_tier`, `engineer_model_version`. The one production magnitude scorer. `score_events` runs the same steps on a copy for callers outside the pipeline (a test pins the two together). |
+| 5 | `pipeline/stage5.py` | LOCAL outputs only: `output/full_df.parquet`, `output/events_df.parquet`, the PDF reports, the weekly calendar, the dashboard parquets, the weekly chart (after the parquets), last week's results and the public track record (paused — returns without writing). It does NOT archive calls — see "Scoring ≠ publishing ≠ archival". |
 
-The intermediate output between stages is a pandas DataFrame. Stage 3 and 4 functions all follow the same pattern: accept `input_df`, add columns, return it. The copy happens once at each stage's entry (`stage3_df = stage2_df.copy()`), not per function, so a function must never be called on a frame another stage still needs.
+Every forward-looking consumer reads the event frame's pending rows (`pending_events`), never
+`groupby("stock").last()`.
 
 ## Data Storage
 
 - **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price)`, `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage, ingested_at, announce_ts_ny, announce_ts_source, announce_ts_observed_at)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
-- **Parquet** (`output/full_df.parquet`): the fully engineered + scored DataFrame, written at the top of stage 5. This is the source of truth for backtesting, calibration, and reporting.
+- **Parquet** (`output/full_df.parquet`): the daily frame (prices, snapshots, stage 3 columns). Carries NO score; nothing customer-facing reads a score from it.
 - **Parquet** (`output/streamlit_df.parquet`, `output/upcoming_df.parquet`): produced by `streamlit_dash/streamlit_export.py`; consumed by the Streamlit app.
-- **Parquet** (`output/events_df.parquet`, ~15 MB): the event frame. One row per earnings event; `is_pending == 0` is history, `is_pending == 1` is the upcoming call. Every forward-looking consumer reads this, never `groupby("stock").last()`.
+- **Parquet** (`output/events_df.parquet`, ~15 MB): the Model B-scored event frame. One row per earnings event; `is_pending == 0` is history (each scored as of its own cutoff), `is_pending == 1` is the upcoming call. Every forward-looking consumer reads this.
+- **Prediction archive** (`db/predictions.duckdb`, tracked): one row per PUBLISHED call per run day, written only by `publishing/archive_calls.py --published` from the master publication workflow. Only grows; old 0.3.1 rows are evidence and are never rewritten. 0.4.0 rows add `model_b_hist_mean_abs`, `model_b_n_prior` and the cutoff in `score_asof_date`, with the legacy flag columns NULL.
+- **Reference artifact** (`scoring/model_b_reference.json`, tracked): the frozen percentile scale, checksummed.
 - **Stock universe** (`data/stock_list.csv`): the list of stocks to process.
 
 ## Announcement Timing and the Corrected Target (Phase 2)
@@ -148,9 +193,11 @@ incremental value remain **unestablished**, pending the corrected-history rebuil
 and a competitive-baseline validation. Do not restate this finding as a claim about the
 model being right.
 
-**The legacy columns are unchanged and remain the production target.** Phase 2 adds a
-*parallel* corrected target so the two can be compared on equal terms; nothing switches over
-until the whole historical chain is rebuilt and the thresholds re-fit, which is Phase 3.
+**Since 0.4.0 the corrected target is the production target.** Model B reads only
+`abs_reaction_3d_anchored` of completed prior events with `reaction_3d_anchored_status ==
+"available"`. The legacy `reaction_*`/`abs_reaction_3d` columns are still computed but only as
+the control the anchoring is checked against (the AMC bit-identity below); no score, output or
+evaluation reads them, and `testing/test_model_b.py` asserts that statically.
 
 `feature_engineering/announcement_timing.py` owns this. Event-frame columns:
 
@@ -279,112 +326,114 @@ end **2019**.
 
 ## Multi-Week Predictions (`analysis/predictions_range.py`)
 
-Predictions for N whole Mon-Fri work weeks, backward or forward, on the shipped 0.3.1
-model — legacy `abs_reaction_3d` target, `config.py` floors and lift gates. The Phase 2
-`*_anchored` columns are deliberately **not** reported here; no threshold has been re-fit
-against them, and putting them on a predictions sheet invites reading them as model
-output. Writes `output/predictions/predictions_<start>_<end>.{csv,txt}` — its own
-directory, never `get_run_output_dir()`, which wipes today's run folder on first call.
+Model B calls for N whole Mon-Fri work weeks, backward or forward: tier, percentile, raw
+signal, usable priors, cutoff; for history, the corrected 3-session outcome (≥ 5% / ≥ 8%,
+`?` where unresolved — never a miss) and any archived call with its model version. Writes
+`output/predictions/predictions_<start>_<end>.{csv,txt}` — its own directory, never
+`get_run_output_dir()`, which wipes today's run folder on first call. Week arithmetic is
+`utilities/data_utilities.week_block_window()`, asserted identical to the digest's window.
 
-Week arithmetic is `utilities/data_utilities.week_block_window()`, next to
-`work_week_window()`; a forward window is asserted identical to the one the weekly digest
-and the predictions snapshot publish on.
+History rows are fully causal (each event scored from outcomes complete by its own cutoff)
+but still a RETRO-SCORE: nothing was published at the time, and the percentile scale was
+built from 2014–2025 events. Archived calls before 0.4.0 came from the retired legacy model.
 
-The two halves are **not the same kind of number**:
+## Model B (`scoring/model_b.py`) — the production model since 0.4.0
 
-- **History** (`is_pending == 0`) is a **retro-score, not an archive**. Event-level stats
-  are causal (expanding/`shift(1)` over prior events only), but a few carried daily
-  columns — per-date cross-sectional ranks, the global quantile in
-  `score_momentum_fragility` — are computed over the whole frame. Where the real
-  published call exists it appears as `published_tier`; that archive starts 2026-08-31.
-  Phase 1 changed nothing here — `assert_completed_parity` proves completed events are
-  identical to the pre-audit daily pipeline's output.
-- **Upcoming** (`is_pending == 1`) is reported **twice**. `earnings_explosiveness_bucket`
-  / `risk_score` come from the event frame's pending row; the parallel
-  `*_pre_audit` columns reproduce
-  master's `df.sort_values("date").groupby("stock").last()`, whose per-column NaN
-  skipping reaches back to the stock's last **completed** event — the one-event-stale
-  call that was actually published before Phase 1 (§Q4). `pre_audit_differs` marks the
-  disagreements. The NaN skipping is the behaviour being measured; do not "fix" it.
+Selected in `analysis/model_c_refit/` (SPEC.md, RESULTS.md): B beats the shipped 0.3.1 score;
+C (B + `vol_30d`) adds ROC-AUC but not the top-k ranking the product publishes, and the raw
+probability level drifts by year — so ship B and expose a rank, not a probability.
 
-There is no pre-audit column on history rows: reproducing what `.last()` returned in a
-past week needs the daily frame as it stood then, and today's frame would answer with an
-event that has since completed.
-
-## Feature Engineering Conventions
-
-All rolling stats use `.shift(1)` to prevent leakage. Target variable is `abs_reaction_3d` — the absolute 3-day post-earnings price move.
-
-Key engineered columns:
-- `daily_ret`: daily pct change
-- `drift_30d / drift_60d`: rolling mean of daily_ret
-- `vol_10d / vol_30d`: rolling std; `vol_ratio_10_to_30` for stress detection
-- `mom_5d / mom_20d`: rolling sum of daily_ret
-- `days_to_earnings`, `is_earnings_day`, `is_earnings_week`, `is_earnings_window`
-- `reaction_1d / 3d / 5d`: price move 1/3/5 days after earnings
-- `reaction_std`, `reaction_entropy`, `directional_bias`: historical reaction distribution stats
-- `sector_drift_60d`, `sector_vol_10d/30d`, `stock_vs_sector_vol`, `sector_earnings_density`
-
-## Risk Scoring
-
-Stage 4 produces these component scores (all in `scoring/scoring_features.py`):
-- `proximity_score`: how close the stock is to earnings
-- `vol_expansion_score`: vol expansion relative to baseline
-- `momentum_fragility_score`: momentum divergence signal
-- `earnings_explosiveness_score`: historical tail-risk profile score (0–100)
-- `stock_bucket_lift`: P(extreme | stock, bucket) / P(extreme | market), computed causally from prior events only and shrunk toward the market baseline
-- `earnings_explosiveness_bucket`: `Normal` / `Elevated` / `High Alert` — cut from the score, then promoted where `stock_bucket_lift` clears its threshold
-- `earnings_explosiveness_bucket_structural`: the pre-promotion bucket, kept for analysis
-- `risk_score`: currently a pass-through of `earnings_explosiveness_score`
-- `is_high_conviction`: `High Alert` **and** a non-empty `pre_earnings_drift_flag`
-
-**The tier is the product, not the score.** The bucket is decided by two inputs (structural
-score + lift) while `risk_score` carries only the first, so a lift-promoted event can sit in a
-higher tier than a higher-scoring event. That is deliberate: it means "mild structural profile,
-violent personal history." Do not "fix" it by flooring the score to the tier boundary or by
-multiplying the score by the lift — the latter was measured and degrades top-decile lift,
-because lift is ~0.79 rank-correlated with the score and corrupts its ordering when blended. As
-a conditional gate the same signal is additive: it raises capture of ≥8% moves with `High
-Alert` purity roughly unchanged.
-
-> **Figures retracted.** This rationale used to cite "3.70x → 2.98x" and "capture 43.9% →
-> 57.0%, purity 0.409". All four were measured on the legacy target, which mismeasures BMO
-> events, and `audit/PHASE0_AUDIT_REV2.md` §Q3 establishes that the entire feature chain
-> feeding `stock_bucket_lift` was computed from mismeasured prior outcomes. The **direction**
-> of the comparison is the reason for the design and is kept; the **magnitudes are not
-> publishable and are not restated**. The audit has no re-derived analogue of the
-> blend-vs-gate comparison — do not substitute the verified 1.91x or 39.0% for them, which are
-> different quantities. Re-measure under Phase 3 (P3.1–P3.3) before quoting a number here
-> again.
-
-Thresholds are in `config.py`: `LARGE_EARNINGS_REACTION_THRESHOLD = 0.05`,
-`EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08`, bucket cut points
-`BUCKET_ELEVATED_FLOOR = 73` / `BUCKET_HIGH_ALERT_FLOOR = 79`, and promotion gates
-`LIFT_TO_ELEVATED = 1.5` / `LIFT_TO_HIGH_ALERT = 3.0` with `LIFT_PRIOR_STRENGTH = 20`.
+- **Raw signal** `model_b_hist_mean_abs`: mean `abs_reaction_3d_anchored` over the stock's
+  prior events with `reaction_3d_anchored_status == "available"` whose endpoint session
+  (anchor + 3 market sessions on the grid) is **on or before** the event's call cutoff.
+  `model_b_n_prior` counts them. The event's own outcome never enters.
+- **Call cutoff** `score_asof_date`: last market session strictly before the Monday of the
+  report week. A midweek rerun keeps it; an event whose cutoff has not happened yet uses the
+  latest session in the data (never a future one). The pending event needs no timestamp of
+  its own.
+- **Eligibility**: `model_b_n_prior >= 8`, else `risk_tier = "Unscored"`, `risk_score = NaN`
+  (never zero risk; the raw mean is still recorded when any prior exists).
+- **Score** `risk_score`: the Breakwater Risk Percentile — the raw signal's position in the
+  frozen reference distribution `scoring/model_b_reference.json` (2014–2025 production-fit
+  sample, n 20,491, ≥ 8 priors, 1001-point quantile grid, checksummed; regenerate only with
+  `scoring/build_model_b_reference.py`, and regenerating is a model change). A presentation
+  scale only: no future data enters any raw signal. Display with `display_score()` (floored,
+  so the number shown always sits in its tier's band).
+- **Ordering**: every list (PDF order, calendar, dashboard, digest, chart table, maintainer
+  sheets) goes through `sort_by_risk()`: scored before Unscored, then the RAW
+  `model_b_hist_mean_abs` descending, then ticker. Never sort on `risk_score` — it clips to
+  0/100 outside the reference range, where distinct raw signals would tie. (The refit's
+  pooled OOF top-10 capture 0.2506 ranks by nine separately fitted yearly models; the single
+  production map gives 0.2472 pooled and the identical 0.254 within-week, which is what the
+  product publishes.)
+- **Tiers**: High Alert ≥ 90, Elevated 80–90, Normal < 80, Unscored. Fixed percentile bands,
+  not fitted on outcomes — do not move them because of what a backtest shows. Nothing else
+  (drift, surprise, lift, volatility, IV) alters a score or tier.
+- **Scope**: Model B is primarily a cross-sectional structural earnings-move-risk model. It
+  distinguishes stocks that historically have larger corrected earnings reactions; it has
+  little demonstrated ability to identify which quarter of the same stock will be unusually
+  large (`testing/metric_testing.py`, between- vs within-stock decomposition). Not a defect —
+  but never describe it as a quarter-timing model. Customer language: "structural
+  earnings-move risk for upcoming earnings events". Keep the decomposition figures internal.
+- **Unscored ≠ low risk.** `n_prior < 8` → Unscored stays the rule. It means insufficient
+  corrected history, and short-history events are not calmer. Every surface labels it
+  (`UNSCORED_NOTE` in `report/recommendations_builder.py`): sorted last for usability, but
+  marked "insufficient history — not low risk"; the chart and digest name the Unscored
+  tickers they cannot rank instead of dropping them silently.
+- **Equivalence**: production reproduces the frozen refit's B feature exactly on all 46,200
+  events (identities, cutoffs, n_prior, signal bit-identical; reference sample = the refit's
+  candidate-fit sample) — `analysis/model_b_validation/`.
+- **Public dashboard**: scores appear only on upcoming calls. Past events show their corrected
+  reaction alone — never a reconstructed score/tier beside an outcome (track record paused).
+  Retro-scored history is internal: `analysis/predictions_range.py`.
+- **Options/IV** (implied move, ATM IV, snapshot date) is market context on the PDF, digest and
+  dashboard only. The old IV-vs-historical-p75 ratio was removed (it used the legacy target).
+- Customer wording lives in one place, `report/recommendations_builder.py`. Never write
+  "X% chance", "probability of an 8% move", "Nx market", "expected to move" or anything
+  directional.
 
 ## Key Configuration (`config.py`)
 
-- `DB_PATH`: path to DuckDB file
-- `STOCKS_START_DATE / STOCKS_END_DATE`: date range for price data
-- `DEFAULT_REACTION_WINDOW`: `"reaction_3d"` — the primary reaction metric
+- `MODEL_VERSION = "0.4.0"`, with the version history; `TRACK_RECORD_MODEL_VERSIONS = ("0.4.0",)`.
+- `DB_PATH`; `PREDICTIONS_DB_PATH` (overridable with `BREAKWATER_PREDICTIONS_DB`).
+- `EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08`: the Model B validation target.
 - `PRICES_PROVIDER`: `"ALPHAVANTAGE"` — only used by the legacy `incremental=False` ingestion path, which needs a paid key. The yfinance path (`incremental=True`) ignores it and is the one in routine use; its knobs are `YFINANCE_MAX_WORKERS` and the jitter settings.
-- `INCREMENTAL_CACHED_COLS`: expanding earnings stats the (currently uncalled) incremental scoring path reads from the previous `full_df.parquet`. If that path is ever revived: anything aggregating over a stock's earnings history must be listed, or it will be silently missing — the drift flag broke exactly this way.
 
-## Backtesting
+## Evaluation
 
-`testing/backtesting.py` — standalone module, reads `output/full_df.parquet` directly. The `backtesting_suite()` function runs calibration, lift, hit rates, and year-by-year OOS checks. `testing/testing_functions.py` contains all the individual test helpers.
+- `testing/calibration.py` (`python -m testing.calibration`): six calibration tables for the
+  Model B tiers — hit rates at ≥1/3/5/8/10/15% with Wilson CIs and an Unscored coverage row,
+  capture, fixed percentile bands, High Alert by year, every tier by year, score/tier
+  consistency — pooled and BMO/AMC; CSVs to `testing/testing_results/` (gitignored).
+- `testing/backtesting.py` (`python -m testing.backtesting`): train-year (2013–2016) top-10%
+  threshold held through 2017–2025, walk-forward yearly report, High Alert + overlay test.
+  Scored events only.
 
-`testing/calibration.py` — the acceptance gate for any scoring change. Produces tier hit rates
-with 95% Wilson CIs, capture rate, percentile bands, per-tier year-by-year stability, and a
-score/bucket consistency check. Use it to **compare two variants on equal terms**, not to certify
-an absolute hit rate: the 73/79 cut points were themselves selected on this same window, so
-absolute numbers are optimistically biased.
+Maintainer evaluation tools, both on the event frame with the corrected target (unresolved
+events dropped, never misses), internal only — retro-scored, not a track record:
+- `testing/metric_testing.py` (`python -m testing.metric_testing [--section …] [--feature col]`):
+  tier profile with Wilson CIs, year-by-year tier stability, walk-forward tier-rate
+  calibration (ECE), rank correlation by year, between- vs within-stock decomposition,
+  percentile-decile calibration, ROC/PR-AUC and pooled + within-week top-k, feature vs
+  target; every pooled table split by BMO/AMC.
+- `testing/testing_functions.py`: the evaluation helpers (quintile/decile diagnostics, regime
+  tests with (column, quantile) conditions, a vol-only competitive baseline, precision/recall
+  with a shuffled-label null, train/test and walk-forward checks). Defaults: score
+  `model_b_hist_mean_abs`, train 2013–2016, test 2017+. Pass any event-frame column to test a
+  candidate feature against or on top of Model B.
+`testing/test_evaluation_tools.py` runs every helper and every metrics section.
 
-The train/test split convention used in `testing/metric_testing.py`: pre-2015 = train, post-2015 = OOS test.
+Kept but not on the pipeline path (restored 2026-10-04 at Michael's request):
+`scoring/scoring_features.py` (the retired 0.3.1 scorer, now self-contained: the event-level
+cores from the deleted `feature_engineering/event_features.py` and the legacy 73/79 and lift
+constants live inside it; most of its inputs are no longer produced by stage 3),
+`feature_engineering/pre_earnings_sector_features.py` (sector drift/vol features, not called
+by stage 3) and `analysis/chart_results.py` (the social results chart, not called while the
+track record is paused). None of them may feed a production score or tier;
+`testing/test_model_b.py` checks no pipeline or output module loads them.
 
-**This split does not license an out-of-sample performance claim.** It runs on the legacy
-`abs_reaction_3d` target for all years, which is wrong for BMO events. Verified announcement
-timestamps — the only basis on which the target is known to be correctly anchored — now
-cover ~90% of each year from 2013 (Benzinga seed), but nothing in this module uses the
-anchored target (audit §Q3, "Coverage constraint"). The retired "consistent 2015–2025 OOS" line in
-`readme.md` came from reading this convention as a published record. Do not do that again.
+Model B's evidence is `analysis/model_c_refit/RESULTS.md` (selection) and
+`analysis/model_b_validation/` (production equivalence, regression, percentile-band
+behaviour). Prospective evaluation is the archive: first 0.4.0 calls in
+`predictions_track_record` against `abs_reaction_3d_anchored >= 0.08`
+(`analysis/last_week_results.py`, internal).

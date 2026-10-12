@@ -14,7 +14,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 PRODUCTION_DIRS = ["pipeline", "feature_engineering", "scoring", "ingestion", "utilities",
-                   "analysis", "streamlit_dash", "report", "cron"]
+                   "analysis", "streamlit_dash", "report", "cron", "publishing"]
 
 
 def _python_files(*dirs):

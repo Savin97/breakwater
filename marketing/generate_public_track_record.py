@@ -2,33 +2,30 @@
 Generate the delayed public track record used by the Harbor landing page.
 
 ================================================================================
-PAUSED — audit remediation item P4.3. THIS GENERATOR REFUSES TO RUN.
+PAUSED — THIS GENERATOR REFUSES TO RUN.
 ================================================================================
-Every score, tier and lift it would publish was produced by the pre-audit feature
-chain, which measured before-open (BMO) earnings reactions on the wrong sessions and
-carried each call's tier from the stock's PREVIOUS completed event. A public track
-record built from those calls would read as validation while measuring nothing.
-See `audit/PHASE0_AUDIT_REV2.md` — Phase 4 (P4.1 retire published lift figures,
-P4.2 void the archived pre-audit calls, P4.3 this pause).
+Model B (MODEL_VERSION 0.4.0) replaced the legacy 0.3.1 scorer on 2026-10-04. A public
+track record must be PROSPECTIVE evidence: calls archived before the event, by the model
+being advertised, scored afterwards against the corrected target. None exists yet.
+Historical Model B backtest figures are research (analysis/model_c_refit/RESULTS.md) and
+must never be presented as live performance.
 
-HOW TO UN-PAUSE — all of these must be true FIRST:
-  1. P3.1 — the whole feature chain rebuilt on verified announcement timestamps.
-  2. P3.2 — thresholds re-fit (73/79, LIFT_TO_*, LIFT_PRIOR_STRENGTH, the 0.12
-     ceiling, the 0.85/0.15 weights). Nothing about the corrected model is
-     claimable before this.
-  3. P3.3 — calibration stratified by announcement window, stratified lift as the
-     headline number. This is the item the pause is formally blocked on.
-  4. The source this publishes from contains post-rebuild calls only. Calls voided
-     under P4.2 (`model_version = "0.3.1-preaudit"`, `void_for_track_record = TRUE`
-     in db/predictions.duckdb) must stay excluded — see `drop_voided()` below and
-     the `predictions_track_record` view in utilities/db_utilities.py.
-Then, and only then, set TRACK_RECORD_PAUSED = False below and update this header.
+What this publishes when un-paused — and nothing else:
+  * calls from `predictions_track_record` in db/predictions.duckdb: the FIRST archived
+    call per event by a version in config.TRACK_RECORD_MODEL_VERSIONS (0.4.0), scored
+    from data before the event. Pre-0.4 calls (0.3.1, 0.3.1-preaudit — audit P4.2) are
+    excluded by that view and again by `drop_voided()`.
+  * each call's outcome on the validation target: `abs_reaction_3d_anchored >= 0.08`
+    from the event frame. An event without a verified announcement time has no
+    corrected outcome and is left out, never counted as a miss.
 
-The JSON remains compatible with the original recent_calls.json shape:
-{
-  "generated": "YYYY-MM-DD",
-  "calls": [...]
-}
+HOW TO UN-PAUSE — all must be true first:
+  1. Enough prospective 0.4.0 calls have resolved to say something (decide the number
+     before looking at the results).
+  2. The figures to publish have been reviewed against audit/PHASE0_AUDIT_REV2.md's
+     rules (stratified by announcement window; no crude lift).
+  3. Michael has decided to publish.
+Then set TRACK_RECORD_PAUSED = False below and update this header.
 """
 from __future__ import annotations
 
@@ -39,50 +36,42 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pandas as pd
 
+import config
+from feature_engineering.announcement_timing import TARGET_AVAILABLE
 from utilities.output_utilities import get_run_output_dir
 
-
-DEFAULT_PARQUET = Path("output/full_df.parquet")
-PUBLIC_BUCKETS = {"High Alert", "Elevated", "Normal"}
-HIGH_ALERT_BUCKETS = {"High Alert"}
-EXTREME_MOVE_PCT = 8.0
+EVENTS_PARQUET = Path("output/events_df.parquet")
+PUBLIC_TIERS = {"High Alert", "Elevated", "Normal"}
 
 # ---------------------------------------------------------------------------
-# P4.3 pause. Flip to False ONLY when the header checklist above is satisfied.
+# Pause. Flip to False ONLY when the header checklist above is satisfied.
 # ---------------------------------------------------------------------------
 TRACK_RECORD_PAUSED = True
 
-# The deliberate, explicit override. An env var alone is not enough: it must carry
-# this exact token, so nothing can re-enable publication by setting a plausible-looking
-# flag, and nobody can claim it happened by accident. Using it publishes numbers the
-# audit has declared void.
-PAUSE_OVERRIDE_ENV = "BREAKWATER_PUBLISH_VOID_TRACK_RECORD"
-PAUSE_OVERRIDE_TOKEN = "yes-publish-preaudit-numbers-i-know-they-are-void"
+# The deliberate, explicit override. An env var alone is not enough: it must carry this
+# exact token, so nothing can re-enable publication by setting a plausible-looking flag.
+PAUSE_OVERRIDE_ENV = "BREAKWATER_PUBLISH_TRACK_RECORD"
+PAUSE_OVERRIDE_TOKEN = "yes-publish-unreviewed-0.4.0-calls"
 
 PAUSE_MESSAGE = (
     "\n"
     "==============================================================================\n"
-    " PUBLIC TRACK RECORD GENERATOR IS PAUSED (audit item P4.3) — nothing written.\n"
+    " PUBLIC TRACK RECORD GENERATOR IS PAUSED — nothing written.\n"
     "==============================================================================\n"
-    " Reason : its inputs come from the pre-audit feature chain. Before-open (BMO)\n"
-    "          earnings reactions were measured on the wrong sessions, so every\n"
-    "          score, tier and lift downstream of them is invalid for publication.\n"
-    " Blocked: on P3.3 (calibration stratified by announcement window), which in\n"
-    "          turn needs P3.1 (chain rebuilt) and P3.2 (thresholds re-fit).\n"
-    " Read   : audit/PHASE0_AUDIT_REV2.md, Phase 3 and Phase 4.\n"
-    " Unpause: set TRACK_RECORD_PAUSED = False in\n"
-    "          marketing/generate_public_track_record.py after the header\n"
-    "          checklist in that file is genuinely satisfied.\n"
-    f" Override (publishes void numbers, deliberate only): {PAUSE_OVERRIDE_ENV}"
-    f"={PAUSE_OVERRIDE_TOKEN}\n"
+    " Reason : Model B (0.4.0) has no prospective record yet. Pre-0.4 calls are void\n"
+    "          for the 0.4.0 record, and historical backtests are not live calls.\n"
+    " Unpause: see the checklist at the top of\n"
+    "          marketing/generate_public_track_record.py.\n"
+    f" Override (deliberate only): {PAUSE_OVERRIDE_ENV}={PAUSE_OVERRIDE_TOKEN}\n"
     "=============================================================================="
 )
 
 
 class TrackRecordPaused(RuntimeError):
-    """Raised when something asks for a public track record while P4.3 is in force."""
+    """Raised when something asks for a public track record while it is paused."""
 
 
 def pause_reason() -> str | None:
@@ -94,184 +83,122 @@ def pause_reason() -> str | None:
     if not TRACK_RECORD_PAUSED:
         return None
     if os.environ.get(PAUSE_OVERRIDE_ENV, "") == PAUSE_OVERRIDE_TOKEN:
-        print(
-            f"WARNING: {PAUSE_OVERRIDE_ENV} is set — generating a track record from "
-            "pre-audit numbers that audit/PHASE0_AUDIT_REV2.md declares void (P4.1).",
-            file=sys.stderr,
-        )
+        print(f"WARNING: {PAUSE_OVERRIDE_ENV} is set — generating an unreviewed track "
+              "record.", file=sys.stderr)
         return None
     return PAUSE_MESSAGE
 
 
 # ---------------------------------------------------------------------------
-# P4.2 — calls voided for track-record purposes are filtered out here, by flag,
-# so publication never depends on a human remembering which rows are poisoned.
+# Voided and pre-0.4 calls are filtered out here, by flag and by version, so
+# publication never depends on a human remembering which rows are excluded.
 # ---------------------------------------------------------------------------
 VOID_FLAG_COLUMN = "void_for_track_record"
-VOIDED_MODEL_VERSIONS = frozenset({"0.3.1-preaudit"})
 
 
 def drop_voided(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove every call voided for track-record purposes (audit P4.2).
-
-    Two independent markings, either of which is sufficient, because different inputs
-    carry different columns: the boolean `void_for_track_record` flag and the
-    `model_version` stamp. Voided calls are preserved in db/predictions.duckdb as
-    history — void means "never counts towards a published record", not "deleted".
-    Frames carrying neither column pass through untouched.
-    """
-    keep = pd.Series(True, index=df.index)
+    """Remove every call voided for track-record purposes (audit P4.2) and every call by
+    a model version outside config.TRACK_RECORD_MODEL_VERSIONS. Voided calls stay in
+    db/predictions.duckdb as history — excluded means "never counts toward a published
+    record", not "deleted". A frame without `model_version` is refused: an unlabelled
+    call cannot be shown to come from the advertised model."""
+    if "model_version" not in df.columns:
+        raise ValueError("calls carry no model_version — cannot tell which model made them")
+    keep = df["model_version"].astype("string").isin(config.TRACK_RECORD_MODEL_VERSIONS).fillna(False)
     if VOID_FLAG_COLUMN in df.columns:
         keep &= ~df[VOID_FLAG_COLUMN].fillna(False).astype(bool)
-    if "model_version" in df.columns:
-        keep &= ~df["model_version"].astype("string").isin(VOIDED_MODEL_VERSIONS).fillna(False)
     dropped = int((~keep).sum())
     if dropped:
-        print(f"Excluded {dropped} call(s) voided for track record (audit P4.2).")
+        print(f"Excluded {dropped} call(s): voided or not a track-record model version.")
     return df[keep]
 
 
-def _tier_for(row: pd.Series) -> tuple[str | None, str | None]:
-    if bool(row.get("is_high_conviction", False)):
-        return "hc", "HIGH CONVICTION ★"
-    if row["earnings_explosiveness_bucket"] in HIGH_ALERT_BUCKETS:
-        return "high", "HIGH ALERT"
-    if row["earnings_explosiveness_bucket"] == "Elevated":
-        return "mid", "ELEVATED"
-    if row["earnings_explosiveness_bucket"] == "Normal":
-        return "low", "NORMAL"
-    return None, None
-
-
-def _safe_float(value: Any) -> float | None:
-    if pd.isna(value):
-        return None
-    return float(value)
+def load_archived_calls(db_path: str | None = None) -> pd.DataFrame:
+    con = duckdb.connect(db_path or config.PREDICTIONS_DB_PATH, read_only=True)
+    try:
+        return con.execute("SELECT * FROM predictions_track_record").df()
+    finally:
+        con.close()
 
 
 def build_public_track_record(
-    df: pd.DataFrame,
+    calls: pd.DataFrame,
+    events_df: pd.DataFrame,
     *,
     weeks: int = 6,
     generated_at: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
+    """Archived 0.4.0 calls for events in the last `weeks`, each with its corrected
+    outcome. Calls without a corrected outcome are left out."""
     reason = pause_reason()
     if reason is not None:
         raise TrackRecordPaused(reason)
 
     generated_at = generated_at or pd.Timestamp.today()
-    required = {
-        "stock",
-        "earnings_date",
-        "earnings_explosiveness_bucket",
-        "reaction_1d",
-        "reaction_3d",
-        "is_earnings_day",
-    }
-    missing = sorted(required - set(df.columns))
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
-    cols = [
-        "stock",
-        "earnings_date",
-        "earnings_explosiveness_bucket",
-        "reaction_1d",
-        "reaction_3d",
-        "is_earnings_day",
-    ]
-    for optional in [
-        "is_high_conviction",
-        "earnings_explosiveness_score",
-        "peer_percentile",
-    ]:
-        if optional in df.columns:
-            cols.append(optional)
-
-    df = drop_voided(df)
-    earnings = df[df["is_earnings_day"] == 1][cols].copy()
-    earnings["earnings_date"] = pd.to_datetime(earnings["earnings_date"], errors="coerce")
-    earnings = earnings.dropna(subset=["earnings_date"])
-
+    calls = drop_voided(calls).copy()
+    calls["earnings_date"] = pd.to_datetime(calls["earnings_date"])
     cutoff = generated_at.normalize() - pd.Timedelta(weeks=weeks)
-    earnings = earnings[earnings["earnings_date"] >= cutoff]
-    earnings = earnings[earnings["earnings_explosiveness_bucket"].isin(PUBLIC_BUCKETS)]
+    calls = calls[(calls["earnings_date"] >= cutoff)
+                  & (calls["earnings_date"] < generated_at.normalize())
+                  & calls["tier"].isin(PUBLIC_TIERS)]
 
-    earnings["best_reaction"] = earnings["reaction_3d"].fillna(earnings["reaction_1d"])
-    earnings = earnings.dropna(subset=["best_reaction"])
-    earnings["week_start"] = (
-        earnings["earnings_date"]
-        - pd.to_timedelta(earnings["earnings_date"].dt.dayofweek, unit="D")
-    )
+    ev = events_df[~events_df["is_pending"]][[
+        "stock", "earnings_date", "reaction_3d_anchored", "reaction_3d_anchored_status"]].copy()
+    ev["earnings_date"] = pd.to_datetime(ev["earnings_date"])
+    rows = calls.merge(ev, on=["stock", "earnings_date"], how="inner")
+    rows = rows[rows["reaction_3d_anchored_status"].eq(TARGET_AVAILABLE)]
 
+    threshold_pct = config.EXTREME_EARNINGS_REACTION_THRESHOLD * 100
     records: list[dict[str, Any]] = []
-    for _, row in earnings.iterrows():
-        tier_class, tier_label = _tier_for(row)
-        if tier_class is None:
-            continue
-
-        move_pct = float(row["best_reaction"]) * 100
-        record: dict[str, Any] = {
-            "earnings_date": row["earnings_date"].strftime("%Y-%m-%d"),
-            "week_start": row["week_start"].strftime("%Y-%m-%d"),
-            "ticker": row["stock"],
-            "tier_class": tier_class,
-            "tier_label": tier_label,
+    for _, r in rows.iterrows():
+        move_pct = float(r["reaction_3d_anchored"]) * 100
+        week_start = r["earnings_date"] - pd.Timedelta(days=r["earnings_date"].dayofweek)
+        records.append({
+            "earnings_date": r["earnings_date"].strftime("%Y-%m-%d"),
+            "week_start": week_start.strftime("%Y-%m-%d"),
+            "ticker": r["stock"],
+            "tier_label": str(r["tier"]).upper(),
+            "risk_percentile": None if pd.isna(r["risk_score"]) else float(r["risk_score"]),
+            "call_asof": str(r["prediction_asof_date"])[:10],
+            "model_version": str(r["model_version"]),
             "move_pct": move_pct,
             "abs_move_pct": abs(move_pct),
-            "is_extreme_move": abs(move_pct) >= EXTREME_MOVE_PCT,
-        }
-        if "earnings_explosiveness_score" in row:
-            record["risk_score"] = _safe_float(row["earnings_explosiveness_score"])
-        if "peer_percentile" in row:
-            record["peer_percentile"] = _safe_float(row["peer_percentile"])
-        records.append(record)
-
-    records.sort(key=lambda x: (x["earnings_date"], -abs(x["move_pct"])), reverse=True)
-    high_alert = [r for r in records if r["tier_class"] in {"hc", "high"}]
-
+            "is_extreme_move": abs(move_pct) >= threshold_pct,
+        })
+    records.sort(key=lambda x: (x["earnings_date"], -x["abs_move_pct"]), reverse=True)
     return {
         "generated": generated_at.strftime("%Y-%m-%d"),
-        "description": "Delayed public record of completed Breakwater earnings risk calls.",
-        "delay_policy": "Completed earnings events only; timely upcoming risk flags are reserved for the digest and dashboard.",
-        "extreme_move_threshold_pct": EXTREME_MOVE_PCT,
-        "summary": {
-            "weeks": weeks,
-            "total_calls": len(records),
-            "high_alert_calls": len(high_alert),
-            "high_alert_extreme_moves": sum(1 for r in high_alert if r["is_extreme_move"]),
-        },
+        "description": "Delayed public record of completed Breakwater earnings risk calls, "
+                       "as archived before each event.",
+        "delay_policy": "Completed earnings events only; upcoming calls are reserved for the "
+                        "digest and dashboard.",
+        "extreme_move_threshold_pct": threshold_pct,
         "calls": records,
     }
 
 
 def generate_public_track_record(
-    parquet_path: Path = DEFAULT_PARQUET,
     output_path: Path | None = None,
     *,
     weeks: int = 6,
-    df: pd.DataFrame | None = None,
+    events_df: pd.DataFrame | None = None,
+    calls: pd.DataFrame | None = None,
 ) -> Path | None:
-    """output_path defaults to this run's timestamped output subfolder.
-
-    Returns None without writing anything while the P4.3 pause is in force. It prints
-    and returns rather than raising because pipeline/stage5.py calls this in the middle
-    of a run that also produces the PDFs, the calendar and the dashboard parquets — the
-    pause must stop publication, not the rest of the product.
-    """
+    """Returns None without writing anything while the pause is in force. It prints and
+    returns rather than raising because pipeline/stage5.py calls it in the middle of a
+    run that also produces the PDFs, the calendar and the dashboard parquets — the pause
+    must stop publication, not the rest of the product."""
     reason = pause_reason()
     if reason is not None:
         print(reason, file=sys.stderr)
         return None
 
-    if output_path is None:
-        output_path = Path(get_run_output_dir()) / "recent_calls.json"
-
-    if df is None:
-        if not parquet_path.exists():
-            raise FileNotFoundError(f"{parquet_path} not found")
-        df = pd.read_parquet(parquet_path)
-    data = build_public_track_record(df, weeks=weeks)
+    output_path = output_path or Path(get_run_output_dir()) / "recent_calls.json"
+    if events_df is None:
+        events_df = pd.read_parquet(EVENTS_PARQUET)
+    if calls is None:
+        calls = load_archived_calls()
+    data = build_public_track_record(calls, events_df, weeks=weeks)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(data, indent=2))
     print(f"Written {len(data['calls'])} calls -> {output_path}")
@@ -283,15 +210,12 @@ def main(argv: list[str] | None = None) -> int:
     if reason is not None:
         print(reason, file=sys.stderr)
         return 2
-
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--parquet", type=Path, default=DEFAULT_PARQUET)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--weeks", type=int, default=6)
     args = parser.parse_args(argv)
-
     try:
-        generate_public_track_record(args.parquet, args.output, weeks=args.weeks)
+        generate_public_track_record(args.output, weeks=args.weeks)
     except Exception as exc:
         print(str(exc), file=sys.stderr)
         return 1

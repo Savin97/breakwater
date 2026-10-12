@@ -1,21 +1,163 @@
 # scoring/scoring_features.py
+"""
+LEGACY 0.3.1 SCORER — RETIRED IN 0.4.0, KEPT AS A LIBRARY, OFF THE PIPELINE PATH.
+
+Production scoring is Model B (scoring/model_b.py, pipeline/stage4.py). Nothing on the
+pipeline path, no report, calendar, dashboard, digest, prediction snapshot or track record
+may import this module; testing/test_model_b.py enforces that statically.
+
+It computed the structural explosiveness score (rolling p75 / entropy, 73/79 cuts), lift-
+based tier promotion, High Conviction and the drift/surprise flags, all on the LEGACY
+abs_reaction_3d target, which mismeasures before-open reporters
+(audit/PHASE0_AUDIT_REV2.md §Q1-Q3). Nothing it outputs is valid as a customer figure.
+
+Self-contained since 0.4.0: the event-level cores it used to import from
+feature_engineering/event_features.py (deleted) and its calibration constants (removed from
+config.py) live below. Its inputs (abs_reaction_p75*, reaction_entropy, surprise_*,
+pre_earnings_drift_z, drift_30d, sector_*, is_extreme_reaction, ...) are no longer produced
+by stage 3; a caller has to build them first.
+"""
 import numpy as np, pandas as pd
-from config import (
-    LARGE_EARNINGS_REACTION_THRESHOLD,
-    EXTREME_EARNINGS_REACTION_THRESHOLD,
-    BUCKET_ELEVATED_FLOOR,
-    BUCKET_HIGH_ALERT_FLOOR,
-    LIFT_PRIOR_STRENGTH,
-    LIFT_TO_ELEVATED,
-    LIFT_TO_HIGH_ALERT)
-from feature_engineering.event_features import (
-    event_earnings_explosiveness,
-    event_explosiveness_score,
-    event_stock_bucket_lift_values,
-    event_lift_adjusted_bucket,
-    event_high_conviction,
-    surprise_momentum_flag_values,
-    pre_earnings_drift_flag_values)
+from config import EXTREME_EARNINGS_REACTION_THRESHOLD
+
+# ---------------------------------------------------------------------------
+# Legacy 0.3.1 calibration, formerly in config.py. Chosen on the legacy target; the
+# performance figures once quoted for them are RETRACTED (audit §Q2-Q3).
+# ---------------------------------------------------------------------------
+LARGE_EARNINGS_REACTION_THRESHOLD = 0.05  # legacy "large" move on abs_reaction_3d
+BUCKET_ELEVATED_FLOOR   = 73              # structural score cut points (and score floors)
+BUCKET_HIGH_ALERT_FLOOR = 79
+LIFT_PRIOR_STRENGTH     = 20              # shrinks thin per-stock samples toward the market
+LIFT_TO_ELEVATED        = 1.5             # lift needed to promote Normal -> Elevated
+LIFT_TO_HIGH_ALERT      = 3.0             # lift needed to promote to High Alert
+
+
+# ---------------------------------------------------------------------------
+# Event-level cores, formerly feature_engineering/event_features.py (verbatim).
+# ---------------------------------------------------------------------------
+
+def event_earnings_explosiveness(events, epsilon=1e-6):
+    """Vol-normalised views of the historical reaction distribution. Retained for
+    analysis; neither term feeds earnings_explosiveness_score."""
+    events["earnings_explosiveness_z"] = (
+        events["abs_reaction_median"] / np.maximum(events["vol_30d"], epsilon)
+    )
+    events["earnings_tail_z"] = (
+        events["abs_reaction_p75"] / np.maximum(events["vol_30d"], epsilon)
+    )
+    return events
+
+
+def event_explosiveness_score(events):
+    """Structural score and its pre-promotion tier.
+
+    Weights (0.85/0.15), the 0.12 p75 ceiling and the 73/79 cut points are model
+    calibration and are NOT touched in Phase 1. The ungrouped `.ffill()` on
+    reaction_entropy is a known defect (audit rev-2 §1f) deliberately preserved here so
+    this refactor changes nothing; it is Phase 2+ work.
+
+    That ffill is order-dependent, and pending rows sit between one stock's last event
+    and the next stock's first. Letting them CONTRIBUTE to the chain would change 385
+    completed events' scores. A pending row therefore reads the chain but does not
+    update it, which reproduces the daily frame's chain exactly (the daily frame has no
+    pending rows) while still giving a pending event its own entropy when it has one.
+    """
+    p75 = events["abs_reaction_p75_rolling"].fillna(events["abs_reaction_p75"])
+    e3 = (p75 / 0.12).clip(0, 1)           # raw magnitude: 12% ceiling
+    entropy_col = events["reaction_entropy"]
+    if "is_pending" in events.columns:
+        chain = entropy_col.mask(events["is_pending"]).ffill()
+        filled = entropy_col.fillna(chain)
+    else:
+        filled = entropy_col.ffill()
+    e4 = np.clip(filled.fillna(0), 0, 1)
+    events["earnings_explosiveness_score"] = 100 * np.clip(0.85 * e3 + 0.15 * e4, 0, 1)
+
+    events["earnings_explosiveness_bucket"] = pd.cut(
+        events["earnings_explosiveness_score"],
+        bins=[-np.inf, BUCKET_ELEVATED_FLOOR, BUCKET_HIGH_ALERT_FLOOR, np.inf],
+        labels=["Normal", "Elevated", "High Alert"],
+    )
+    return events
+
+
+def event_stock_bucket_lift_values(events) -> pd.Series:
+    """P(extreme | stock, bucket) / P(extreme | market), both as-of each event.
+
+    Returns a Series indexed like `events` so either caller can assign it.
+
+    Ordering: sorted by date, with pending rows last within a date when the column is
+    present. A pending row contributes NaN to `is_extreme_reaction`, which
+    expanding().mean() and expanding().sum() both skip, so it can never move the market
+    baseline or another stock's numerator.
+    """
+    sort_cols = ["date", "is_pending"] if "is_pending" in events.columns else ["date"]
+    ev = events.sort_values(sort_cols, kind="mergesort")
+
+    # Market baseline as of each event — expanding over ALL prior events, every stock.
+    global_prior = ev["is_extreme_reaction"].expanding().mean().shift(1)
+
+    # This stock's prior record within the same bucket.
+    grp = ev.groupby(["stock", "earnings_explosiveness_bucket"], observed=True)["is_extreme_reaction"]
+    n_prior = grp.cumcount()
+    sum_prior = grp.transform(lambda s: s.shift(1).expanding().sum())
+
+    shrunk = (sum_prior + LIFT_PRIOR_STRENGTH * global_prior) / (n_prior + LIFT_PRIOR_STRENGTH)
+    return (shrunk / global_prior).replace([np.inf, -np.inf], np.nan).fillna(1.0)
+
+
+def event_lift_adjusted_bucket(events):
+    """Promote a tier where the stock's own record beats its structural score.
+    A RECLASSIFICATION, not a rescaling — see scoring/scoring_features.py."""
+    bucket = events["earnings_explosiveness_bucket"].astype(object)
+    lift = events["stock_bucket_lift"]
+
+    events["earnings_explosiveness_bucket_structural"] = bucket
+
+    to_high_alert = bucket.isin(["Normal", "Elevated"]) & (lift >= LIFT_TO_HIGH_ALERT)
+    to_elevated = (bucket == "Normal") & (lift >= LIFT_TO_ELEVATED) & ~to_high_alert
+
+    adjusted = bucket.copy()
+    adjusted[to_elevated] = "Elevated"
+    adjusted[to_high_alert] = "High Alert"
+
+    events["earnings_explosiveness_bucket"] = pd.Categorical(
+        adjusted, categories=["Normal", "Elevated", "High Alert"], ordered=True
+    )
+    return events
+
+
+def event_high_conviction(events, bucket):
+    """High Alert AND a non-empty pre-earnings drift flag."""
+    events["is_high_conviction"] = (
+        (bucket == "High Alert")
+        & events["pre_earnings_drift_flag"].notna()
+        & (events["pre_earnings_drift_flag"] != "")
+    )
+    return events
+
+
+def surprise_momentum_flag_values(streak, mean5, std5, base_mask) -> pd.Series:
+    """Categorical surprise-momentum flag. Evaluated in priority order (later wins)."""
+    flag = pd.Series("", index=streak.index)
+    flag.loc[base_mask & (std5 > 0.20)] = "Erratic"
+    flag.loc[base_mask & (streak <= -3)] = "Miss Streak"
+    flag.loc[base_mask & (streak >= 4) & (mean5 > 0.05)] = "Beat Streak"
+    flag.loc[base_mask & (streak >= 6)] = "Extended Beat Streak"
+    return flag
+
+
+def pre_earnings_drift_flag_values(z, base_mask) -> pd.Series:
+    """Categorical flag from the pre-earnings drift z-score."""
+    flag = pd.Series("", index=z.index)
+    flag.loc[base_mask & (z >= 1.5)] = "Extended"
+    flag.loc[base_mask & (z <= -1.5)] = "Compressed"
+    return flag
+
+
+# ---------------------------------------------------------------------------
+# Daily-frame wrappers (unchanged from 0.3.1)
+# ---------------------------------------------------------------------------
 
 def engineer_large_reaction(input_df):
     """
@@ -167,7 +309,7 @@ def engineer_earnings_explosiveness_score(input_df):
         e2 = (p75 / vol / 7).clip(0, 1)                                  # rolling tail z, 7sigma ceiling                                                                       
     """
     # Cut points 73/79 and the 0.85/0.15 weights are model calibration; see
-    # feature_engineering.event_features.event_explosiveness_score.
+    # event_explosiveness_score above.
     return event_explosiveness_score(input_df)
 
 

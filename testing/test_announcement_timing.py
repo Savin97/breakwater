@@ -4,12 +4,14 @@ Phase 2 tests — verified announcement timing and the parallel anchored targets
 Two things must hold at once:
 
   * the LEGACY target is untouched — `reaction_{1,3,5}d` and `abs_reaction_3d` are the
-    control this phase is measured against, and every Phase 1 parity guarantee survives;
+    control the corrected target is checked against (they feed nothing else since the
+    legacy scorer was retired in 0.4.0);
   * the corrected target is anchored to the last close before the announcement, using an
     OBSERVED timestamp and never a price-behavior inference, with everything that cannot
     be anchored explicitly unresolved and counted.
 
-The numbered tests map one-to-one onto the ten required invariants.
+The numbered tests map onto the Phase 2 invariants; invariant 10 (legacy score parity)
+was retired with the legacy scorer in 0.4.0.
 
 Run with:  pytest testing/test_announcement_timing.py -v
 """
@@ -24,11 +26,7 @@ import pandas as pd
 import pytest
 
 from pipeline.stage3 import stage3
-from pipeline.stage4 import stage4
-from pipeline.events import (
-    build_event_frame, build_and_score_event_frame, attach_announcement_timing,
-    completed_parity_report, OUTCOME_COLS,
-)
+from pipeline.events import build_event_frame, attach_announcement_timing, OUTCOME_COLS
 from feature_engineering.announcement_timing import (
     AMC, BMO, INTRADAY, UNKNOWN, ANCHOR_OFFSET,
     RESOLVED, PENDING, UNRESOLVED_NO_TIMESTAMP, UNRESOLVED_INTRADAY,
@@ -66,8 +64,8 @@ _FIXTURE_TIMES = {0: "06:30", 1: "16:05", 2: "11:00", 3: None}
 @pytest.fixture(scope="module")
 def daily_df():
     n_days = 250
-    return stage4(stage3(_build_stage2_df(
-        n_days=n_days, e_indices=(60, 120, 180, 220) + (n_days + 20,))))
+    return stage3(_build_stage2_df(
+        n_days=n_days, e_indices=(60, 120, 180, 220) + (n_days + 20,)))
 
 
 @pytest.fixture(scope="module")
@@ -92,7 +90,7 @@ def timing_df(daily_df):
 
 @pytest.fixture(scope="module")
 def events_df(daily_df, timing_df):
-    return build_and_score_event_frame(daily_df, timing_df)
+    return build_event_frame(daily_df, timing_df)
 
 
 @pytest.fixture(scope="module")
@@ -110,7 +108,7 @@ def real_events_df():
         con.close()
     if timing.empty:
         pytest.skip("no announcement timestamps in the DB — sync it from the droplet")
-    return build_and_score_event_frame(daily, timing), daily
+    return build_event_frame(daily, timing), daily
 
 
 # ── The window classifier ─────────────────────────────────────────────────────
@@ -696,7 +694,7 @@ def test_gate_excludes_an_event_whose_endpoint_row_is_missing(daily_df, timing_d
     a = int(np.searchsorted(grid, np.datetime64(anchor)))
     holed = _drop_row(daily_df, stock, pd.Timestamp(grid[a + 3]))
 
-    scored = build_and_score_event_frame(holed, timing_df, verify=False)
+    scored = build_event_frame(holed, timing_df)
     row = scored.index[(scored["stock"] == stock)
                        & (scored["earnings_date"] == events.at[victim, "earnings_date"])
                        & ~scored["is_pending"]][0]
@@ -734,46 +732,11 @@ def test_gate_accounts_for_the_paired_row_difference_on_real_history(real_events
     assert legacy_missing[DEFAULT_ANCHORED_TARGET].notna().all()
 
 
-# ── Invariant 10 — Phase 1 legacy parity still holds ──────────────────────────
-
-def test_10_phase1_completed_parity_still_green(daily_df, timing_df):
-    """Invariant 10 — every Phase 1 guarantee about the LEGACY columns survives Phase 2.
-    build_and_score_event_frame asserts this on every run; this pins it in CI."""
-    events = build_and_score_event_frame(daily_df, timing_df)
-    assert completed_parity_report(events, daily_df) == {}
-
-
-def test_10_parity_holds_with_and_without_timing(daily_df, timing_df):
-    for timing in (None, timing_df):
-        events = build_and_score_event_frame(daily_df, timing)
-        assert completed_parity_report(events, daily_df) == {}
-
-
-def test_10_parity_on_real_history(real_events_df):
-    events, daily = real_events_df
-    assert completed_parity_report(events, daily) == {}
-
-
-def test_10_scores_are_identical_with_and_without_timing(daily_df, timing_df):
-    """Phase 2 adds a parallel target and changes no score. Announcement timing must not
-    reach the production score at all — that is Phase 3's job, after a re-fit."""
-    from pipeline.events import PARITY_COLS
-    a = build_and_score_event_frame(daily_df, None)
-    b = build_and_score_event_frame(daily_df, timing_df)
-    for col in PARITY_COLS:
-        x, y = a[col], b[col]
-        if x.dtype.kind in "fi":
-            assert np.array_equal(x.to_numpy(dtype="float64"),
-                                  y.to_numpy(dtype="float64"), equal_nan=True), col
-        else:
-            assert x.astype(object).where(x.notna(), "<NA>").equals(
-                y.astype(object).where(y.notna(), "<NA>")), col
-
-
 # ── The audit artifact must not be a runtime dependency ───────────────────────
 
 @pytest.mark.parametrize("path", [
     "pipeline/events.py",
+    "pipeline/stage4.py",
     "pipeline/stage5.py",
     "pipeline/pipeline.py",
     "feature_engineering/announcement_timing.py",

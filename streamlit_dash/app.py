@@ -2,31 +2,46 @@
 import streamlit as st, sys, pandas as pd, warnings, duckdb
 from datetime import timedelta, date
 
-# Streamlit page configuration
-st.set_page_config(
-    page_title="Breakwater",
-    layout="wide"
-)
+st.set_page_config(page_title="Breakwater", layout="wide")
 
 warnings.filterwarnings('ignore')
 from pathlib import Path
-# Add project root (parent of "streamlit") to Python path
+# Add project root (parent of "streamlit_dash") to Python path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-# CSV with the dashboard output
-# put streamlit_df.parquet in the output folder
 DF_PATH = ROOT / "output/streamlit_df.parquet"
 UPCOMING_PATH = ROOT / "output/upcoming_df.parquet"
 
 css_path = Path(__file__).parent / "styles.css"
 with open(css_path) as f:
-    st.markdown(
-        f"<style>{f.read()}</style>",
-        unsafe_allow_html=True
-    )
+    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-from pipeline.pipeline import run_pipeline
 from config import DB_PATH
+from report.recommendations_builder import (PERCENTILE_EXPLAINER, SIGNAL_EXPLAINER, TIER_BANDS,
+                                            UNSCORED_NOTE)
+from scoring.model_b import TIERS, sort_by_risk
+
+# Every view reads the same Model B fields: risk_tier, risk_score (Breakwater Risk
+# Percentile — a rank, not a probability), model_b_hist_mean_abs, model_b_n_prior.
+# Scores appear ONLY on upcoming calls. Past events show their corrected reaction and
+# nothing else: pairing reconstructed scores with realized outcomes would read as a track
+# record, which is paused. (Internal retro view: analysis/predictions_range.py.)
+MODEL_B_COLUMN_CONFIG = {
+    "earnings_date":         st.column_config.DateColumn("Date", format="DD MMM YYYY"),
+    "stock":                 st.column_config.TextColumn("Ticker"),
+    "sector":                st.column_config.TextColumn("Sector"),
+    "sub_sector":            st.column_config.TextColumn("Sub-Sector"),
+    "risk_tier":             st.column_config.TextColumn("Risk Tier"),
+    "risk_score":            st.column_config.NumberColumn("Risk Percentile", format="%.0f"),
+    "model_b_hist_mean_abs": st.column_config.NumberColumn("Avg Past Move %", format="%.1f"),
+    "model_b_n_prior":       st.column_config.NumberColumn("Usable Past Reports", format="%d"),
+    "days_to_earnings":      st.column_config.NumberColumn("Days", format="%d"),
+    "expected_move_pct":     st.column_config.NumberColumn("Options Implied Move % (context)", format="%.1f"),
+    "abs_reaction_3d_anchored": st.column_config.NumberColumn("Actual 3-Session Move %", format="%.2f"),
+    "is_extreme_move_anchored": st.column_config.CheckboxColumn("Moved ≥ 8%"),
+    "announce_window":       st.column_config.TextColumn("Timing"),
+}
+
 
 @st.cache_data(show_spinner=False)
 def get_inactive_stocks() -> set:
@@ -39,14 +54,20 @@ def get_inactive_stocks() -> set:
     except Exception:
         return set()
 
+
 def label_stock(stock: str, inactive: set) -> str:
     return f"{stock} — inactive" if stock in inactive else stock
 
-@st.cache_data(show_spinner="Loading parquet…")
-def get_full_df() -> pd.DataFrame:
+
+@st.cache_data(show_spinner="Loading past reactions…")
+def get_history_df() -> pd.DataFrame:
+    """Past earnings events with their corrected 3-session reaction — no score."""
+    if not DF_PATH.exists():
+        return pd.DataFrame()
     df = pd.read_parquet(DF_PATH)
     df["earnings_date"] = pd.to_datetime(df["earnings_date"], errors="coerce")
     return df
+
 
 @st.cache_data(show_spinner="Loading upcoming events…")
 def get_upcoming_df() -> pd.DataFrame:
@@ -56,426 +77,150 @@ def get_upcoming_df() -> pd.DataFrame:
     df["earnings_date"] = pd.to_datetime(df["earnings_date"], errors="coerce")
     return df
 
-@st.cache_data(show_spinner="Loading dashboard data…")
-def get_dashboard_df(use_cached_eps: bool = True) -> pd.DataFrame:
-    """
-    Calls your engine and returns the final dashboard dataframe.
 
-    Assumes run_pipeline(...) returns a DataFrame with at least:
-        Date, Stock, risk_level, risk_score, hist_xtreme_prob, base_xtreme_prob
-    """
-    df = get_full_df()
+def ranked(df: pd.DataFrame) -> pd.DataFrame:
+    """By date, then Model B risk: scored before Unscored, raw signal descending, ticker."""
+    return sort_by_risk(df, by=["earnings_date"])
 
-    # Sanity check for expected columns
-    expected_cols = [
-        "stock",
-        "sector",
-        "sub_sector",
-        "earnings_date",
-        "is_large_reaction",
-        "is_extreme_reaction",
-        "hist_extreme_prob",
-        "global_hist_prob",
-        "extreme_count",
-        "risk_level",
-        "risk_score",
-        "base_extreme_prob",
-        "pre_earnings_drift_flag",
-        "surprise_momentum_flag",
-        "is_high_conviction",
-    ]
-    missing = [c for c in expected_cols if c not in df.columns]
-    if missing:
-        st.warning(f"Missing expected columns in CSV: {missing}")
 
-    if "earnings_date" in df.columns:
-        df["earnings_date"] = pd.to_datetime(df["earnings_date"], errors="coerce")
+def as_display(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["earnings_date"] = out["earnings_date"].dt.date
+    for col in ("model_b_hist_mean_abs", "expected_move_pct", "abs_reaction_3d_anchored"):
+        if col in out.columns:
+            out[col] = out[col] * 100
+    if "risk_score" in out.columns:      # floored, so the number shown matches its tier band
+        out["risk_score"] = out["risk_score"].apply(lambda v: v if pd.isna(v) else float(int(v)))
+    return out
 
-    numeric_cols = [
-        "risk_score",
-        "hist_extreme_prob",
-        "global_hist_prob",
-        "base_extreme_prob",
-        "extreme_count",
-    ]
 
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    return df
-
-def sidebar_filters(df: pd.DataFrame, upcoming: pd.DataFrame) -> tuple:
+def sidebar_filters(upcoming: pd.DataFrame) -> pd.DataFrame:
     st.sidebar.header("Filters")
+    if upcoming.empty:
+        return upcoming
+    inactive = get_inactive_stocks()
+    stocks = sorted(upcoming["stock"].dropna().unique())
+    stock_choice = st.sidebar.selectbox(
+        "Stock", options=["(All)"] + stocks,
+        format_func=lambda s: s if s == "(All)" else label_stock(s, inactive))
+    sectors = sorted(upcoming["sector"].dropna().unique())
+    selected_sectors = st.sidebar.multiselect("Sector", options=sectors, default=sectors)
+    selected_tiers = st.sidebar.multiselect("Risk tier", options=list(TIERS), default=list(TIERS))
+    if stock_choice != "(All)":
+        upcoming = upcoming[upcoming["stock"] == stock_choice]
+    if selected_sectors:
+        upcoming = upcoming[upcoming["sector"].isin(selected_sectors)]
+    if selected_tiers:
+        upcoming = upcoming[upcoming["risk_tier"].isin(selected_tiers)]
+    return upcoming
 
-    stock_choice = "(All)"
-    if "stock" in df.columns:
-        inactive = get_inactive_stocks()
-        stocks = sorted(df["stock"].dropna().unique())
-        stock_choice = st.sidebar.selectbox(
-            "Stock", options=["(All)"] + stocks,
-            format_func=lambda s: s if s == "(All)" else label_stock(s, inactive),
-        )
-        if stock_choice != "(All)":
-            df = df[df["stock"] == stock_choice]
-
-    selected_sectors = None
-    if "sector" in df.columns:
-        sectors = sorted(df["sector"].dropna().unique())
-        selected_sectors = st.sidebar.multiselect("Sector", options=sectors, default=sectors)
-        if selected_sectors:
-            df = df[df["sector"].isin(selected_sectors)]
-
-    selected_risks = None
-    if "risk_level" in df.columns:
-        risk_levels = sorted(df["risk_level"].dropna().unique())
-        selected_risks = st.sidebar.multiselect("Risk level", options=risk_levels, default=risk_levels)
-        if selected_risks:
-            df = df[df["risk_level"].isin(selected_risks)]
-
-    lo, hi = None, None
-    if "risk_score" in df.columns and not df["risk_score"].isna().all():
-        min_rs = int(df["risk_score"].min())
-        max_rs = int(df["risk_score"].max())
-        lo, hi = st.sidebar.slider("Risk score range", min_value=min_rs, max_value=max_rs, value=(min_rs, max_rs))
-        df = df[(df["risk_score"] >= lo) & (df["risk_score"] <= hi)]
-
-    if "is_extreme_reaction" in df.columns:
-        only_extreme = st.sidebar.checkbox("Only actual extreme reactions", value=False)
-        if only_extreme:
-            df = df[df["is_extreme_reaction"] == 1]
-
-    if "is_large_reaction" in df.columns:
-        only_large = st.sidebar.checkbox("Only actual large reactions", value=False)
-        if only_large:
-            df = df[df["is_large_reaction"] == 1]
-
-    only_hc = False
-    if "is_high_conviction" in df.columns:
-        only_hc = st.sidebar.checkbox("High Conviction only", value=False)
-        if only_hc:
-            df = df[df["is_high_conviction"] == True]
-
-    # Apply same filter state to upcoming df
-    if not upcoming.empty:
-        if stock_choice != "(All)" and "stock" in upcoming.columns:
-            upcoming = upcoming[upcoming["stock"] == stock_choice]
-        if selected_sectors and "sector" in upcoming.columns:
-            upcoming = upcoming[upcoming["sector"].isin(selected_sectors)]
-        if selected_risks and "earnings_explosiveness_bucket" in upcoming.columns:
-            upcoming = upcoming[upcoming["earnings_explosiveness_bucket"].isin(selected_risks)]
-        if lo is not None and "earnings_explosiveness_score" in upcoming.columns:
-            upcoming = upcoming[
-                (upcoming["earnings_explosiveness_score"] >= lo) &
-                (upcoming["earnings_explosiveness_score"] <= hi)
-            ]
-        if only_hc and "is_high_conviction" in upcoming.columns:
-            upcoming = upcoming[upcoming["is_high_conviction"] == True]
-
-    return df, upcoming
 
 def main():
     st.title("Breakwater - Earnings Risk Dashboard")
+    st.caption(PERCENTILE_EXPLAINER + " " + SIGNAL_EXPLAINER)
 
     with st.sidebar:
         st.markdown("### Data options")
         if st.button("Reload data from disk"):
-            get_full_df.clear()
-            get_dashboard_df.clear()
+            get_history_df.clear()
             get_upcoming_df.clear()
 
-    raw_df = get_dashboard_df()
-    raw_upcoming = get_upcoming_df()
-    df, upcoming_filtered = sidebar_filters(raw_df, raw_upcoming)
+    upcoming = sidebar_filters(get_upcoming_df())
+    history = get_history_df()
 
-    if df.empty:
-        st.warning("No rows match the current filters.")
-        return
-
-    col1, col2, col3, col4, col5 = st.columns(5)
-
-    with col1:
-        st.metric("Earnings events", len(df))
-
-    with col2:
-        if "stock" in df.columns:
-            st.metric("Unique stocks", df["stock"].nunique())
-
-    with col3:
-        if "risk_score" in df.columns:
-            st.metric("Avg risk score", f"{df['risk_score'].mean():.1f}")
-
-    with col4:
-        if "is_extreme_reaction" in df.columns:
-            st.metric("Extreme reactions", int(df["is_extreme_reaction"].sum()))
-
-    with col5:
-        if "is_high_conviction" in df.columns:
-            st.metric("High Conviction", int(df["is_high_conviction"].sum()))
-
-    tab_upcoming, tab_overview, tab_stock, tab_calendar = st.tabs(
-        ["Upcoming Events", "Overview", "Stock drill-down", "Weekly Calendar"]
-    )
-
-    with tab_overview:
-        st.subheader("Filtered earnings events")
-
-        cols_to_show = [c for c in [
-            "stock", "earnings_date", "sector",
-            "risk_level", "risk_score", "is_high_conviction",
-            "pre_earnings_drift_flag", "surprise_momentum_flag",
-            "abs_reaction_3d",
-            "is_large_reaction", "is_extreme_reaction",
-            "hist_extreme_prob",
-        ] if c in df.columns]
-
-        _period_options = {
-            "1 month":  pd.DateOffset(months=1),
-            "3 months": pd.DateOffset(months=3),
-            "6 months": pd.DateOffset(months=6),
-            "1 year":   pd.DateOffset(years=1),
-            "2 years":  pd.DateOffset(years=2),
-            "5 years":  pd.DateOffset(years=5),
-        }
-        period_label = st.radio(
-            "Show events from last",
-            options=list(_period_options.keys()),
-            horizontal=True,
-            index=3,
-        )
-
-        df_display = df.sort_values("earnings_date", ascending=False).copy()
-        df_display["earnings_date"] = df_display["earnings_date"].dt.date
-        cutoff = (pd.Timestamp(date.today()) - _period_options[period_label]).date()
-        df_display = df_display[df_display["earnings_date"] >= cutoff]
-        if "abs_reaction_3d" in df_display.columns:
-            df_display["abs_reaction_3d"] = (df_display["abs_reaction_3d"] * 100).round(2)
-
-        st.dataframe(
-            df_display[cols_to_show],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "earnings_date":            st.column_config.DateColumn("Date", format="DD MMM YYYY"),
-                "stock":                    st.column_config.TextColumn("Ticker"),
-                "sector":                   st.column_config.TextColumn("Sector"),
-                "risk_level":               st.column_config.TextColumn("Risk Level"),
-                "risk_score":               st.column_config.NumberColumn("Score", format="%.0f"),
-                "is_high_conviction":       st.column_config.CheckboxColumn("HC ★"),
-                "pre_earnings_drift_flag":  st.column_config.TextColumn("Drift"),
-                "surprise_momentum_flag":   st.column_config.TextColumn("Surprise"),
-                "abs_reaction_3d":          st.column_config.NumberColumn("Actual Move %", format="%.2f"),
-                "is_large_reaction":        st.column_config.CheckboxColumn("Large"),
-                "is_extreme_reaction":      st.column_config.CheckboxColumn("Extreme"),
-                "hist_extreme_prob":        st.column_config.NumberColumn("P(Extreme)", format="%.3f"),
-            }
-        )
-
-        if "risk_level" in df.columns:
-            st.markdown("#### Count of events by risk level")
-            risk_counts = df["risk_level"].value_counts().sort_index()
-            st.bar_chart(risk_counts)
+    tab_upcoming, tab_stock, tab_calendar = st.tabs(
+        ["Upcoming Events", "Past Earnings Reactions", "Weekly Calendar"])
 
     with tab_upcoming:
         st.subheader("Upcoming Earnings Events")
-
-        upcoming = upcoming_filtered
-
         if upcoming.empty:
             st.info("No upcoming earnings found. Run the pipeline to generate upcoming_df.parquet.")
         else:
             window_days = st.radio(
-                "Show events in the next",
-                options=[14, 30, 60, 999],
-                format_func=lambda x: "All" if x == 999 else f"{x} days",
-                horizontal=True,
-            )
-            mask = upcoming["days_to_earnings"] <= window_days
-            view = upcoming[mask].sort_values(
-                ["earnings_date", "earnings_explosiveness_score"], ascending=[True, False]
-            ).copy()
-
+                "Show events in the next", options=[14, 30, 60, 999],
+                format_func=lambda x: "All" if x == 999 else f"{x} days", horizontal=True)
+            view = ranked(upcoming[upcoming["days_to_earnings"] <= window_days])
             if view.empty:
                 st.info(f"No events in the next {window_days} days.")
             else:
                 u1, u2, u3, u4 = st.columns(4)
                 u1.metric("Events", len(view))
-                u2.metric("High Alert", int((view["earnings_explosiveness_bucket"] == "High Alert").sum()))
-                u3.metric("High Conviction ★", int(view["is_high_conviction"].sum()))
-                u4.metric("Elevated", int((view["earnings_explosiveness_bucket"] == "Elevated").sum()))
-
-                display_cols = [c for c in [
-                    "earnings_date", "days_to_earnings", "stock", "sector",
-                    "earnings_explosiveness_bucket", "earnings_explosiveness_score",
-                    "peer_percentile", "pre_earnings_drift_flag",
-                    "surprise_momentum_flag", "is_high_conviction",
-                    "expected_move_pct", "iv_vs_hist_ratio",
-                ] if c in view.columns]
-
-                view = view.copy()
-                view["earnings_date"] = view["earnings_date"].dt.date
-                if "expected_move_pct" in view.columns:
-                    view["expected_move_pct"] = view["expected_move_pct"] * 100
-
-                st.dataframe(
-                    view[display_cols],
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "earnings_date":                  st.column_config.DateColumn("Date", format="DD MMM YYYY"),
-                        "days_to_earnings":               st.column_config.NumberColumn("Days", format="%d"),
-                        "stock":                          st.column_config.TextColumn("Ticker"),
-                        "earnings_explosiveness_bucket":  st.column_config.TextColumn("Risk Level"),
-                        "earnings_explosiveness_score":   st.column_config.NumberColumn("Score", format="%.0f"),
-                        "peer_percentile":                st.column_config.NumberColumn("Percentile", format="%dth"),
-                        "pre_earnings_drift_flag":        st.column_config.TextColumn("Drift"),
-                        "surprise_momentum_flag":         st.column_config.TextColumn("Surprise Pattern"),
-                        "is_high_conviction":             st.column_config.CheckboxColumn("HC ★"),
-                        "expected_move_pct":              st.column_config.NumberColumn("IV Implied", format="%.1f%%"),
-                        "iv_vs_hist_ratio":               st.column_config.NumberColumn("IV/Hist", format="%.2fx"),
-                    },
-                )
+                u2.metric("High Alert", int((view["risk_tier"] == "High Alert").sum()))
+                u3.metric("Elevated", int((view["risk_tier"] == "Elevated").sum()))
+                u4.metric("Unscored", int((view["risk_tier"] == "Unscored").sum()))
+                cols = [c for c in ["earnings_date", "days_to_earnings", "stock", "sector",
+                                    "risk_tier", "risk_score", "model_b_hist_mean_abs",
+                                    "model_b_n_prior", "expected_move_pct"] if c in view.columns]
+                st.dataframe(as_display(view)[cols], width="stretch",
+                             hide_index=True, column_config=MODEL_B_COLUMN_CONFIG)
+                st.caption("Tiers — " + " · ".join(f"{t}: {TIER_BANDS[t]}" for t in TIERS)
+                           + ". " + UNSCORED_NOTE + " Options implied move is market "
+                             "context only; it does not enter the score or the tier.")
 
     with tab_stock:
-        st.subheader("Single-stock history")
+        st.subheader("Past earnings reactions")
+        st.caption("Each past report's 3-session move, measured from the last close before "
+                   "the announcement. Reports without a verified announcement time have no "
+                   "corrected move and are not shown.")
+        stocks = sorted(history["stock"].dropna().unique()) if not history.empty else []
+        if not stocks:
+            st.info("No history parquet. Run the pipeline first.")
+        else:
+            inactive = get_inactive_stocks()
+            selected = st.selectbox("Choose stock", options=stocks,
+                                    format_func=lambda s: label_stock(s, inactive))
+            sdf = history[(history["stock"] == selected)
+                          & history["reaction_3d_anchored"].notna()].sort_values("earnings_date")
+            if sdf.empty:
+                st.info("No past report with a verified announcement time.")
+            else:
+                st.bar_chart(sdf.set_index("earnings_date")["reaction_3d_anchored"] * 100)
+                st.dataframe(as_display(sdf)[["earnings_date", "announce_window",
+                                              "abs_reaction_3d_anchored",
+                                              "is_extreme_move_anchored"]],
+                             width="stretch", hide_index=True,
+                             column_config=MODEL_B_COLUMN_CONFIG)
 
-        if "stock" not in df.columns:
-            st.info("stock column not found.")
-            return
-
-        inactive = get_inactive_stocks()
-        stocks = sorted(df["stock"].dropna().unique())
-        selected_stock = st.selectbox(
-            "Choose stock", options=stocks,
-            format_func=lambda s: label_stock(s, inactive),
-        )
-
-        stock_df = df[df["stock"] == selected_stock].copy()
-
-        if "earnings_date" in stock_df.columns:
-            stock_df = stock_df.sort_values("earnings_date")
-
-        cols = [
-            c for c in [
-                "earnings_date",
-                "stock",
-                "risk_level",
-                "risk_score",
-                "pre_earnings_drift_flag",
-                "surprise_momentum_flag",
-                "is_high_conviction",
-                "hist_extreme_prob",
-                "base_extreme_prob",
-                "is_large_reaction",
-                "is_extreme_reaction",
-            ]
-            if c in stock_df.columns
-        ]
-
-        st.dataframe(stock_df[cols], use_container_width=True, hide_index=True)
-
-        if {"earnings_date", "risk_score"}.issubset(stock_df.columns):
-            chart_df = stock_df.set_index("earnings_date")["risk_score"]
-            st.line_chart(chart_df)
-            
     with tab_calendar:
         st.subheader("Earnings Risk Calendar")
-
-        earn = get_full_df()
-
-        # Merge upcoming events so the calendar spans past + future
-        _upcoming_cal = get_upcoming_df()
-        if not _upcoming_cal.empty:
-            _cal_cols = [c for c in [
-                "stock", "sector", "sub_sector", "earnings_date",
-                "earnings_explosiveness_score", "earnings_explosiveness_bucket",
-                "pre_earnings_drift_flag", "surprise_momentum_flag", "is_high_conviction",
-            ] if c in _upcoming_cal.columns]
-            earn = pd.concat([earn, _upcoming_cal[_cal_cols]], ignore_index=True)
-            earn = earn.drop_duplicates(subset=["stock", "earnings_date"], keep="first")
-            earn["earnings_date"] = pd.to_datetime(earn["earnings_date"], errors="coerce")
-
+        cal = get_upcoming_df()
+        if cal.empty:
+            st.info("No upcoming events. Run the pipeline first.")
+            return
         today = pd.Timestamp(date.today())
-        default_start = today - timedelta(days=7)
-        default_end   = today + timedelta(days=14)
-
         c1, c2 = st.columns(2)
         with c1:
-            start_date = st.date_input("From", value=default_start.date())
+            start_date = st.date_input("From", value=today.date(), min_value=today.date())
         with c2:
-            end_date = st.date_input("To",   value=default_end.date())
-
-        window = earn[
-            (earn["earnings_date"] >= pd.Timestamp(start_date)) &
-            (earn["earnings_date"] <= pd.Timestamp(end_date))
-        ].copy()
-
+            end_date = st.date_input("To", value=(today + timedelta(days=14)).date(),
+                                     min_value=today.date())
+        window = cal[(cal["earnings_date"] >= pd.Timestamp(start_date))
+                     & (cal["earnings_date"] <= pd.Timestamp(end_date))].copy()
         if window.empty:
             st.info("No earnings events in the selected window.")
         else:
-            window["is_high_conviction"] = (
-                (window["earnings_explosiveness_bucket"] == "High Alert") &
-                (window["pre_earnings_drift_flag"].fillna("") != "")
-            )
-
-            today_dt = pd.Timestamp(date.today())
-            window["status"] = window["earnings_date"].apply(
-                lambda d: "Scheduled" if pd.Timestamp(d) > today_dt else "Reported"
-            )
-
-            window["earnings_date"] = window["earnings_date"].dt.date
-            display = window[[
-                "earnings_date", "stock", "sector", "sub_sector",
-                "earnings_explosiveness_score", "earnings_explosiveness_bucket",
-                "status", "pre_earnings_drift_flag", "surprise_momentum_flag",
-                "is_high_conviction",
-            ]].rename(columns={
-                "earnings_date":                "Date",
-                "stock":                        "Ticker",
-                "sector":                       "Sector",
-                "sub_sector":                   "Sub-Sector",
-                "earnings_explosiveness_score": "Risk Score",
-                "earnings_explosiveness_bucket": "Risk Level",
-                "status":                       "Status",
-                "pre_earnings_drift_flag":      "Drift",
-                "surprise_momentum_flag":       "Surprise Pattern",
-                "is_high_conviction":           "High Conviction",
-            }).sort_values(["Date", "Risk Score"], ascending=[True, False])
-
-            # Summary KPIs
-
-            k1, k2, k3, k4, k5 = st.columns(5)
-            k1.metric("Events", len(display))
-            k2.metric("High Conviction", int(display["High Conviction"].sum()))
-            k3.metric("With Drift Flag",
-                      int((display["Drift"].fillna("") != "").sum()))
-            k4.metric("Avg Risk Score", f"{display['Risk Score'].mean():.1f}")
-            sector_top = window["sector"].value_counts().index[0] if not window.empty else "—"
-            k5.metric("Most Active Sector", sector_top)
-
-            st.dataframe(
-                display,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Date":             st.column_config.DateColumn("Date", format="DD MMM YYYY"),
-                    "Risk Score":       st.column_config.NumberColumn("Risk Score", format="%.0f"),
-                    "Status":           st.column_config.TextColumn("Status"),
-                    "High Conviction":  st.column_config.CheckboxColumn("High Conviction"),
-                },
-            )
+            window = ranked(window)
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Events", len(window))
+            k2.metric("High Alert", int((window["risk_tier"] == "High Alert").sum()))
+            k3.metric("Elevated", int((window["risk_tier"] == "Elevated").sum()))
+            k4.metric("Unscored", int((window["risk_tier"] == "Unscored").sum()))
+            cols = ["earnings_date", "stock", "sector", "sub_sector", "risk_tier",
+                    "risk_score", "model_b_hist_mean_abs", "model_b_n_prior"]
+            st.dataframe(as_display(window)[cols], width="stretch", hide_index=True,
+                         column_config=MODEL_B_COLUMN_CONFIG)
 
             with st.sidebar:
                 st.markdown("---")
                 if st.button("Export calendar HTML"):
-                    sys.path.insert(0, str(ROOT))
                     from report.calendar_builder import generate_calendar
-                    written_path = generate_calendar(earn, reference_date=start_date,
-                                      window_days=(end_date - start_date).days)
-                    if written_path:
-                        st.success(f"Written to {written_path}")
+                    written = generate_calendar(window, reference_date=start_date,
+                                                window_days=(end_date - start_date).days)
+                    if written:
+                        st.success(f"Written to {written}")
                     else:
-                        st.warning("No scored earnings events in window — nothing written.")
+                        st.warning("No earnings events in window — nothing written.")
+
 
 if __name__ == "__main__":
     main()

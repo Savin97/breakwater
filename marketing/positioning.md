@@ -35,7 +35,7 @@ re-measurement of the legacy tiers is historical record, not a proof point.
 - Earnings move risk
 - Tail-risk screen
 - Flagged before the announcement
-- Elevated probability of a large move
+- Ranks among the largest historical earnings moves (a percentile rank, never a probability)
 - Historical base rate
 - Weekly earnings risk digest
 
@@ -49,6 +49,8 @@ The **delayed public track record is paused** and must not be used as a proof po
 - Anything that sounds like personalized financial advice
 - Any lift, hit rate, capture rate or other performance figure, until the replacement model's figures are audited and cleared
 - Any claim of a 15-year or 2015-2025 out-of-sample record
+- "X% chance", "probability of an 8% move", "Nx the market", "expected to move", or any direction (up/down) — the Breakwater Risk Percentile is a rank of move size, not a probability
+- Historical Model B backtest figures presented as live performance
 
 ## Compliance Footer
 

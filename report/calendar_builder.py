@@ -1,195 +1,94 @@
 # report/calendar_builder.py
 #
-# Generates the weekly earnings risk calendar — the primary recurring deliverable.
-# Two outputs: HTML file (output/output_<timestamp>/weekly_calendar.html) and structured
-# data for Streamlit.
-#
-# Architecture:
-#   earnings_explosiveness_score  → primary risk ranking (structural, changes slowly)
-#   momentum_fragility_score      → positioning overlay flag (dynamic, changes quarterly)
-#   These are kept separate intentionally — blending them into one score hurts both signals.
+# The weekly earnings risk calendar — the primary recurring deliverable. Writes
+# output/output_<date>/weekly_calendar.html. Every number on it is a Model B field from
+# the event frame: risk_tier, risk_score (Breakwater Risk Percentile),
+# model_b_hist_mean_abs and model_b_n_prior.
 
 from itertools import groupby
-from pathlib import Path
 import os
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from report.recommendations_builder import PERCENTILE_EXPLAINER, TIER_BANDS, UNSCORED_NOTE
+from scoring.model_b import TIERS, display_score, sort_by_risk
 from utilities.output_utilities import get_run_output_dir
-from pipeline.events import pending_events
-
-# Fixed percentile thresholds calibrated on full earnings history.
-# Using fixed thresholds (not within-week percentiles) means the flag
-# has the same meaning every week — "top 25% of all historical fragility readings."
-FRAG_ELEVATED_PCTL  = 0.75   # top 25% of historical momentum_fragility_score → "Elevated"
-FRAG_STRETCHED_PCTL = 0.90   # top 10%                                         → "Stretched"
 
 
-def _fragility_label(score, elevated_thr, stretched_thr):
-    if pd.isna(score):
-        return ""
-    if score >= stretched_thr:
-        return "Stretched"
-    if score >= elevated_thr:
-        return "Elevated"
-    return ""
-
-
-def _bucket_stats(df):
+def build_calendar_data(rows, reference_date=None, window_days=14):
     """
-    Computes Bayesian-shrunk extreme-move probability per earnings_explosiveness_bucket.
-    Same prior (20 events) and method as stage5/prep_for_streamlit — keeps numbers consistent
-    across the calendar, per-stock reports, and the Streamlit dashboard.
-    Returns (bucket_stats_df, p_global_rounded).
+    Calendar data for the events in `rows` dated within
+    [reference_date, reference_date + window_days].
+
+    rows : event-frame rows carrying the Model B fields. The pipeline passes the PENDING
+           rows (`pending_events(events_df)`); the dashboard's "Export calendar HTML"
+           button passes its own frame for the window the user picked.
+
+    Unscored events are included, labelled "insufficient history" (not low risk) and
+    sorted after the scored events of the same day. Returns (events_list, summary_dict, grouped_by_date_list).
     """
-    earn = df[df["is_earnings_day"] == 1].copy() if "is_earnings_day" in df.columns else df.copy()
-    p_global = earn["is_extreme_reaction"].mean()
-    prior = 20  # shrink toward global mean; 20 events ≈ ~5 years of quarterly data per stock
-
-    per_bucket = (
-        earn.groupby("earnings_explosiveness_bucket")["is_extreme_reaction"]
-        .agg(extreme_count="sum", event_count="count")
-    )
-    per_bucket["hist_extreme_prob"] = (
-        (per_bucket["extreme_count"] + prior * p_global)
-        / (per_bucket["event_count"] + prior)
-    )
-    per_bucket["lift_vs_baseline"] = per_bucket["hist_extreme_prob"] / p_global
-    return per_bucket[["hist_extreme_prob", "lift_vs_baseline"]], round(p_global, 3)
-
-
-def build_calendar_data(df, reference_date=None, window_days=14, events_df=None):
-    """
-    Prepares calendar data for a window of earnings events.
-
-    reference_date : start of the display window. Defaults to today.
-    window_days    : how many days forward from reference_date to include (default 14).
-    events_df      : the event frame (pipeline/events.py). When given, the window is
-                     selected from its pending rows; when None, from `df` itself.
-
-    Returns (events_list, summary_dict, grouped_by_date_list).
-    Stocks without a scored earnings_explosiveness_bucket are excluded — they lack
-    sufficient earnings history for a meaningful risk score.
-    """
-    df = df.copy()
+    df = rows.copy()
     df["earnings_date"] = pd.to_datetime(df["earnings_date"])
-
     if reference_date is None:
-        # The calendar is the forward-looking weekly deliverable, so the window opens
-        # today. (It used to open at max(earnings_date) - 7d, which is the furthest-out
-        # scheduled report — part of why the window matched nothing.)
         reference_date = pd.Timestamp.today().normalize()
     reference_date = pd.Timestamp(reference_date)
     end_date = reference_date + pd.Timedelta(days=window_days)
 
-    # Thresholds from full earnings history — stable across weeks
-    earn_all = df[df["is_earnings_day"] == 1].copy() if "is_earnings_day" in df.columns else df.copy()
-    # PRE-EXISTING BUG, fixed here as part of the Phase 1 consumer migration: the forward
-    # window below was selected out of `earn_all`, i.e. rows with is_earnings_day == 1,
-    # which by construction are COMPLETED events with a past earnings_date. A window
-    # centred on the future therefore matched nothing and the calendar rendered zero
-    # events on every run. Upcoming events live on the pending rows of the event frame.
-    all_frag = earn_all["momentum_fragility_score"].dropna()
-    frag_elevated_thr  = all_frag.quantile(FRAG_ELEVATED_PCTL)
-    frag_stretched_thr = all_frag.quantile(FRAG_STRETCHED_PCTL)
-
-    bucket_stats, p_global = _bucket_stats(df)
-
-    # The pipeline (stage5) passes the event frame, so the weekly calendar reads pending
-    # rows. Callers without one — the dashboard's "Export calendar HTML" button
-    # (streamlit_dash/app.py), which hands over its own frame of completed + upcoming
-    # rows for a window the user picked — keep the previous behaviour and select the
-    # window from the frame they passed.
-    upcoming = pending_events(events_df) if events_df is not None else earn_all
-    window = upcoming[
-        (upcoming["earnings_date"] >= reference_date) &
-        (upcoming["earnings_date"] <= end_date)
-    ].copy()
-
-    # Exclude stocks with no scored bucket (< ~8 historical earnings events)
-    window = window[window["earnings_explosiveness_bucket"].notna()].copy()
-
+    window = df[(df["earnings_date"] >= reference_date) & (df["earnings_date"] <= end_date)].copy()
     if window.empty:
         return [], {}, []
-
-    window = window.merge(bucket_stats, on="earnings_explosiveness_bucket", how="left")
-    window["fragility_flag"] = window["momentum_fragility_score"].apply(
-        lambda s: _fragility_label(s, frag_elevated_thr, frag_stretched_thr)
-    )
-    # Sort by date first, then highest risk score within each day
-    window = window.sort_values(
-        ["earnings_date", "earnings_explosiveness_score"],
-        ascending=[True, False]
-    )
+    window = sort_by_risk(window, by=["earnings_date"])
 
     events = []
     for _, row in window.iterrows():
-        bucket       = str(row.get("earnings_explosiveness_bucket", ""))
-        surprise_flag = str(row.get("surprise_momentum_flag", "") or "")
-        drift_flag    = str(row.get("pre_earnings_drift_flag", "") or "")
-
-        # High Conviction: High Alert + any drift flag (legacy rule, pending Model C).
-        high_conviction = (bucket == "High Alert") and bool(drift_flag)
-
+        tier = str(row["risk_tier"])
+        hist = row.get("model_b_hist_mean_abs")
         events.append({
             "stock":             row["stock"],
             "earnings_date_str": pd.Timestamp(row["earnings_date"]).strftime("%a %b %d"),
             "earnings_date_raw": pd.Timestamp(row["earnings_date"]),
-            "sector":            row.get("sector", ""),
-            "sub_sector":        row.get("sub_sector", ""),
-            "risk_score":        int(round(row["earnings_explosiveness_score"])) if pd.notna(row["earnings_explosiveness_score"]) else 0,
-            "risk_level":        bucket,
-            "risk_level_css":    bucket.lower().replace(" ", "-"),
-            "high_conviction":   high_conviction,
-            "hist_extreme_prob": f"{row['hist_extreme_prob'] * 100:.1f}%" if pd.notna(row.get("hist_extreme_prob")) else "—",
-            "fragility_flag":    row["fragility_flag"],
-            "surprise_flag":     surprise_flag,
-            "drift_flag":        drift_flag,
+            "sector":            row.get("sector", "") or "",
+            "sub_sector":        row.get("sub_sector", "") or "",
+            "risk_score":        display_score(row.get("risk_score")),
+            "risk_tier":         tier,
+            "risk_tier_css":     tier.lower().replace(" ", "-"),
+            "hist_mean_abs":     f"{hist * 100:.1f}%" if pd.notna(hist) else "—",
+            "n_prior":           int(row["model_b_n_prior"]),
         })
 
-    # Risk level summary counts, ordered high-to-low for the summary bar pills
-    risk_order   = ["High Alert", "Elevated", "Normal"]
-    level_counts = {
-        lvl: int(window["earnings_explosiveness_bucket"].eq(lvl).sum())
-        for lvl in risk_order
-        if window["earnings_explosiveness_bucket"].eq(lvl).any()
-    }
+    tier_counts = {t: int(window["risk_tier"].eq(t).sum()) for t in TIERS
+                   if window["risk_tier"].eq(t).any()}
     sector_counts = window.groupby("sector").size().sort_values(ascending=False)
-
-    n_high_conviction = sum(1 for e in events if e["high_conviction"])
-
     summary = {
-        "reference_date":      reference_date.strftime("%B %d"),
-        "end_date":            end_date.strftime("%B %d, %Y"),
-        "n_total":             len(window),
-        "n_elevated_frag":     int((window["fragility_flag"] != "").sum()),
-        "n_high_conviction":   n_high_conviction,
-        "avg_risk_score":      round(window["earnings_explosiveness_score"].mean(), 1),
-        "hottest_sector":      sector_counts.index[0] if not sector_counts.empty else "—",
-        "level_counts":        level_counts,
-        "base_extreme_prob":   f"{p_global * 100:.1f}%",
+        "reference_date": reference_date.strftime("%B %d"),
+        "end_date":       end_date.strftime("%B %d, %Y"),
+        "n_total":        len(window),
+        "n_high_alert":   int(window["risk_tier"].eq("High Alert").sum()),
+        "n_elevated":     int(window["risk_tier"].eq("Elevated").sum()),
+        "n_unscored":     int(window["risk_tier"].eq("Unscored").sum()),
+        "hottest_sector": sector_counts.index[0] if not sector_counts.empty else "—",
+        "tier_counts":    tier_counts,
+        "percentile_explainer": PERCENTILE_EXPLAINER,
+        "tier_bands":     TIER_BANDS,
+        "unscored_note":  UNSCORED_NOTE,
     }
-
-    # Group events by date string for template rendering (already sorted above)
     grouped = [
         {"date": date_str, "events": list(grp)}
         for date_str, grp in groupby(events, key=lambda e: e["earnings_date_str"])
     ]
-
     return events, summary, grouped
 
 
-def generate_calendar(df, reference_date=None, window_days=14, events_df=None):
+def generate_calendar(rows, reference_date=None, window_days=14):
     """
-    Renders the weekly calendar HTML and writes it into this run's timestamped
-    output subfolder (output/output_<timestamp>/weekly_calendar.html).
-    Called automatically by stage5 at the end of every pipeline run.
-    Can also be called directly (e.g. from Streamlit sidebar export button).
+    Renders the weekly calendar HTML into this run's output folder
+    (output/output_<date>/weekly_calendar.html). Called by stage5 with the pending
+    event rows; also callable from the dashboard's export button.
     Returns the path written to, or None if there was nothing to render.
     """
-    events, summary, grouped = build_calendar_data(df, reference_date, window_days, events_df)
+    events, summary, grouped = build_calendar_data(rows, reference_date, window_days)
     if not events:
-        print("Weekly calendar: no scored earnings events in window.")
+        print("Weekly calendar: no earnings events in window.")
         return None
 
     env = Environment(
@@ -197,8 +96,7 @@ def generate_calendar(df, reference_date=None, window_days=14, events_df=None):
         undefined=StrictUndefined,
         autoescape=True,
     )
-    template  = env.get_template("weekly_calendar.html")
-    html_out  = template.render(summary=summary, grouped=grouped)
+    html_out = env.get_template("weekly_calendar.html").render(summary=summary, grouped=grouped)
 
     output_path = os.path.join(get_run_output_dir(), "weekly_calendar.html")
     with open(output_path, "w", encoding="utf-8") as f:

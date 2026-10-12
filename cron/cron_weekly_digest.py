@@ -1,7 +1,7 @@
 # cron/cron_weekly_digest.py
 """
 Weekly earnings risk digest. Sends an HTML email to all subscribers listing
-High Alert and Elevated stocks with earnings in the next 7 days.
+High Alert and Elevated stocks (Model B tiers) with earnings in the next work week.
 
 Runs LOCALLY, as the last step of scripts/full_workflow.sh — not on the droplet.
 Two things are only available here: the PDF reports it attaches (written by stage5,
@@ -27,7 +27,10 @@ from email import encoders
 from dotenv import load_dotenv
 
 from utilities.output_utilities import latest_run_output_dir
+from publishing.guard import PublicationRefused, require_production_branch
 from utilities.data_utilities import work_week_window
+from report.recommendations_builder import PERCENTILE_EXPLAINER, TIER_BANDS, UNSCORED_NOTE
+from scoring.model_b import HIGH_ALERT, ELEVATED, UNSCORED, display_score, sort_by_risk
 
 load_dotenv()
 
@@ -51,14 +54,6 @@ SMTP_PASS      = os.getenv("DIGEST_SMTP_PASS", "")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _ordinal(n: int) -> str:
-    if 10 <= n % 100 <= 20:
-        suffix = "th"
-    else:
-        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{n}{suffix}"
-
-
 def _load_subscribers() -> list[str]:
     if not os.path.exists(SUBSCRIBERS):
         print(f"Subscribers file not found: {SUBSCRIBERS}")
@@ -77,119 +72,71 @@ def _select_stocks(df: pd.DataFrame, company_names: dict,
                    weeks: int = 1, current_week: bool = False) -> pd.DataFrame:
     # Always a whole Mon-Fri work week — see work_week_window. The predictions snapshot
     # selects on the same window, so the table records exactly what was emailed.
-    today, cutoff = work_week_window(weeks=weeks, current_week=current_week)
-    # df is upcoming_df: already one row per stock, and peer_percentile is already
-    # computed by export_upcoming_df with the same rank formula this used to apply here.
-    # It ranks across the ~496 stocks with an upcoming event rather than all 503, which
-    # moves a percentile by at most 1 point (measured 2026-09-02: 379/496 identical, none
-    # off by more than 1) and makes the digest agree with the dashboard and weekly chart,
-    # which have always read this column.
+    # df is upcoming_df: one row per pending event, Model B fields already attached.
+    start, cutoff = work_week_window(weeks=weeks, current_week=current_week)
     all_latest = df.copy()
     all_latest["company_name"] = all_latest["stock"].map(company_names)
-
     mask = (
-        all_latest["earnings_explosiveness_bucket"].isin(["High Alert", "Elevated"]) &
-        (all_latest["earnings_date"] >= today) &
+        all_latest["risk_tier"].isin([HIGH_ALERT, ELEVATED]) &
+        (all_latest["earnings_date"] >= start) &
         (all_latest["earnings_date"] <= cutoff)
     )
-    return (
-        all_latest[mask]
-        .sort_values(["peer_percentile", "earnings_explosiveness_score"], ascending=[False, False])
-        .reset_index(drop=True)
-    )
+    return sort_by_risk(all_latest[mask]).reset_index(drop=True)
 
 
 def _risk_badge(level: str) -> str:
-    colors = {"High Alert": "#c0392b", "Elevated": "#e67e22"}
+    colors = {HIGH_ALERT: "#c0392b", ELEVATED: "#e67e22"}
     bg = colors.get(level, "#999")
     return f'<span style="background:{bg};color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:700;">{level}</span>'
 
 
-def _flag_text(row) -> str:
-    parts = []
-    drift    = str(row.get("pre_earnings_drift_flag",  "") or "")
-    surprise = str(row.get("surprise_momentum_flag",   "") or "")
-    if drift:    parts.append(f"Drift: {drift}")
-    if surprise: parts.append(f"Pattern: {surprise}")
-    return " &nbsp;|&nbsp; ".join(parts) if parts else "&mdash;"
-
-
-def _is_hc(row) -> bool:
-    return (
-        row["earnings_explosiveness_bucket"] == "High Alert" and
-        bool(row.get("pre_earnings_drift_flag")) and
-        str(row.get("pre_earnings_drift_flag", "")).strip() != ""
-    )
-
-
-def _table_row(r, has_iv: bool, bg: str = "") -> str:
-    hc = _is_hc(r)
-    ticker_cell  = f"<strong>{r['stock']}</strong> &#9733;" if hc else f"<strong>{r['stock']}</strong>"
+def _table_row(r, has_iv: bool) -> str:
     company_cell = r.get("company_name") or "&mdash;"
-    iv_td        = f'<td style="padding:8px 12px;font-size:12px;">{r["expected_move_pct"]*100:.1f}%</td>' if has_iv else ""
-    row_style    = f'background:{bg};' if bg else ""
+    iv = r.get("expected_move_pct")
+    iv_td = (f'<td style="padding:8px 12px;font-size:12px;color:#777;">'
+             f'{iv * 100:.1f}%</td>' if pd.notna(iv) else
+             '<td style="padding:8px 12px;font-size:12px;color:#bbb;">&mdash;</td>') if has_iv else ""
     return f"""
-    <tr style="border-bottom:1px solid #e0e0e0;{row_style}">
-      <td style="padding:8px 12px;font-size:13px;">{ticker_cell}</td>
+    <tr style="border-bottom:1px solid #e0e0e0;">
+      <td style="padding:8px 12px;font-size:13px;"><strong>{r['stock']}</strong></td>
       <td style="padding:8px 12px;color:#555;font-size:12px;">{company_cell}</td>
       <td style="padding:8px 12px;font-size:12px;">{pd.Timestamp(r['earnings_date']).strftime('%b %d')}</td>
       <td style="padding:8px 12px;font-size:12px;color:#555;">{r.get('sector', '')}</td>
-      <td style="padding:8px 12px;">{_risk_badge(r['earnings_explosiveness_bucket'])}</td>
-      <td style="padding:8px 12px;font-size:12px;font-weight:700;">{_ordinal(int(r['peer_percentile']))}</td>
+      <td style="padding:8px 12px;">{_risk_badge(r['risk_tier'])}</td>
+      <td style="padding:8px 12px;font-size:12px;font-weight:700;">{display_score(r['risk_score'])}</td>
+      <td style="padding:8px 12px;font-size:12px;">{r['model_b_hist_mean_abs'] * 100:.1f}% <span style="color:#999;">({int(r['model_b_n_prior'])} reports)</span></td>
       {iv_td}
-      <td style="padding:8px 12px;font-size:11px;color:#555;">{_flag_text(r)}</td>
     </tr>"""
 
 
-def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> str:
-    n_total = len(stocks_df)
-    n_ha    = int((stocks_df["earnings_explosiveness_bucket"] == "High Alert").sum())
-    n_el    = int((stocks_df["earnings_explosiveness_bucket"] == "Elevated").sum())
-    hc_mask = stocks_df.apply(_is_hc, axis=1)
-    n_hc    = int(hc_mask.sum())
-    has_iv  = stocks_df["expected_move_pct"].notna().any()
+def _select_unscored(df: pd.DataFrame, weeks: int = 1, current_week: bool = False) -> list[str]:
+    """Tickers reporting in the digest window that Model B cannot rank. Named in the email
+    so leaving them out of the flagged table cannot read as 'low risk'."""
+    start, cutoff = work_week_window(weeks=weeks, current_week=current_week)
+    m = (df["risk_tier"] == UNSCORED) & (df["earnings_date"] >= start) & (df["earnings_date"] <= cutoff)
+    return sorted(df.loc[m, "stock"])
 
-    iv_th   = '<th style="padding:8px 12px;text-align:left;">Impl. Move</th>' if has_iv else ""
+
+def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "",
+                unscored: list[str] | None = None) -> str:
+    n_total = len(stocks_df)
+    n_ha    = int((stocks_df["risk_tier"] == HIGH_ALERT).sum())
+    n_el    = int((stocks_df["risk_tier"] == ELEVATED).sum())
+    has_iv  = "expected_move_pct" in stocks_df.columns and stocks_df["expected_move_pct"].notna().any()
+
+    iv_th   = '<th style="padding:8px 12px;text-align:left;">Options Impl. Move*</th>' if has_iv else ""
     colspan = 8 if has_iv else 7
 
-    # ── High Conviction section ───────────────────────────────────────────────
-    hc_section = ""
-    if n_hc:
-        hc_rows = ""
-        for _, r in stocks_df[hc_mask].iterrows():
-            hc_rows += _table_row(r, has_iv, bg="#fdf6f0")
-        hc_section = f"""
-  <div style="margin-bottom:24px;">
-    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:#c0392b;margin-bottom:8px;">
-      High Conviction &#9733; — {n_hc} event{"s" if n_hc != 1 else ""}
-    </div>
-    <table style="width:100%;border-collapse:collapse;border:1px solid #f0d8cc;border-radius:3px;">
-      <thead>
-        <tr style="background:#c0392b;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">
-          <th style="padding:7px 12px;text-align:left;">Stock</th>
-          <th style="padding:7px 12px;text-align:left;">Company</th>
-          <th style="padding:7px 12px;text-align:left;">Earnings</th>
-          <th style="padding:7px 12px;text-align:left;">Sector</th>
-          <th style="padding:7px 12px;text-align:left;">Risk Level</th>
-          <th style="padding:7px 12px;text-align:left;">Percentile</th>
-          {iv_th}
-          <th style="padding:7px 12px;text-align:left;">Flags</th>
-        </tr>
-      </thead>
-      <tbody>{hc_rows}</tbody>
-    </table>
-  </div>"""
-
-    # ── Full table ────────────────────────────────────────────────────────────
-    rows_html = ""
-    for _, r in stocks_df.iterrows():
-        rows_html += _table_row(r, has_iv)
-
+    rows_html = "".join(_table_row(r, has_iv) for _, r in stocks_df.iterrows())
     if not rows_html:
         rows_html = f'<tr><td colspan="{colspan}" style="padding:16px;text-align:center;color:#999;">No High Alert or Elevated events this week.</td></tr>'
 
     date_line = date_range if date_range else f"Week of {week_of}"
-    hc_pill   = f' &nbsp;·&nbsp; <strong style="color:#c0392b;">High Conviction &#9733; &mdash; {n_hc} event{"s" if n_hc != 1 else ""}</strong> &nbsp;·&nbsp; <span style="color:#888;">&#9733; = High Conviction (High Alert + pre-earnings drift)</span>' if n_hc else ""
+    unscored_line = (f'<div style="font-size:12px;color:#555;margin:-14px 0 22px 0;">'
+                     f'<strong>Not ranked this week:</strong> {", ".join(unscored)}. '
+                     f'{UNSCORED_NOTE}</div>') if unscored else ""
+    iv_note = ("<br><strong>* Options implied move:</strong> market context from the last "
+               "options snapshot. It does not enter the Breakwater score or tier.") if has_iv else ""
 
     return f"""<!DOCTYPE html>
 <html>
@@ -202,22 +149,18 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> 
   </div>
 
   <div style="font-size:13px;line-height:1.7;color:#444;margin-bottom:18px;">
-    Breakwater flags S&amp;P 500 earnings events with elevated risk of a large post-earnings move
-    using information available before the announcement. The signal is about move risk, not direction.
+    Breakwater ranks S&amp;P 500 earnings events by how large this stock's past earnings
+    moves have been, using only information available before the announcement. It is about
+    the size of a potential move, not its direction.
   </div>
 
   <div style="background:#f5f5f5;border-radius:4px;padding:12px 16px;margin-bottom:24px;font-size:13px;">
     <strong>{n_total} flagged earnings events</strong>
     &nbsp;·&nbsp; {n_ha} High Alert
     &nbsp;·&nbsp; {n_el} Elevated
-    {hc_pill}
   </div>
+  {unscored_line}
 
-  {hc_section}
-
-  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:#555;margin-bottom:8px;">
-    All flagged events
-  </div>
   <table style="width:100%;border-collapse:collapse;">
     <thead>
       <tr style="background:#1a1a1a;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">
@@ -225,10 +168,10 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> 
         <th style="padding:8px 12px;text-align:left;">Company</th>
         <th style="padding:8px 12px;text-align:left;">Earnings</th>
         <th style="padding:8px 12px;text-align:left;">Sector</th>
-        <th style="padding:8px 12px;text-align:left;">Risk Level</th>
-        <th style="padding:8px 12px;text-align:left;">Percentile</th>
+        <th style="padding:8px 12px;text-align:left;">Risk Tier</th>
+        <th style="padding:8px 12px;text-align:left;">Risk Percentile</th>
+        <th style="padding:8px 12px;text-align:left;">Avg. Past Move</th>
         {iv_th}
-        <th style="padding:8px 12px;text-align:left;">Flags</th>
       </tr>
     </thead>
     <tbody>
@@ -237,10 +180,10 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "") -> 
   </table>
 
   <div style="margin-top:16px;font-size:11px;color:#999;line-height:1.7;">
-    <strong>Percentile:</strong> Historical earnings-risk rank versus the S&amp;P 500 universe,
-    based only on information available before the announcement.
-    A 97th-percentile event ranks as riskier than approximately 97% of comparable historical events.<br>
-    <strong>High Conviction &#9733;:</strong> High Alert with an active pre-earnings drift signal.
+    <strong>Risk Percentile:</strong> {PERCENTILE_EXPLAINER}<br>
+    <strong>High Alert:</strong> {TIER_BANDS[HIGH_ALERT]}. <strong>Elevated:</strong> {TIER_BANDS[ELEVATED]}.<br>
+    <strong>Avg. past move:</strong> mean 3-session move, either direction, over this stock's
+    past reports with a verified announcement time.{iv_note}
   </div>
 
   <div style="margin-top:20px;background:#f8f8f8;border:1px solid #e5e5e5;border-radius:4px;padding:14px 16px;font-size:12px;line-height:1.7;color:#555;">
@@ -332,7 +275,8 @@ def run_weekly_digest(weeks: int = 1, current_week: bool = False):
     week_of       = start_dt.strftime("%B %d, %Y")
     date_range    = f"{start_dt.strftime('%b %d')} – {end_dt.strftime('%b %d, %Y')}"
     subject       = f"Breakwater Monday Earnings Risk Radar — {date_range}"
-    html          = _build_html(stocks_df, week_of, date_range=date_range)
+    html          = _build_html(stocks_df, week_of, date_range=date_range,
+                                unscored=_select_unscored(df, weeks=weeks, current_week=current_week))
     recipients    = _load_subscribers()
 
     attachments = _collect_reports(stocks_df["stock"].tolist())
@@ -343,6 +287,10 @@ def run_weekly_digest(weeks: int = 1, current_week: bool = False):
         print(html)
         return
 
+    if SMTP_USER and SMTP_PASS:
+        # A real send is publication: production branch only (publishing/guard.py).
+        # Without credentials _send only prints, which any branch may do.
+        require_production_branch("send the weekly digest")
     _send(recipients, subject, html, attachments=attachments or None)
 
 
@@ -355,4 +303,8 @@ if __name__ == "__main__":
                     help="cover THIS week's Mon-Fri whatever day it is run, instead of "
                          "the next complete work week")
     args = ap.parse_args()
-    run_weekly_digest(weeks=args.weeks, current_week=args.current_week)
+    try:
+        run_weekly_digest(weeks=args.weeks, current_week=args.current_week)
+    except PublicationRefused as e:
+        print(f"\n{e}\n")
+        raise SystemExit(3)

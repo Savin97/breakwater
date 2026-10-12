@@ -1,4 +1,5 @@
 # config.py
+import os
 
 # Bump manually on scoring-logic changes; recorded on every predictions snapshot row
 # alongside the git commit, so backtests can tell which model version produced a call.
@@ -10,7 +11,15 @@
 #   0.2   — was labelled "1.1". Adds lift-based tier promotion (commit f3dd1e2).
 #   0.3.1 — is_high_conviction now carries the last completed event's bucket forward,
 #           so HC is correct on pre-earnings rows instead of silently False.
-MODEL_VERSION = "0.3.1"
+#           Legacy target (mismeasures before-open reporters); retired in 0.4.0.
+#   0.4.0 — corrected-target Model B (scoring/model_b.py): causal mean prior anchored
+#           earnings reaction; percentile score against a frozen reference
+#           (scoring/model_b_reference.json); tiers are fixed percentile bands; no legacy
+#           lift, promotions or High Conviction.
+MODEL_VERSION = "0.4.0"
+# Model versions whose archived calls may count toward a track record
+# (db/predictions.duckdb, view predictions_track_record). Pre-0.4 calls are history only.
+TRACK_RECORD_MODEL_VERSIONS = ("0.4.0",)
 
 STOCK_LIST_PATH = "data/stock_list.csv"
 DB_PATH = "db/breakwater.duckdb"
@@ -18,43 +27,18 @@ DB_PATH = "db/breakwater.duckdb"
 # droplet's breakwater.duckdb and overwrites the local copy, so anything stored there is
 # destroyed on the next weekly run; the droplet also has six cron writers a day, making
 # pushing our copy back unsafe. This file is written only by us, and nothing syncs it.
-PREDICTIONS_DB_PATH = "db/predictions.duckdb"
+# BREAKWATER_PREDICTIONS_DB points a validation run at a scratch copy so it can never
+# write the canonical archive.
+PREDICTIONS_DB_PATH = os.environ.get("BREAKWATER_PREDICTIONS_DB", "db/predictions.duckdb")
 OUTPUT_PATH = "output/"
 
 # Global Parameters
 STOCKS_START_DATE = "2000-01-01"
-DEFAULT_REACTION_WINDOW = "reaction_3d" # Model will use 3 days after earnings
-REACTION_THRESHOLD = 0.007
-SHORT_TERM_DRIFT = 30 # 30 past days
-LONG_TERM_DRIFT = 60 # 60 past days
 SHORT_TERM_VOLATILITY = 10 # 10 past days
 LONG_TERM_VOLATILITY = 30 # 30 past days
-SHORT_TERM_MOMENTUM = 5 # 5 past days
-LONG_TERM_MOMENTUM = 20 # 20 past days
-LARGE_EARNINGS_REACTION_THRESHOLD = 0.05 # Based on 75th percentile of abs_reaction_3d
-EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08 # Based on 90th percentile of abs_reaction_3d
+# The Model B validation target: abs_reaction_3d_anchored >= this (scoring/model_b.py).
+EXTREME_EARNINGS_REACTION_THRESHOLD = 0.08
 
-# LEGACY PRODUCTION SETTINGS, pending replacement by Model C. Bucket cut points on
-# earnings_explosiveness_score, originally chosen by decile calibration on the legacy
-# abs_reaction_3d target (testing/metric_testing.py). That target mismeasures before-open
-# announcements, so the calibration and its out-of-sample claim are RETRACTED
-# (audit/PHASE0_AUDIT_REV2.md §Q2-Q3). Kept only because the shipped 0.3.1 scorer uses them.
-# Also used as score floors so a lift-reclassified event cannot score below the tier
-# it is labelled with.
-BUCKET_ELEVATED_FLOOR   = 73
-BUCKET_HIGH_ALERT_FLOOR = 79
-
-# LEGACY PRODUCTION SETTINGS, pending replacement by Model C. Lift-based tier
-# reclassification: a stock whose own past earnings blow up far more often than the market
-# baseline is treated as riskier than its structural score alone implies. The performance
-# figures once quoted here were measured on the legacy target, which mismeasures
-# before-open announcements, and are RETRACTED (audit/PHASE0_AUDIT_REV2.md §Q3: the whole
-# chain feeding stock_bucket_lift was built from mismeasured outcomes). No lift figure is
-# shown to users (P4.1). Kept only because the shipped 0.3.1 scorer uses them.
-# prior_strength shrinks thin per-stock samples toward the market baseline.
-LIFT_PRIOR_STRENGTH     = 20
-LIFT_TO_ELEVATED        = 1.5
-LIFT_TO_HIGH_ALERT      = 3.0
 # IV snapshots: the strike used as "at the money" must be within this fraction of the price.
 # Yahoo sometimes returns a thin chain (a handful of strikes), and the nearest strike it
 # offers can be far from the money — SPGI at $404 was recorded against a $445 strike.
@@ -101,20 +85,3 @@ YFINANCE_JITTER_MIN_SECONDS = 0.05
 YFINANCE_JITTER_MAX_SECONDS = 0.15
 CORRECT_STOCK_COL_NAME = "stock"
 LIST_OF_POSSIBLE_STOCK_COL_NAMES = ["ticker", "Ticker", "Symbol", "symbol", "Stock", "stock"]
-
-# Incremental pipeline — expanding stats that are stable between earnings events.
-# Cached from full_df.parquet in incremental mode instead of recomputed.
-INCREMENTAL_CACHED_COLS = [
-    "abs_reaction_median", "abs_reaction_p75",
-    "abs_reaction_p75_rolling", "abs_reaction_p90_rolling",
-    "reaction_std", "reaction_entropy", "directional_bias",
-    "surprise_streak", "surprise_mean_5", "surprise_std_5",
-    "pre_earnings_drift_z",
-    # Cached directly to avoid score drift when the most recent earnings event
-    # has an incomplete reaction window (reaction_entropy=NaN).
-    "earnings_explosiveness_score", "earnings_explosiveness_bucket",
-    # Lift and the structural (pre-reclassification) bucket: both need
-    # is_extreme_reaction, so they cannot be recomputed in the incremental window.
-    "stock_bucket_lift", "earnings_explosiveness_bucket_structural",
-]
-INCREMENTAL_LOOKBACK_DAYS = 90  # warm-up buffer for longest rolling window (drift_60d = 60d)

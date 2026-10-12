@@ -1,6 +1,8 @@
 """
 Weekly earnings risk chart for social sharing.
 Reads output/upcoming_df.parquet, generates a Twitter-ready PNG.
+Y axis = Breakwater Risk Percentile (Model B; a rank, not a probability). Unscored events
+have no position on it: they are left off the chart and listed in the table text.
 
 Usage (CLI):
     python -m analysis.chart_weekly              # this week (Mon–Fri containing today)
@@ -11,13 +13,13 @@ import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch
 from datetime import date, datetime, timedelta
-import numpy as np
 from pathlib import Path
 
 from utilities.output_utilities import get_run_output_dir
 from analysis.chart_layout import layout_and_fit
+from report.recommendations_builder import PERCENTILE_EXPLAINER, UNSCORED_NOTE
+from scoring.model_b import display_score, sort_by_risk
 
 
 TIER_COLORS = {
@@ -69,7 +71,8 @@ def generate_weekly_earnings_chart(
         print("No upcoming events in window.")
         return ""
 
-    week = week.sort_values(["earnings_date", "peer_percentile"], ascending=[True, False])
+    week = sort_by_risk(week, by=["earnings_date"])
+    plotted = week[week["risk_score"].notna()]
 
     # Always show Mon-Fri regardless of whether events fall on every day
     all_days = [week_start.date() + timedelta(days=i) for i in range(5)]
@@ -81,18 +84,18 @@ def generate_weekly_earnings_chart(
     ax.set_facecolor(BG)
 
     # ── Background tier zones ──────────────────────────────────────────────
-    ax.axhspan(0,  75,  color="#0a0a0a", zorder=0)
-    ax.axhspan(75, 90,  color="#0e0d0b", zorder=0)
+    ax.axhspan(0,  80,  color="#0a0a0a", zorder=0)
+    ax.axhspan(80, 90,  color="#0e0d0b", zorder=0)
     ax.axhspan(90, 100, color="#121008", zorder=0)
 
     # ── Horizontal gridlines ───────────────────────────────────────────────
-    for y in [25, 50, 75, 90]:
+    for y in [25, 50, 80, 90]:
         ax.axhline(y, color=BORDER, linewidth=0.6, zorder=1)
 
     # ── Zone labels (right margin) ─────────────────────────────────────────
     ax.text(4.45, 95,  "HIGH ALERT", va="center", ha="right",
             color=ACCENT,     fontsize=7, fontfamily="monospace", alpha=0.80)
-    ax.text(4.45, 82,  "ELEVATED",   va="center", ha="right",
+    ax.text(4.45, 85,  "ELEVATED",   va="center", ha="right",
             color="#c8a035",  fontsize=7, fontfamily="monospace", alpha=0.80)
     ax.text(4.45, 38,  "NORMAL",     va="center", ha="right",
             color="#ffffff",  fontsize=7, fontfamily="monospace", alpha=0.80)
@@ -108,13 +111,13 @@ def generate_weekly_earnings_chart(
     # ── Y-axis ─────────────────────────────────────────────────────────────
     ax.set_ylim(0, 104)
     ax.set_xlim(-0.55, n_days - 0.45)
-    ax.set_yticks([0, 25, 50, 75, 90, 100])
+    ax.set_yticks([0, 25, 50, 80, 90, 100])
     ax.set_yticklabels(
-        ["0th", "25th", "50th", "75th", "90th", "100th"],
+        ["0th", "25th", "50th", "80th", "90th", "100th"],
         color=TEXT_MUT, fontsize=8, fontfamily="monospace",
     )
     ax.tick_params(axis="y", colors=TEXT_MUT, length=0)
-    ax.set_ylabel("Peer Percentile", color=TEXT_MUT, fontsize=9,
+    ax.set_ylabel("Breakwater Risk Percentile", color=TEXT_MUT, fontsize=9,
                   fontfamily="monospace", labelpad=10)
 
     for spine in ax.spines.values():
@@ -145,24 +148,30 @@ def generate_weekly_earnings_chart(
     )
 
     # ── Footer ─────────────────────────────────────────────────────────────
+    # Unscored events have no percentile to plot. Name them rather than drop them
+    # silently, so an absent ticker cannot read as low risk.
+    unscored = sorted(week.loc[week["risk_score"].isna(), "stock"])
+    if unscored:
+        fig.text(0.5, 0.075, "Not ranked (insufficient history — not low risk): "
+                 + ", ".join(unscored), ha="center", color=TEXT_MUT, fontsize=7.5,
+                 fontfamily="monospace")
     fig.text(0.5, 0.012, "harbor-markets.com  ·  Breakwater",
              ha="center", color=TEXT_MUT, fontsize=8, fontfamily="monospace")
 
     # Finalize axes layout before placing stock labels, so the pixel/data
     # scale used for decluttering matches what's actually saved.
-    fig.tight_layout(rect=(0, 0.065, 1, 0.90))
+    fig.tight_layout(rect=(0, 0.10 if unscored else 0.065, 1, 0.90))
 
     # ── Plot stocks ────────────────────────────────────────────────────────
     date_to_x = {d: i for i, d in enumerate(all_days)}
     day_texts: dict[date, list] = {d: [] for d in all_days}
 
-    for _, row in week.iterrows():
+    for _, row in plotted.iterrows():
         d     = row["earnings_date"].date()
         x_raw = date_to_x[d]
-        y     = float(row["peer_percentile"])
-        tier  = row["earnings_explosiveness_bucket"]
-        hc    = row.get("is_high_conviction", False)
-        label = ("★ " if hc else "") + row["stock"]
+        y     = float(row["risk_score"])
+        tier  = row["risk_tier"]
+        label = row["stock"]
 
         fc = TIER_COLORS.get(tier, TIER_COLORS["Normal"])
         tc = TIER_TEXT_COLORS.get(tier, TIER_TEXT_COLORS["Normal"])
@@ -213,62 +222,51 @@ def generate_weekly_earnings_chart(
     return output_path
 
 
-TIER_ORDER = {"High Alert": 0, "Elevated": 1, "Normal": 2}
+def _ranked(week: pd.DataFrame) -> pd.DataFrame:
+    return sort_by_risk(week)
 
 
 def _build_weekly_table_text(week: pd.DataFrame, week_start: pd.Timestamp) -> str:
     week_label = f"Week of {week_start.strftime('%B %-d')}"
     lines = [f"  Earnings Risk — {week_label}", ""]
 
-    col_w = {"date": 11, "ticker": 8, "tier": 12, "pct": 6, "hc": 4}
+    col_w = {"date": 11, "ticker": 8, "tier": 12, "pct": 6, "avg": 10}
     header = (
         f"  {'DATE':<{col_w['date']}}"
         f"{'TICKER':<{col_w['ticker']}}"
         f"{'TIER':<{col_w['tier']}}"
-        f"{'PCT':>{col_w['pct']}}"
-        f"  {'HC':<{col_w['hc']}}"
+        f"{'PCTL':>{col_w['pct']}}"
+        f"{'AVG MOVE':>{col_w['avg']}}"
     )
-    divider = "  " + "-" * (sum(col_w.values()) + 4)
     lines.append(header)
-    lines.append(divider)
+    lines.append("  " + "-" * sum(col_w.values()))
 
-    week = week.copy()
-    # .astype(str) first: earnings_explosiveness_bucket is an ordered Categorical
-    # (Normal < Elevated < High Alert), and .map() on a Categorical keeps that
-    # category order for the result rather than the numeric order of TIER_ORDER.
-    week["_tier_rank"] = week["earnings_explosiveness_bucket"].astype(str).map(TIER_ORDER).fillna(9)
-    week = week.sort_values(["_tier_rank", "peer_percentile"], ascending=[True, False])
-
-    for _, row in week.iterrows():
-        date_str = row["earnings_date"].strftime("%a %b %-d")
-        ticker   = row["stock"]
-        tier     = row["earnings_explosiveness_bucket"]
-        pct      = f"{row['peer_percentile']:.0f}th"
-        hc       = "★" if row.get("is_high_conviction", False) else ""
+    for _, row in _ranked(week).iterrows():
+        pct = display_score(row["risk_score"])
+        avg = row.get("model_b_hist_mean_abs")
         lines.append(
-            f"  {date_str:<{col_w['date']}}"
-            f"{ticker:<{col_w['ticker']}}"
-            f"{tier:<{col_w['tier']}}"
-            f"{pct:>{col_w['pct']}}"
-            f"  {hc:<{col_w['hc']}}"
+            f"  {row['earnings_date'].strftime('%a %b %-d'):<{col_w['date']}}"
+            f"{row['stock']:<{col_w['ticker']}}"
+            f"{row['risk_tier']:<{col_w['tier']}}"
+            f"{('—' if pct is None else str(pct)):>{col_w['pct']}}"
+            f"{('—' if pd.isna(avg) else f'{avg * 100:.1f}%'):>{col_w['avg']}}"
         )
+    lines += ["", f"  {PERCENTILE_EXPLAINER}"]
+    if (week["risk_tier"] == "Unscored").any():
+        lines.append(f"  {UNSCORED_NOTE}")
     lines.append("")
     return "\n".join(lines)
 
 
 def _build_weekly_table_df(week: pd.DataFrame) -> pd.DataFrame:
-    week = week.copy()
-    # .astype(str) first: earnings_explosiveness_bucket is an ordered Categorical
-    # (Normal < Elevated < High Alert), and .map() on a Categorical keeps that
-    # category order for the result rather than the numeric order of TIER_ORDER.
-    week["_tier_rank"] = week["earnings_explosiveness_bucket"].astype(str).map(TIER_ORDER).fillna(9)
-    week = week.sort_values(["_tier_rank", "peer_percentile"], ascending=[True, False])
+    week = _ranked(week)
     return pd.DataFrame({
-        "earnings_date":      week["earnings_date"].dt.strftime("%Y-%m-%d"),
-        "stock":              week["stock"],
-        "tier":               week["earnings_explosiveness_bucket"],
-        "peer_percentile":    week["peer_percentile"],
-        "is_high_conviction": week.get("is_high_conviction", False),
+        "earnings_date":         week["earnings_date"].dt.strftime("%Y-%m-%d"),
+        "stock":                 week["stock"],
+        "risk_tier":             week["risk_tier"],
+        "risk_score":            week["risk_score"].apply(display_score),
+        "model_b_hist_mean_abs": week["model_b_hist_mean_abs"],
+        "model_b_n_prior":       week["model_b_n_prior"],
     })
 
 

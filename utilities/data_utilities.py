@@ -4,7 +4,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from pathlib import Path
 
-from config import (DEFAULT_REACTION_WINDOW,STOCK_LIST_PATH)
+from config import STOCK_LIST_PATH
 # ------------------------------------------------------------
 # Formatting utilities 
 # ------------------------------------------------------------
@@ -106,14 +106,6 @@ def get_alpha_vantage_api_key() -> str:
         )
     return api_key
 
-def build_earnings_df(df):
-    """ Separate earnings rows """
-    # Boolean mask, gives True for rows with earnings dates
-    earnings_mask =  df[DEFAULT_REACTION_WINDOW].notna()
-    earnings_df = df.loc[earnings_mask]
-    earnings_df = earnings_df.sort_values(["stock", "earnings_date"])
-    return earnings_df
-
 def read_stocks_to_fetch(con=None, active_only: bool = False) -> list[str]:
     """
         Reads stocks from a file. Supports:
@@ -197,7 +189,7 @@ def week_block_window(weeks_back: int | None = None, weeks_forward: int | None =
     """
     Return (start, end) for N whole Mon-Fri work weeks, looking backward, forward, or
     from an explicit Monday. The block arithmetic every week-windowed reader needs, in
-    one place — analysis/last_week_results.py and save_predictions.py each grew their
+    one place — analysis/last_week_results.py and the predictions archiver each grew their
     own before this.
 
     Exactly one of weeks_back / weeks_forward / monday must be given.
