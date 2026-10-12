@@ -86,4 +86,4 @@ def save_predictions_snapshot(df: pd.DataFrame, weeks: int = 1,
     con.unregister("tmp_predictions")
     con.close()
     print(f"Saved {len(snap)} prediction rows → predictions table "
-          f"(asof {today.date()}, week ending {week_end.date()})")
+          f"(asof {today.date()}, week ending {window_end.date()})")
