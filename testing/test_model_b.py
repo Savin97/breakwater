@@ -320,6 +320,10 @@ def test_tier_uses_nothing_but_the_percentile():
 
 
 # ── Real data ─────────────────────────────────────────────────────────────────
+# Today's output/, refreshed by every pipeline run: only invariants that hold on any data
+# here. Exact counts and bit-identity (the reference sample of 20,491, the approved
+# scores) are pinned to the immutable snapshot in testing/test_model_b_snapshot.py —
+# ingestion revises history, so they cannot hold on live data.
 
 EVENTS_PATH = "output/events_df.parquet"
 
@@ -333,11 +337,15 @@ def real_events():
     return B.score_events(ev, daily), daily
 
 
-def test_real_reference_sample_reproduces(real_events):
-    """The artifact's n is what the production implementation finds on today's data."""
+def test_real_reference_sample_is_built_on_today_s_data(real_events):
+    """The reference builder runs on refreshed data and finds a plausible sample. Its
+    exact size is NOT asserted here: it drifts as history is revised (the snapshot test
+    pins 20,491)."""
     from scoring.build_model_b_reference import reference_sample
     ev, daily = real_events
-    assert len(reference_sample(ev, daily)) == B.load_reference().meta["reference_n"]
+    sample = reference_sample(ev, daily)
+    assert len(sample) > 15000 and sample["model_b_hist_mean_abs"].notna().all()
+    assert (pd.to_datetime(sample["earnings_date"]).dt.year >= 2014).all()
 
 
 def test_real_every_pending_event_with_enough_history_is_scored(real_events):

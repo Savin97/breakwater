@@ -12,16 +12,44 @@ starting" and "leave it for now". Same for deliverable, workstream, bandwidth, c
 back, align on, surface it: if a word describes a *process* rather than a *thing being
 done*, replace it with the thing being done.
 
+- **Never create or change files outside this repo** (corrected 2026-10-13, after backups
+  were written to `~/breakwater_backups/` unasked). Backups and scratch files go in a
+  gitignored place inside the repo (`output/`, `db/`), or ask first.
 - **Do not invent categories.** "Phase 3 deliverable" was made up; the real list is
   P3.1-P3.5 in `audit/PHASE0_AUDIT_REV2.md`. Check the source before naming something.
 - **Lead with the concrete artifact, not the statistics.** A table of real events
   (tickers, scores, outcomes) explained the score-ceiling problem instantly after
   several paragraphs of AUCs and confidence intervals had not.
 
-## Current state — updated 2026-10-04 (end of session)
+## Current state — updated 2026-10-13
 
-- **Model B is productionized as 0.4.0 on `methodology-rebuild`, UNCOMMITTED** (Michael
-  commits). `scoring/model_b.py`: mean prior `abs_reaction_3d_anchored` (status available,
+- **2026-10-13 (later), UNCOMMITTED:** (1) Pinned snapshot `scoring/model_b_snapshot.py` →
+  gitignored read-only `data/snapshots/model_b_0.4.0_20260928/` (approved events
+  `556f4797…`, session grid ≤ 2026-09-28, refit oracle), SHA-256 pinned in the module; copy
+  in `output/backups_2026-10-13/snapshots_copy/`. Exact checks (`testing/test_model_b_snapshot.py`,
+  equivalence tests, `--check`) read it; `--live` = drift report on output/. (2) Self-migration
+  voids every 0.3.1 call (reason `LEGACY_0_3_1_VOID_REASON`, + stale-score note where
+  score_asof_date is NULL); published values untouched. (3) `track_record_select()` /
+  `read_track_record()` in db_utilities: readers compute the track record from the table,
+  never the stored view. Canonical DB `9f98383f…`: 63 rows, all void, track record 0.
+  Suite 567 + 19, scores identical before/after. 2026-10-14: snapshot provenance and the
+  fresh-clone rule (6 exact tests skip without the private folder) documented in the module
+  + CLAUDE.md; audit plan backups now point at output/backups/. 16 files staged by name for
+  Michael's commit. Next: re-check origin/master (still a2159de, DB blob 083a7835 = the 35
+  reconciled rows on 2026-10-14), merge origin/master INTO methodology-rebuild (keep our
+  predictions.duckdb, keep save_predictions.py deleted), verify, push this branch only.
+- **2026-10-13:** Model B 0.4.0 is COMMITTED locally as `5cc7e64` (2026-10-12, not pushed;
+  origin/methodology-rebuild = a7edae6). Master `a2159de` (Oct 12) = NameError fix in the
+  old save_predictions (already absent from publishing/archive_calls.py — nothing to port)
+  + 25 published 0.3.1 calls (asof 2026-10-12, git_commit 8fcf3b7, all Normal). Predictions
+  DB merged: 63 rows (10 preaudit voided, 28 Sept 0.3.1, 25 Oct-12 0.3.1 unvoided), every
+  original value kept, self-migration applied (track_record view had been stale: returned
+  20 0.3.1 calls; now 0). New hash `cc33b337…` — UNCOMMITTED. Backups of every version:
+  `output/backups_2026-10-13/2026-10-13_db_reconcile/` (moved there from ~ on request). Both open points from this were
+  resolved later the same day (entry above): all 0.3.1 calls voided; the data-dependent
+  tests (5 droplet date corrections → live reference n 20,493 vs frozen 20,491; pending
+  cutoffs follow the price horizon) now run on the pinned snapshot.
+- Model B is productionized as 0.4.0 on `methodology-rebuild` (Michael commits). `scoring/model_b.py`: mean prior `abs_reaction_3d_anchored` (status available,
   endpoint <= call cutoff = last session before the report-week Monday), >= 8 priors else
   Unscored; `risk_score` = Breakwater Risk Percentile vs frozen `scoring/model_b_reference.json`
   (2014–2025, n 20,491, checksummed); tiers HA >= 90 / Elevated 80–90 / Normal / Unscored.

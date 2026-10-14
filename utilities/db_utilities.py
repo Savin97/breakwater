@@ -7,13 +7,30 @@
     create_iv_table_if_not_exists
     create_eps_estimates_table_if_not_exists
     create_predictions_table_if_not_exists
+    track_record_select / read_track_record
 """
+import duckdb
 import pandas as pd
 import logging
 from config import TRACK_RECORD_MODEL_VERSIONS
 from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
+
+# Why every legacy 0.3.1 call is void for the 0.4.0 track record (decided 2026-10-13; the
+# 2026-08-31 calls keep their own P4.2 reason below). Stored on each row in void_reason.
+LEGACY_0_3_1_VOID_REASON = (
+    "Legacy 0.3.1 scorer, retired in 0.4.0: its features and 73/79 tier cuts were built on "
+    "the report-date reaction target, which mismeasures before-open (BMO) announcements "
+    "(audit/PHASE0_AUDIT_REV2.md Q1-Q2), and the cuts were selected on that same history "
+    "with no out-of-sample record (Q3). Not a Model B call; void for the 0.4.0 prospective "
+    "track record.")
+# Added for calls written by master's pre-rebuild writer, the ones without score_asof_date
+# (analysis/save_predictions.py at 8fcf3b7: groupby("stock").last()).
+LEGACY_STALE_SCORE_NOTE = (
+    " Written by the pre-rebuild master writer: score taken from the stock's latest daily "
+    "row, i.e. inherited from its previous completed event (Issue 2, audit Q4); no score "
+    "cutoff recorded.")
 
 def create_prices_table_if_not_exists(con):
     # ensure table exists (match your schema)
@@ -257,6 +274,18 @@ def create_predictions_table_if_not_exists(con):
         WHERE prediction_asof_date <= DATE '2026-08-31'
           AND model_version IN ('0.3.1', '0.3.1-preaudit')
     """)
+    # Every other 0.3.1 call — 2026-09-06 to 2026-10-12, and any merged in later — came
+    # from the same retired scorer. Voided here, in the self-migration, for the same reason
+    # as above: it must survive a DB that is restored or merged from another copy. Only the
+    # flag and the reason are set; model_version, tier, score, dates and git_commit stay
+    # exactly as published, and a row something has already voided keeps its reason.
+    con.execute("""
+        UPDATE predictions
+        SET void_for_track_record = TRUE,
+            void_reason = ? || CASE WHEN score_asof_date IS NULL THEN ? ELSE '' END
+        WHERE model_version = '0.3.1'
+          AND NOT COALESCE(void_for_track_record, FALSE)
+    """, [LEGACY_0_3_1_VOID_REASON, LEGACY_STALE_SCORE_NOTE])
     con.execute("""
         UPDATE predictions
         SET run_week = date_trunc('week', prediction_asof_date)
@@ -293,21 +322,49 @@ def create_predictions_table_if_not_exists(con):
     con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS model_b_hist_mean_abs DOUBLE")
     con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS model_b_n_prior INTEGER")
 
-    # The track-record-safe slice: the FIRST call per event made by a model version in
-    # TRACK_RECORD_MODEL_VERSIONS, scored from data before the event, minus anything
-    # voided. Pre-0.4 calls (0.3.1, 0.3.1-preaudit) never enter it — they stay in
-    # `predictions` as history. ANY published/marketing number must come from this view.
-    # Re-created on every call, so a change here reaches existing databases.
+    # The track-record-safe slice, re-created on every call so a change here reaches
+    # existing databases — but only databases this function runs on, which is the archiver
+    # alone. Readers open the archive read-only and cannot migrate it, so they never read
+    # this view: they call read_track_record(), which runs the same SELECT on the table.
+    con.execute(f"CREATE OR REPLACE VIEW predictions_track_record AS {track_record_select()}")
+
+
+def track_record_select(has_void_flag: bool = True) -> str:
+    """THE definition of the track record: the first ELIGIBLE call per event — a model
+    version in TRACK_RECORD_MODEL_VERSIONS, not voided, scored from data before the event.
+    Pre-0.4 calls (0.3.1, 0.3.1-preaudit) never enter it; they stay in `predictions` as
+    history. ANY published or marketing number must come from this.
+
+    Eligibility is in WHERE, which runs before DISTINCT ON picks the first call, so an
+    ineligible earlier call (a voided 0.3.1 call, a voided 0.4.0 call) never hides a later
+    eligible 0.4.0 call on the same event."""
     versions = ", ".join(f"'{v}'" for v in TRACK_RECORD_MODEL_VERSIONS)
-    con.execute(f"""
-        CREATE OR REPLACE VIEW predictions_track_record AS
+    void = "AND NOT COALESCE(void_for_track_record, FALSE)" if has_void_flag else ""
+    return f"""
         SELECT DISTINCT ON (stock, earnings_date) *
         FROM predictions
         WHERE model_version IN ({versions})
-          AND NOT COALESCE(void_for_track_record, FALSE)
+          {void}
           AND score_asof_date < earnings_date
-        ORDER BY stock, earnings_date, prediction_asof_date;
-    """)
+        ORDER BY stock, earnings_date, prediction_asof_date"""
+
+
+def read_track_record(con) -> pd.DataFrame:
+    """The track record, computed from the `predictions` table with track_record_select()
+    — never read from the stored predictions_track_record view. A stored view is only as
+    current as the last migration of that file: the archive committed at 5cc7e64 still
+    carried a pre-0.4.0 view that returned 20 legacy 0.3.1 calls as the track record.
+
+    Works on a read-only connection and on any schema: a table without model_version or
+    score_asof_date cannot hold an eligible call, so it yields no rows."""
+    try:
+        cols = [r[0] for r in con.execute("DESCRIBE predictions").fetchall()]
+    except duckdb.CatalogException:
+        return pd.DataFrame()
+    if not {"model_version", "score_asof_date"} <= set(cols):
+        return pd.DataFrame(columns=cols)
+    return con.execute(track_record_select("void_for_track_record" in cols)).df()
+
 
 def merge_tables(con):
     """

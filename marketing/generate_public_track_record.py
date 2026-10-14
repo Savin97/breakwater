@@ -41,6 +41,7 @@ import pandas as pd
 
 import config
 from feature_engineering.announcement_timing import TARGET_AVAILABLE
+from utilities.db_utilities import read_track_record
 from utilities.output_utilities import get_run_output_dir
 
 EVENTS_PARQUET = Path("output/events_df.parquet")
@@ -116,7 +117,8 @@ def drop_voided(df: pd.DataFrame) -> pd.DataFrame:
 def load_archived_calls(db_path: str | None = None) -> pd.DataFrame:
     con = duckdb.connect(db_path or config.PREDICTIONS_DB_PATH, read_only=True)
     try:
-        return con.execute("SELECT * FROM predictions_track_record").df()
+        # From the table, not the stored view: an unmigrated DB keeps a stale view.
+        return read_track_record(con)
     finally:
         con.close()
 

@@ -4,8 +4,15 @@ Builds `scoring/model_b_reference.json` — the frozen scale that turns the raw 
 signal into the Breakwater Risk Percentile. A maintainer tool, run once; never on the
 pipeline path.
 
-    python -m scoring.build_model_b_reference            # writes the artifact
-    python -m scoring.build_model_b_reference --check    # rebuilds and diffs, writes nothing
+    python -m scoring.build_model_b_reference                 # writes the artifact
+    python -m scoring.build_model_b_reference --check         # rebuilds from the pinned
+                                                              # snapshot, diffs, writes nothing
+    python -m scoring.build_model_b_reference --check --live  # same on today's output/
+
+`--check` rebuilds from the pinned 2026-09-28 snapshot (scoring/model_b_snapshot.py) the
+artifact was frozen from, so it must match bit-for-bit. `--check --live` rebuilds from
+today's output/: ingestion revises history, so a difference there is data drift, reported
+for information — it never means the artifact should be regenerated.
 
 Reference sample (the 0.4.0 production-fit sample, as in analysis/model_c_refit's
 candidate production fit): completed events whose corrected 3-session outcome is
@@ -101,9 +108,17 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--check", action="store_true",
                     help="rebuild and compare with the committed artifact; write nothing")
+    ap.add_argument("--live", action="store_true",
+                    help="with --check: rebuild from today's output/ instead of the snapshot")
     a = ap.parse_args(argv)
-    events = pd.read_parquet(EVENTS_PARQUET)
-    daily = pd.read_parquet(DAILY_PARQUET, columns=["stock", "date"])
+    if a.check and not a.live:
+        from scoring import model_b_snapshot
+        events, daily = model_b_snapshot.load()
+        print(f"inputs: pinned snapshot {model_b_snapshot.SNAPSHOT_DIR.name}")
+    else:
+        events = pd.read_parquet(EVENTS_PARQUET)
+        daily = pd.read_parquet(DAILY_PARQUET, columns=["stock", "date"])
+        print(f"inputs: {EVENTS_PARQUET} (live)")
     sample = reference_sample(events, daily)
     payload = build_payload(sample, daily)
     print(f"reference sample: n={payload['reference_n']}, {payload['reference_stocks']} "
@@ -113,10 +128,11 @@ def main(argv=None) -> int:
     if a.check:
         old = json.loads(B.REFERENCE_PATH.read_text())
         same = (old["reference_n"] == payload["reference_n"]
-                and np.allclose(old["quantiles"]["values"], payload["quantiles"]["values"],
-                                rtol=0, atol=1e-12))
+                and old["quantiles"]["values"] == payload["quantiles"]["values"])
         print("MATCHES the committed artifact" if same else
-              "DIFFERS from the committed artifact (the data under it changed)")
+              "DIFFERS from the committed artifact" + (
+                  " (live data drifted since 2026-09-28 — expected; do not regenerate)"
+                  if a.live else " — the snapshot or the implementation changed"))
         return 0 if same else 1
     Path(B.REFERENCE_PATH).write_text(json.dumps(payload, indent=1) + "\n")
     print(f"wrote {B.REFERENCE_PATH} (sha256 {payload['sha256'][:12]}…)")

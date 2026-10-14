@@ -104,10 +104,16 @@ Rules that follow from it:
   historical backtest — never quote it as live performance or in marketing. The customer
   score is a percentile RANK; never present it, or anything else, as a probability, chance,
   multiple of a market rate, expected move or direction.
-- **Track record: prospective 0.4.0 calls only.** Pre-0.4 archived calls (0.3.1 and
-  0.3.1-preaudit) are void for the 0.4.0 record; the `predictions_track_record` view holds
-  only the first 0.4.0 call per event, and `marketing/generate_public_track_record.py` stays
-  paused until enough of them have resolved and Michael decides to publish.
+- **Track record: prospective 0.4.0 calls only.** Every pre-0.4 archived call is voided
+  (`void_for_track_record`, with `void_reason`; versions, scores and dates kept as
+  published): the 10 `0.3.1-preaudit` calls under P4.2 and, since 2026-10-13, all 53 later
+  `0.3.1` calls (self-migration in `create_predictions_table_if_not_exists`). The track
+  record is the first ELIGIBLE 0.4.0 call per event — eligibility is filtered before the
+  first call is taken — defined once in `track_record_select()` (`utilities/db_utilities.py`).
+  Readers call `read_track_record()`, which runs it on the table: a stored
+  `predictions_track_record` view is only as current as that file's last migration (the
+  archive at 5cc7e64 had one returning 20 legacy calls). `marketing/generate_public_track_record.py`
+  stays paused until enough 0.4.0 calls have resolved and Michael decides to publish.
 
 ## Commands
 
@@ -141,11 +147,14 @@ python -m testing.metric_testing
 python -m testing.calibration
 python -m testing.backtesting
 
-# Rebuild the percentile reference and diff it against the committed artifact (writes nothing)
+# Rebuild the percentile reference from the pinned 2026-09-28 snapshot and diff it against
+# the committed artifact — must match bit-for-bit (writes nothing). --live: same on today's
+# output/, a drift report only; never a reason to regenerate.
 python -m scoring.build_model_b_reference --check
+python -m scoring.build_model_b_reference --check --live
 
-# Production Model B vs the frozen refit oracle (research evidence; reads output/model_c_refit/)
-PYTHONPATH=. python -m analysis.model_b_validation.validate
+# Production Model B vs the frozen refit oracle, on the pinned snapshot (research evidence)
+PYTHONPATH=. python -m analysis.model_b_validation.validate          # --live: today's output/
 PYTHONPATH=. python -m pytest analysis/model_b_validation/tests analysis/model_c_refit/tests -q
 
 # Run the whole test suite
@@ -175,7 +184,7 @@ Every forward-looking consumer reads the event frame's pending rows (`pending_ev
 - **Parquet** (`output/full_df.parquet`): the daily frame (prices, snapshots, stage 3 columns). Carries NO score; nothing customer-facing reads a score from it.
 - **Parquet** (`output/streamlit_df.parquet`, `output/upcoming_df.parquet`): produced by `streamlit_dash/streamlit_export.py`; consumed by the Streamlit app.
 - **Parquet** (`output/events_df.parquet`, ~15 MB): the Model B-scored event frame. One row per earnings event; `is_pending == 0` is history (each scored as of its own cutoff), `is_pending == 1` is the upcoming call. Every forward-looking consumer reads this.
-- **Prediction archive** (`db/predictions.duckdb`, tracked): one row per PUBLISHED call per run day, written only by `publishing/archive_calls.py --published` from the master publication workflow. Only grows; old 0.3.1 rows are evidence and are never rewritten. 0.4.0 rows add `model_b_hist_mean_abs`, `model_b_n_prior` and the cutoff in `score_asof_date`, with the legacy flag columns NULL.
+- **Prediction archive** (`db/predictions.duckdb`, tracked): one row per PUBLISHED call per run day, written only by `publishing/archive_calls.py --published` from the master publication workflow. Only grows; old 0.3.1 rows are evidence: their published values are never rewritten (only the void flag and reason, set by the self-migration). 0.4.0 rows add `model_b_hist_mean_abs`, `model_b_n_prior` and the cutoff in `score_asof_date`, with the legacy flag columns NULL.
 - **Reference artifact** (`scoring/model_b_reference.json`, tracked): the frozen percentile scale, checksummed.
 - **Stock universe** (`data/stock_list.csv`): the list of stocks to process.
 
@@ -383,6 +392,18 @@ probability level drifts by year — so ship B and expose a rank, not a probabil
 - **Equivalence**: production reproduces the frozen refit's B feature exactly on all 46,200
   events (identities, cutoffs, n_prior, signal bit-identical; reference sample = the refit's
   candidate-fit sample) — `analysis/model_b_validation/`.
+- **Pinned snapshot** (`scoring/model_b_snapshot.py`): the inputs 0.4.0 was approved on —
+  the event frame, the market sessions through 2026-09-28 and the refit oracle frame — in
+  gitignored, read-only `data/snapshots/model_b_0.4.0_20260928/`, SHA-256-checked on every
+  load. Every exact-match check runs on it (`testing/test_model_b_snapshot.py`, the
+  equivalence tests, `--check`), never on `output/`: pipeline runs refresh `output/` and
+  ingestion revises history (2026-10 date corrections moved the live reference sample to
+  20,493). A missing snapshot skips those tests with a message; a changed one fails. Never
+  refresh it; never edit its fingerprint to make a check pass. Live-data tests assert only
+  invariants that hold on any data. Provenance is in the module docstring. **Fresh clones
+  do not have it** — it is private (vendor-derived timing; never commit it): the six
+  exact-match tests skip there and `validate` / `--check` stop, until the folder is copied
+  in privately; its hashes prove it is the right one.
 - **Public dashboard**: scores appear only on upcoming calls. Past events show their corrected
   reaction alone — never a reconstructed score/tier beside an outcome (track record paused).
   Retro-scored history is internal: `analysis/predictions_range.py`.

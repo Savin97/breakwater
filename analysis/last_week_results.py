@@ -29,6 +29,7 @@ import pandas as pd
 import config
 from feature_engineering.announcement_timing import TARGET_AVAILABLE
 from scoring.model_b import HIGH_ALERT, ELEVATED, display_score, sort_by_risk
+from utilities.db_utilities import read_track_record
 from utilities.output_utilities import get_run_output_dir
 
 EVENTS_PARQUET = "output/events_df.parquet"
@@ -52,16 +53,17 @@ def archived_calls(start, end, db_path=None) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     con = duckdb.connect(db_path, read_only=True)
     try:
-        out = con.execute(f"""
-            SELECT {', '.join(cols)} FROM predictions_track_record
-            WHERE earnings_date BETWEEN ? AND ?
-        """, [pd.Timestamp(start).date(), pd.Timestamp(end).date()]).df()
-    except duckdb.Error:          # a DB that predates the 0.4.0 view / columns
-        out = pd.DataFrame(columns=cols)
+        # From the table, not the stored view: an unmigrated DB keeps a stale view.
+        calls = read_track_record(con)
+    except duckdb.Error:
+        calls = pd.DataFrame(columns=cols)
     finally:
         con.close()
-    out["earnings_date"] = pd.to_datetime(out["earnings_date"])
-    return out
+    if calls.empty:
+        return pd.DataFrame(columns=cols).assign(earnings_date=pd.to_datetime([]))
+    calls["earnings_date"] = pd.to_datetime(calls["earnings_date"])
+    out = calls[calls["earnings_date"].between(pd.Timestamp(start), pd.Timestamp(end))]
+    return out.reindex(columns=cols).reset_index(drop=True)
 
 
 def results_table(calls: pd.DataFrame, events_df: pd.DataFrame) -> pd.DataFrame:

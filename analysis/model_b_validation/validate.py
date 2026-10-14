@@ -1,14 +1,19 @@
 """Production Model B vs the frozen refit oracle — the gate before any customer output.
 
-    PYTHONPATH=. .venv/bin/python -m analysis.model_b_validation.validate
+    PYTHONPATH=. .venv/bin/python -m analysis.model_b_validation.validate          # pinned snapshot
+    PYTHONPATH=. .venv/bin/python -m analysis.model_b_validation.validate --live   # today's output/
 
 Research evidence, not production: it imports the frozen refit
 (`analysis/model_c_refit/`) as the oracle, and nothing in production imports this file.
 Writes only output/model_b_validation/ (gitignored).
 
-1. Equivalence. Production `scoring.model_b.raw_signal` on the production event frame
-   vs the oracle's saved `output/model_c_refit/frame.parquet` (built 2026-10-03 from the
-   same DB): event identities, call cutoff, n_prior, hist_mean_abs, ranking.
+1. Equivalence. Production `scoring.model_b.raw_signal` on the approved event frame vs
+   the oracle frame (analysis/model_c_refit, built 2026-10-03 from the same DB): event
+   identities, call cutoff, n_prior, hist_mean_abs, ranking. Both come from the pinned
+   snapshot `scoring/model_b_snapshot.py` (prices through 2026-09-28), so the result is
+   exact and does not move when the pipeline refreshes output/. `--live` runs the same
+   comparison on today's output/ instead: a drift report — pending cutoffs follow the
+   price horizon and ingestion revises history, so live differences are expected.
 2. Reference sample = the oracle's candidate production-fit training rows, by identity.
 3. Regression: B's walk-forward (oracle protocol) recomputed from the production signal;
    expectations from RESULTS.md, not targets.
@@ -26,11 +31,13 @@ import pandas as pd
 from analysis.model_c_refit import frame as F
 from analysis.model_c_refit import model as M
 from scoring import model_b as B
+from scoring import model_b_snapshot as SNAP
 from scoring.build_model_b_reference import reference_sample
 
-ORACLE_FRAME = Path("output/model_c_refit/frame.parquet")
-EVENTS = "output/events_df.parquet"
-DAILY = "output/full_df.parquet"
+# --live inputs only; the default inputs are the pinned snapshot (SNAP).
+LIVE_ORACLE_FRAME = Path("output/model_c_refit/frame.parquet")
+LIVE_EVENTS = "output/events_df.parquet"
+LIVE_DAILY = "output/full_df.parquet"
 OUT = Path("output/model_b_validation")
 KEY = ["stock", "earnings_date"]
 
@@ -39,9 +46,16 @@ EXPECTED = {"oof": {"roc_auc": 0.715, "pr_auc": 0.357, "top10_capture": 0.251,
             "2026": {"roc_auc": 0.717, "top10_capture": 0.203, "top20_capture": 0.386}}
 
 
-def production_signal(events_path=EVENTS, daily_path=DAILY):
-    events = pd.read_parquet(events_path)
-    daily = pd.read_parquet(daily_path, columns=["stock", "date"])
+def load_inputs(live: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """(oracle, events, daily): the pinned snapshot, or today's output/ with `live`."""
+    if live:
+        return (pd.read_parquet(LIVE_ORACLE_FRAME), pd.read_parquet(LIVE_EVENTS),
+                pd.read_parquet(LIVE_DAILY, columns=["stock", "date"]))
+    events, daily = SNAP.load()
+    return SNAP.load_oracle(), events, daily
+
+
+def production_signal(events: pd.DataFrame, daily: pd.DataFrame):
     sig = B.raw_signal(events, daily)
     prod = pd.concat([events[KEY + ["is_pending"]], sig], axis=1)
     prod["earnings_date"] = pd.to_datetime(prod["earnings_date"])
@@ -164,10 +178,15 @@ def band_behaviour(s: pd.DataFrame) -> dict:
     return out
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description="Production Model B vs the frozen refit oracle.")
+    ap.add_argument("--live", action="store_true",
+                    help="compare on today's output/ (drift report) instead of the snapshot")
+    a = ap.parse_args(argv)
     OUT.mkdir(parents=True, exist_ok=True)
-    oracle = pd.read_parquet(ORACLE_FRAME)
-    events, daily, prod = production_signal()
+    oracle, events, daily = load_inputs(live=a.live)
+    events, daily, prod = production_signal(events, daily)
     reference = B.load_reference()
     res = {"equivalence": equivalence(oracle, prod),
            "reference_identity": reference_identity(events, daily, oracle)}
@@ -175,7 +194,9 @@ def main() -> int:
     res["regression"] = regression(s)
     res["bands"] = band_behaviour(s)
     res["expected"] = EXPECTED
-    (OUT / "validation.json").write_text(json.dumps(res, indent=1, default=float))
+    res["inputs"] = "live output/" if a.live else f"snapshot {SNAP.SNAPSHOT_DIR.name}"
+    name = "validation_live.json" if a.live else "validation.json"
+    (OUT / name).write_text(json.dumps(res, indent=1, default=float))
     print(json.dumps({k: res[k] for k in ("equivalence", "reference_identity")}, indent=1))
     r = res["regression"]
     for label, m in [("OOF B (pooled yearly fits)", r["oof_B"]),

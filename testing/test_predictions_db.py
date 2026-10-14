@@ -79,10 +79,42 @@ def test_old_rows_are_preserved_exactly(db_copy):
     assert len(old) > 0 and set(old["model_version"]) <= {"0.3.1", "0.3.1-preaudit"}
     save_predictions_snapshot(_pending_week(), db_path=db_copy)
     after = _rows(db_copy, "model_version <> '0.4.0'")
-    pd.testing.assert_frame_equal(old.reset_index(drop=True),
-                                  after[old.columns].reset_index(drop=True))
+    # Everything as published — version, tier, score, dates, commit, timestamps. Only the
+    # track-record flag and its reason belong to the migration (tested below).
+    published = [c for c in old.columns if c not in VOID_COLS]
+    pd.testing.assert_frame_equal(old[published].reset_index(drop=True),
+                                  after[published].reset_index(drop=True))
     # the new columns exist and are NULL on every pre-0.4 row
     assert after["model_b_hist_mean_abs"].isna().all() and after["model_b_n_prior"].isna().all()
+
+
+VOID_COLS = ("void_for_track_record", "void_reason")
+
+
+def test_every_legacy_call_is_void_with_its_reason_and_nothing_else_moves(db_copy):
+    from utilities.db_utilities import (LEGACY_0_3_1_VOID_REASON, LEGACY_STALE_SCORE_NOTE,
+                                        create_predictions_table_if_not_exists, read_track_record)
+    old = _rows(db_copy)
+    con = duckdb.connect(db_copy)
+    create_predictions_table_if_not_exists(con)
+    create_predictions_table_if_not_exists(con)                    # idempotent
+    after = con.execute("SELECT * FROM predictions ORDER BY stock, earnings_date, "
+                        "prediction_asof_date").df()
+    view = con.execute("SELECT * FROM predictions_track_record").df()
+    computed = read_track_record(con)
+    con.close()
+    assert len(after) == len(old)
+    legacy = after[after["model_version"] != "0.4.0"]
+    assert legacy["void_for_track_record"].all()
+    pre = legacy[legacy["model_version"] == "0.3.1-preaudit"]
+    assert pre["void_reason"].str.contains("P4.2").all()
+    v031 = legacy[legacy["model_version"] == "0.3.1"]
+    expected = LEGACY_0_3_1_VOID_REASON + np.where(v031["score_asof_date"].isna(),
+                                                   LEGACY_STALE_SCORE_NOTE, "")
+    assert (v031["void_reason"] == expected).all()
+    published = [c for c in old.columns if c not in VOID_COLS]
+    pd.testing.assert_frame_equal(old[published], after[published])
+    assert set(view["model_version"]) <= {"0.4.0"} and set(computed["model_version"]) <= {"0.4.0"}
 
 
 def test_new_rows_store_the_model_b_fields(db_copy):
@@ -141,6 +173,110 @@ def test_the_view_takes_the_first_0_4_0_call_even_after_an_older_one(tmp_path):
     con.close()
     assert tr["stock"].tolist() == ["AAA"]               # BBB's call was made after the event
     assert tr["risk_score"].iloc[0] == 92 and tr["model_version"].iloc[0] == "0.4.0"
+
+
+def test_eligibility_is_filtered_before_the_first_call_is_taken(tmp_path):
+    """A voided or legacy FIRST call must not hide a later eligible 0.4.0 call."""
+    from utilities.db_utilities import create_predictions_table_if_not_exists, read_track_record
+    db = str(tmp_path / "p.duckdb")
+    con = duckdb.connect(db)
+    create_predictions_table_if_not_exists(con)
+    con.execute("""INSERT INTO predictions (prediction_asof_date, stock, earnings_date, tier,
+        risk_score, model_version, score_asof_date, void_for_track_record) VALUES
+        -- voided 0.3.1 first, then a legitimate 0.4.0 call
+        ('2026-10-04', 'AAA', '2026-10-15', 'Elevated',   76, '0.3.1', '2026-10-02', TRUE),
+        ('2026-10-11', 'AAA', '2026-10-15', 'High Alert', 92, '0.4.0', '2026-10-09', FALSE),
+        -- voided 0.4.0 first, then a legitimate 0.4.0 call
+        ('2026-10-04', 'BBB', '2026-10-15', 'Normal',     30, '0.4.0', '2026-10-02', TRUE),
+        ('2026-10-11', 'BBB', '2026-10-15', 'Elevated',   85, '0.4.0', '2026-10-09', FALSE),
+        -- 0.3.1 call the migration voids, then a legitimate 0.4.0 call
+        ('2026-10-04', 'CCC', '2026-10-15', 'High Alert', 90, '0.3.1', '2026-10-02', FALSE),
+        ('2026-10-11', 'CCC', '2026-10-15', 'Normal',     12, '0.4.0', '2026-10-09', FALSE),
+        -- only legacy calls: no track-record entry at all
+        ('2026-10-04', 'DDD', '2026-10-15', 'High Alert', 95, '0.3.1', '2026-10-02', FALSE)""")
+    create_predictions_table_if_not_exists(con)
+    view = con.execute("SELECT * FROM predictions_track_record ORDER BY stock").df()
+    computed = read_track_record(con).sort_values("stock").reset_index(drop=True)
+    con.close()
+    for tr in (view, computed):
+        assert tr["stock"].tolist() == ["AAA", "BBB", "CCC"]
+        assert tr["risk_score"].tolist() == [92, 85, 12]
+        assert set(tr["model_version"]) == {"0.4.0"}
+        assert (tr["prediction_asof_date"].astype(str) == "2026-10-11").all()
+    pd.testing.assert_frame_equal(view, computed)
+
+
+# ── Older archive files: a stale stored view must never become the track record ──
+
+def _db_from_git(rev, tmp_path):
+    """The archive exactly as committed at `rev` (pinned, immutable git objects)."""
+    try:
+        blob = subprocess.check_output(["git", "show", f"{rev}:db/predictions.duckdb"],
+                                       cwd=os.path.join(os.path.dirname(__file__), ".."),
+                                       stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pytest.skip(f"git object {rev}:db/predictions.duckdb not available")
+    dst = tmp_path / f"predictions_{rev}.duckdb"
+    dst.write_bytes(blob)
+    return str(dst)
+
+
+# a7edae6 = 5cc7e64's archive (38 rows): its stored view predates the 0.4.0 version
+# filter. a2159de = master's archive (35 rows): no void flag, no score_asof_date, no view.
+REBUILD_STALE, MASTER_OLD = "a7edae6", "a2159de"
+
+
+def test_the_stale_view_really_returned_legacy_calls(tmp_path):
+    """The bug being guarded against, reproduced on the real file."""
+    con = duckdb.connect(_db_from_git(REBUILD_STALE, tmp_path), read_only=True)
+    stale = con.execute("SELECT model_version FROM predictions_track_record").df()
+    con.close()
+    assert len(stale) == 20 and set(stale["model_version"]) == {"0.3.1"}
+
+
+@pytest.mark.parametrize("rev", [REBUILD_STALE, MASTER_OLD])
+def test_readers_never_show_legacy_calls_from_an_old_archive(rev, tmp_path):
+    from analysis.last_week_results import archived_calls
+    from marketing.generate_public_track_record import load_archived_calls
+    from utilities.db_utilities import read_track_record
+    db = _db_from_git(rev, tmp_path)
+    before = _sha(db)
+    con = duckdb.connect(db, read_only=True)
+    assert read_track_record(con).empty
+    con.close()
+    assert archived_calls(pd.Timestamp("2026-08-01"), pd.Timestamp("2026-12-31"), db).empty
+    assert load_archived_calls(db).empty
+    assert _sha(db) == before                         # readers never migrate or write
+
+
+@pytest.mark.parametrize("rev,n", [(REBUILD_STALE, 38), (MASTER_OLD, 35)])
+def test_migration_refreshes_the_view_and_voids_every_legacy_call(rev, n, tmp_path):
+    from utilities.db_utilities import create_predictions_table_if_not_exists
+    db = _db_from_git(rev, tmp_path)
+    con = duckdb.connect(db)
+    create_predictions_table_if_not_exists(con)
+    rows = con.execute("SELECT * FROM predictions").df()
+    tr = con.execute("SELECT * FROM predictions_track_record").df()
+    con.close()
+    assert len(rows) == n and rows["void_for_track_record"].all()
+    assert rows["void_reason"].notna().all()
+    assert tr.empty
+
+
+def test_nothing_but_the_definition_reads_the_stored_view():
+    """Readers use read_track_record(); only db_utilities names the view in SQL."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    hits = []
+    for f in root.rglob("*.py"):
+        rel = f.relative_to(root)
+        if rel.parts[0] in {".venv", "testing", "output", "data"} or "__pycache__" in rel.parts:
+            continue
+        if rel == Path("utilities/db_utilities.py"):
+            continue
+        if "FROM predictions_track_record" in f.read_text(errors="ignore"):
+            hits.append(str(rel))
+    assert hits == []
 
 
 def test_env_var_redirects_the_archive(tmp_path):

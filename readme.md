@@ -118,8 +118,8 @@ breakwater/
 `eps_estimates`.
 
 **Prediction archive** (`db/predictions.duckdb`): one row per call per run day. Pre-0.4 rows
-(legacy model) are kept as history and never count toward a track record; the
-`predictions_track_record` view holds only first 0.4.0 calls.
+(legacy model) are kept as history, voided, and never count toward a track record; the track
+record is the first eligible 0.4.0 call per event.
 
 **Parquet** (`output/`): `full_df.parquet` (daily frame), `events_df.parquet` (event frame
 with Model B fields), `streamlit_df.parquet` / `upcoming_df.parquet` (dashboard).

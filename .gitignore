@@ -48,3 +48,8 @@ benzinga_integration/
 benzinga_features/
 data/benzinga_earnings/
 data/benzinga_features/
+
+# Pinned research snapshots (scoring/model_b_snapshot.py): immutable inputs the exact-match
+# Model B checks run on. They carry vendor-derived announcement timing, so they stay local;
+# their SHA-256 fingerprints are committed in the module instead.
+data/snapshots/

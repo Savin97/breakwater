@@ -262,20 +262,20 @@ switch and is backed up only by commits). Decide that separately.
 Key: `(stock, earnings_date, prediction_asof_date)`, the existing unique index.
 
 1. **Before any reset:**
-   `cp db/predictions.duckdb ~/breakwater_backups/predictions_rebuild_$(date +%Y%m%d_%H%M%S).duckdb`.
+   `mkdir -p output/backups && cp db/predictions.duckdb output/backups/predictions_rebuild_$(date +%Y%m%d_%H%M%S).duckdb`.
    Note whether `git diff --quiet -- db/predictions.duckdb` is clean. If it is not, a run
    wrote new rows since the last commit, and the backup holds them.
 2. **Droplet, read-only:**
    `ssh root@harbor-markets.com 'ls -la /var/www/breakwater/db/; git -C /var/www/breakwater status --short db/'`.
    If a `predictions.duckdb` there is modified or newer than master's blob, `scp` a copy
-   into `~/breakwater_backups/` as a third source.
+   into `output/backups/` as a third source.
 3. **After the reset** (the working file is now master's 10-row copy), merge into a
    **fresh file**, never in place:
 
    ```sql
-   -- duckdb ~/breakwater_backups/merged.duckdb
+   -- duckdb output/backups/merged.duckdb
    ATTACH 'db/predictions.duckdb'                          AS m (READ_ONLY);  -- master copy
-   ATTACH '~/breakwater_backups/predictions_rebuild_….duckdb' AS r (READ_ONLY);  -- backup
+   ATTACH 'output/backups/predictions_rebuild_….duckdb'     AS r (READ_ONLY);  -- backup
    -- (ATTACH the droplet copy as d too, if step 2 produced one)
 
    -- Check A: nothing in master that the backup lacks (expected 0)
@@ -314,7 +314,7 @@ Key: `(stock, earnings_date, prediction_asof_date)`, the existing unique index.
    - every key from every source present;
    - `predictions_track_record` excludes the voided rows.
 6. Move the merged file to `db/predictions.duckdb` and commit it with the integration.
-   Keep the backups outside the repo until the droplet has pulled and one Monday run has
+   Keep the backups in `output/backups/` until the droplet has pulled and one Monday run has
    appended correctly.
 7. **Droplet pull:** check `git -C /var/www/breakwater status --short db/` first. If the
    droplet copy is locally modified, `git pull` refuses rather than overwriting. That is a
@@ -435,7 +435,9 @@ what to do with them in the next task:
    the untracked `audit/FINAL_BRANCH_INVENTORY.md` and `audit/NON_MODEL_C_INTEGRATION_PLAN.md`.
    Confirm no pipeline run is due during the work. Run the read-only droplet check (§5.4
    step 2).
-2. **Back up outside the repo**, e.g. into `~/breakwater_backups/<timestamp>/`:
+2. **Back up inside the repo, in the gitignored `output/backups/<timestamp>/`** (a reset or
+   checkout leaves ignored files alone; never run `git clean -x`, and never write outside
+   the repo):
    - `db/predictions.duckdb`;
    - `.claude/memory/MEMORY.md`;
    - both plan documents.
