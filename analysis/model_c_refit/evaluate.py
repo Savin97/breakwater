@@ -6,6 +6,11 @@
     PYTHONPATH=. .venv/bin/python -m analysis.model_c_refit.evaluate compare
 
 Writes only under output/model_c_refit/ (gitignored). Touches no production table.
+
+`build` needs the pinned snapshot (scoring/model_b_snapshot.py): baseline A0 is the RETIRED
+0.3.1 score, which production stopped computing in 0.4.0, so it comes from the frozen
+oracle frame by event identity — never from Model B's percentile, which now occupies the
+production `risk_score` column. Without the snapshot `build` stops and says so.
 """
 from __future__ import annotations
 
@@ -39,8 +44,28 @@ def _dump(obj, name):
 
 
 # ────────────────────────────────────────── build ───────────────────────────────────────
+def legacy_a0_scores() -> pd.DataFrame:
+    """[stock, earnings_date, risk_score]: the retired 0.3.1 score from the frozen oracle."""
+    from scoring import model_b_snapshot as SNAP
+    oracle = SNAP.load_oracle()
+    a0 = oracle[["stock", "earnings_date", "risk_score"]].copy()
+    a0["earnings_date"] = pd.to_datetime(a0["earnings_date"])
+    return a0
+
+
+def attach_legacy_a0(events: pd.DataFrame, a0: pd.DataFrame) -> pd.DataFrame:
+    if "risk_score" in events.columns:
+        raise RuntimeError("the production events already carry a risk_score — since 0.4.0 "
+                           "that is Model B's percentile, which must never stand in for A0")
+    out = events.merge(a0, on=["stock", "earnings_date"], how="left", validate="m:1")
+    print(f"A0 (legacy 0.3.1 score, frozen oracle): {int(out['risk_score'].notna().sum())} "
+          f"of {len(out)} events")
+    return out
+
+
 def build() -> pd.DataFrame:
     events, daily = F.load_production_inputs()
+    events = attach_legacy_a0(events, legacy_a0_scores())
     frame = F.build_frame(events, daily)
     exact = F.vol_at_cutoff(daily, events, F.event_clocks(events, F.market_session_grid(daily)),
                             tolerance=None)["vol_30d"]

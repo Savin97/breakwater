@@ -64,6 +64,18 @@ def _pending_week():
     return ev
 
 
+def _archive(ev, db, when=None, gen=None):
+    """Archive `ev` as a scratch publication (never the canonical file) at `when`."""
+    from pathlib import Path
+    from publishing.archive_calls import archive_calls
+    from publishing.generation import Publication
+    when = pd.Timestamp(when) if when is not None else pd.Timestamp.now(tz="UTC")
+    pub = Publication(generation_id=gen or f"test-{when.value}", published_at=when,
+                      artifact_sha256="0" * 64, model_version="0.4.0",
+                      calls_path=Path("unused"), verified=False)
+    return archive_calls(ev, db, pub)
+
+
 def _rows(db, where="TRUE"):
     con = duckdb.connect(db, read_only=True)
     try:
@@ -74,21 +86,23 @@ def _rows(db, where="TRUE"):
 
 
 def test_old_rows_are_preserved_exactly(db_copy):
-    from publishing.archive_calls import archive_calls as save_predictions_snapshot
     old = _rows(db_copy)
     assert len(old) > 0 and set(old["model_version"]) <= {"0.3.1", "0.3.1-preaudit"}
-    save_predictions_snapshot(_pending_week(), db_path=db_copy)
+    _archive(_pending_week(), db_copy)
     after = _rows(db_copy, "model_version <> '0.4.0'")
     # Everything as published — version, tier, score, dates, commit, timestamps. Only the
     # track-record flag and its reason belong to the migration (tested below).
-    published = [c for c in old.columns if c not in VOID_COLS]
+    published = [c for c in old.columns if c not in VOID_COLS + PUBLICATION_COLS]
     pd.testing.assert_frame_equal(old[published].reset_index(drop=True),
                                   after[published].reset_index(drop=True))
-    # the new columns exist and are NULL on every pre-0.4 row
-    assert after["model_b_hist_mean_abs"].isna().all() and after["model_b_n_prior"].isna().all()
+    # the new columns exist and are NULL on every pre-0.4 row: their publication time was
+    # never recorded, so it is not invented
+    for col in ("model_b_hist_mean_abs", "model_b_n_prior") + PUBLICATION_COLS:
+        assert after[col].isna().all(), col
 
 
 VOID_COLS = ("void_for_track_record", "void_reason")
+PUBLICATION_COLS = ("published_at", "generation_id", "artifact_sha256", "call_sha256", "revision")
 
 
 def test_every_legacy_call_is_void_with_its_reason_and_nothing_else_moves(db_copy):
@@ -112,14 +126,13 @@ def test_every_legacy_call_is_void_with_its_reason_and_nothing_else_moves(db_cop
     expected = LEGACY_0_3_1_VOID_REASON + np.where(v031["score_asof_date"].isna(),
                                                    LEGACY_STALE_SCORE_NOTE, "")
     assert (v031["void_reason"] == expected).all()
-    published = [c for c in old.columns if c not in VOID_COLS]
+    published = [c for c in old.columns if c not in VOID_COLS + PUBLICATION_COLS]
     pd.testing.assert_frame_equal(old[published], after[published])
     assert set(view["model_version"]) <= {"0.4.0"} and set(computed["model_version"]) <= {"0.4.0"}
 
 
 def test_new_rows_store_the_model_b_fields(db_copy):
-    from publishing.archive_calls import archive_calls as save_predictions_snapshot
-    save_predictions_snapshot(_pending_week(), db_path=db_copy)
+    _archive(_pending_week(), db_copy)
     new = _rows(db_copy, "model_version = '0.4.0'").set_index("stock")
     assert sorted(new.index) == ["HHH", "NNN", "UUU"]
     assert new.at["HHH", "tier"] == "High Alert" and new.at["HHH", "risk_score"] == 93.7
@@ -131,23 +144,21 @@ def test_new_rows_store_the_model_b_fields(db_copy):
         assert new[legacy].isna().all(), legacy
 
 
-def test_same_day_rerun_upserts(db_copy):
-    from publishing.archive_calls import archive_calls as save_predictions_snapshot
+def test_a_same_day_change_appends_a_revision_and_keeps_the_original(db_copy):
     ev = _pending_week()
-    save_predictions_snapshot(ev, db_path=db_copy)
+    t0 = pd.Timestamp.now(tz="UTC")
+    _archive(ev, db_copy, when=t0, gen="g1")
     n = len(_rows(db_copy))
     ev.loc[0, "risk_score"], ev.loc[0, "model_b_hist_mean_abs"] = 95.5, 0.09
-    save_predictions_snapshot(ev, db_path=db_copy)
+    _archive(ev, db_copy, when=t0 + pd.Timedelta(minutes=5), gen="g2")
     rows = _rows(db_copy)
-    assert len(rows) == n
-    hhh = rows[(rows["stock"] == "HHH") & (rows["model_version"] == "0.4.0")]
-    assert len(hhh) == 1 and hhh["risk_score"].iloc[0] == 95.5
-    assert hhh["model_b_hist_mean_abs"].iloc[0] == 0.09
+    assert len(rows) == n + 1                      # only HHH changed; one revision appended
+    hhh = rows[(rows["stock"] == "HHH") & (rows["model_version"] == "0.4.0")].sort_values("revision")
+    assert hhh["risk_score"].tolist() == [93.7, 95.5] and hhh["revision"].tolist() == [1, 2]
 
 
 def test_track_record_view_holds_only_0_4_0_calls(db_copy):
-    from publishing.archive_calls import archive_calls as save_predictions_snapshot
-    save_predictions_snapshot(_pending_week(), db_path=db_copy)
+    _archive(_pending_week(), db_copy)
     con = duckdb.connect(db_copy, read_only=True)
     tr = con.execute("SELECT * FROM predictions_track_record").df()
     first = con.execute("SELECT * FROM predictions_first_call").df()
@@ -163,11 +174,11 @@ def test_the_view_takes_the_first_0_4_0_call_even_after_an_older_one(tmp_path):
     con = duckdb.connect(db)
     create_predictions_table_if_not_exists(con)
     con.execute("""INSERT INTO predictions (prediction_asof_date, stock, earnings_date, tier,
-        risk_score, model_version, score_asof_date) VALUES
-        ('2026-09-28', 'AAA', '2026-10-08', 'Elevated', 76, '0.3.1', '2026-09-26'),
-        ('2026-10-04', 'AAA', '2026-10-08', 'High Alert', 92, '0.4.0', '2026-10-02'),
-        ('2026-10-05', 'AAA', '2026-10-08', 'High Alert', 93, '0.4.0', '2026-10-02'),
-        ('2026-10-09', 'BBB', '2026-10-08', 'Normal', 10, '0.4.0', '2026-10-09')""")
+        risk_score, model_version, score_asof_date, published_at, generation_id) VALUES
+        ('2026-09-28', 'AAA', '2026-10-08', 'Elevated', 76, '0.3.1', '2026-09-26', '2026-09-28 12:00:00+00', 'a'),
+        ('2026-10-04', 'AAA', '2026-10-08', 'High Alert', 92, '0.4.0', '2026-10-02', '2026-10-04 12:00:00+00', 'b'),
+        ('2026-10-05', 'AAA', '2026-10-08', 'High Alert', 93, '0.4.0', '2026-10-02', '2026-10-05 12:00:00+00', 'c'),
+        ('2026-10-09', 'BBB', '2026-10-08', 'Normal', 10, '0.4.0', '2026-10-09', '2026-10-09 12:00:00+00', 'd')""")
     create_predictions_table_if_not_exists(con)      # re-creates the views
     tr = con.execute("SELECT * FROM predictions_track_record").df()
     con.close()
@@ -182,18 +193,18 @@ def test_eligibility_is_filtered_before_the_first_call_is_taken(tmp_path):
     con = duckdb.connect(db)
     create_predictions_table_if_not_exists(con)
     con.execute("""INSERT INTO predictions (prediction_asof_date, stock, earnings_date, tier,
-        risk_score, model_version, score_asof_date, void_for_track_record) VALUES
+        risk_score, model_version, score_asof_date, void_for_track_record, published_at, generation_id) VALUES
         -- voided 0.3.1 first, then a legitimate 0.4.0 call
-        ('2026-10-04', 'AAA', '2026-10-15', 'Elevated',   76, '0.3.1', '2026-10-02', TRUE),
-        ('2026-10-11', 'AAA', '2026-10-15', 'High Alert', 92, '0.4.0', '2026-10-09', FALSE),
+        ('2026-10-04', 'AAA', '2026-10-15', 'Elevated',   76, '0.3.1', '2026-10-02', TRUE, '2026-10-04 12:00:00+00', 'AAA2026-10-04'),
+        ('2026-10-11', 'AAA', '2026-10-15', 'High Alert', 92, '0.4.0', '2026-10-09', FALSE, '2026-10-11 12:00:00+00', 'AAA2026-10-11'),
         -- voided 0.4.0 first, then a legitimate 0.4.0 call
-        ('2026-10-04', 'BBB', '2026-10-15', 'Normal',     30, '0.4.0', '2026-10-02', TRUE),
-        ('2026-10-11', 'BBB', '2026-10-15', 'Elevated',   85, '0.4.0', '2026-10-09', FALSE),
+        ('2026-10-04', 'BBB', '2026-10-15', 'Normal',     30, '0.4.0', '2026-10-02', TRUE, '2026-10-04 12:00:00+00', 'BBB2026-10-04'),
+        ('2026-10-11', 'BBB', '2026-10-15', 'Elevated',   85, '0.4.0', '2026-10-09', FALSE, '2026-10-11 12:00:00+00', 'BBB2026-10-11'),
         -- 0.3.1 call the migration voids, then a legitimate 0.4.0 call
-        ('2026-10-04', 'CCC', '2026-10-15', 'High Alert', 90, '0.3.1', '2026-10-02', FALSE),
-        ('2026-10-11', 'CCC', '2026-10-15', 'Normal',     12, '0.4.0', '2026-10-09', FALSE),
+        ('2026-10-04', 'CCC', '2026-10-15', 'High Alert', 90, '0.3.1', '2026-10-02', FALSE, '2026-10-04 12:00:00+00', 'CCC2026-10-04'),
+        ('2026-10-11', 'CCC', '2026-10-15', 'Normal',     12, '0.4.0', '2026-10-09', FALSE, '2026-10-11 12:00:00+00', 'CCC2026-10-11'),
         -- only legacy calls: no track-record entry at all
-        ('2026-10-04', 'DDD', '2026-10-15', 'High Alert', 95, '0.3.1', '2026-10-02', FALSE)""")
+        ('2026-10-04', 'DDD', '2026-10-15', 'High Alert', 95, '0.3.1', '2026-10-02', FALSE, '2026-10-04 12:00:00+00', 'DDD2026-10-04')""")
     create_predictions_table_if_not_exists(con)
     view = con.execute("SELECT * FROM predictions_track_record ORDER BY stock").df()
     computed = read_track_record(con).sort_values("stock").reset_index(drop=True)
@@ -303,9 +314,8 @@ def _completed_outcomes():
 
 
 def test_last_week_results_reads_archived_calls_and_corrected_outcomes(db_copy):
-    from publishing.archive_calls import archive_calls as save_predictions_snapshot
     from analysis.last_week_results import archived_calls, results_table, format_results
-    save_predictions_snapshot(_pending_week(), db_path=db_copy)
+    _archive(_pending_week(), db_copy)
     start, end = work_week_window(weeks=1)
     tbl = results_table(archived_calls(start, end, db_copy), _completed_outcomes()).set_index("stock")
     assert bool(tbl.at["HHH", "moved_8pct"]) is True             # corrected 12%

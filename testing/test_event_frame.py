@@ -204,7 +204,11 @@ def test_prediction_snapshot_cannot_archive_an_inactive_call(events_active_aaa, 
     window_start, _ = work_week_window(weeks=1)
     ev = _future_pending(events_active_aaa, window_start + pd.Timedelta(days=1))
 
-    sp.archive_calls(ev, db_path=str(db))
+    from publishing.generation import Publication
+    pub = Publication(generation_id="t", published_at=pd.Timestamp.now(tz="UTC"),
+                      artifact_sha256="0" * 64, model_version="0.4.0",
+                      calls_path=tmp_path / "unused", verified=False)
+    sp.archive_calls(ev, str(db), pub)
 
     con = duckdb.connect(str(db), read_only=True)
     stocks = [r[0] for r in con.execute("SELECT stock FROM predictions").fetchall()]

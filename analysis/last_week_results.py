@@ -44,17 +44,20 @@ def _week_bounds(lookback_weeks: int = 1, today=None) -> tuple[pd.Timestamp, pd.
     return monday, monday + timedelta(days=4)
 
 
-def archived_calls(start, end, db_path=None) -> pd.DataFrame:
-    """First archived track-record-eligible call per event reporting in [start, end]."""
+def archived_calls(start, end, db_path=None, announcements=None) -> pd.DataFrame:
+    """Earliest track-record-eligible publication per event reporting in [start, end].
+    `announcements` (the event frame's announce_ts_ny / announce_ts_observed_at) lets a
+    report-day publication count when it provably preceded the announcement."""
     db_path = db_path or config.PREDICTIONS_DB_PATH
     cols = ["stock", "earnings_date", "tier", "risk_score", "model_b_hist_mean_abs",
-            "model_b_n_prior", "score_asof_date", "prediction_asof_date", "model_version"]
+            "model_b_n_prior", "score_asof_date", "prediction_asof_date", "published_at",
+            "generation_id", "revision", "model_version"]
     if not os.path.exists(db_path):
         return pd.DataFrame(columns=cols)
     con = duckdb.connect(db_path, read_only=True)
     try:
         # From the table, not the stored view: an unmigrated DB keeps a stale view.
-        calls = read_track_record(con)
+        calls = read_track_record(con, announcements)
     except duckdb.Error:
         calls = pd.DataFrame(columns=cols)
     finally:
@@ -120,7 +123,11 @@ def generate_last_week_results(lookback_weeks: int = 1, events_df: pd.DataFrame 
     if events_df is None:
         events_df = pd.read_parquet(EVENTS_PARQUET)
     week_start, week_end = _week_bounds(lookback_weeks, today)
-    tbl = results_table(archived_calls(week_start, week_end, db_path), events_df)
+    announcements = events_df[[c for c in ("stock", "earnings_date", "announce_ts_ny",
+                                           "announce_ts_observed_at") if c in events_df.columns]]
+    if "announce_ts_observed_at" not in announcements.columns:
+        announcements = None
+    tbl = results_table(archived_calls(week_start, week_end, db_path, announcements), events_df)
     text = format_results(tbl, week_start, week_end)
     path = os.path.join(get_run_output_dir(), "last_week_results.txt")
     with open(path, "w", encoding="utf-8") as f:

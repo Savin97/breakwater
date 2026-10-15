@@ -4,6 +4,12 @@ Weekly earnings risk digest. Sends an HTML email to all subscribers listing
 High Alert and Elevated stocks (Model B tiers) with earnings in the next work week.
 
 Runs LOCALLY, as the last step of scripts/full_workflow.sh — not on the droplet.
+
+A real send mails exactly what customers were served: `--generation GEN` names the
+verified publication generation (publishing/generation.py), and the calls AND the attached
+PDF reports are read from that immutable bundle after its hashes and receipt are checked —
+never from output/, which a later pipeline run may have rewritten. Without SMTP
+credentials (a local preview) output/upcoming_df.parquet is still read as before.
 Two things are only available here: the PDF reports it attaches (written by stage5,
 which the droplet does not run) and the DIGEST_SMTP_* credentials. Triggering it from
 the workflow also removes a race: a Monday cron could fire before the weekly run and
@@ -207,11 +213,11 @@ def _build_html(stocks_df: pd.DataFrame, week_of: str, date_range: str = "",
 </html>"""
 
 
-def _collect_reports(tickers: list[str]) -> list[tuple[str, bytes]]:
+def _collect_reports(tickers: list[str], reports_dir: str | None = None) -> list[tuple[str, bytes]]:
     """Return (filename, bytes) for each ticker that has a report PDF."""
     found = []
     for ticker in tickers:
-        path = os.path.join(REPORTS_DIR, f"{ticker}_report.pdf")
+        path = os.path.join(reports_dir or REPORTS_DIR, f"{ticker}_report.pdf")
         if os.path.exists(path):
             with open(path, "rb") as f:
                 found.append((os.path.basename(path), f.read()))
@@ -254,7 +260,35 @@ def _send(recipients: list[str], subject: str, html: str, attachments: list[tupl
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def run_weekly_digest(weeks: int = 1, current_week: bool = False):
+def _published_generation(generation: str):
+    """(calls, reports_dir) of a VERIFIED generation: every file matches its manifest and
+    the receipt says it was the one served. Refuses anything else."""
+    from publishing.generation import (PUBLICATION_ROOT, REPORTS, GenerationError,
+                                       load_publication)
+    try:
+        pub = load_publication(PUBLICATION_ROOT / generation)
+    except GenerationError as e:
+        raise PublicationRefused(f"REFUSING TO SEND: {e}") from e
+    age = (pd.Timestamp.now(tz="UTC") - pub.published_at).total_seconds() / 3600
+    if age > MAX_PARQUET_AGE_HOURS:
+        raise PublicationRefused(f"REFUSING TO SEND: generation {generation} went live "
+                                 f"{age:.1f}h ago (limit {MAX_PARQUET_AGE_HOURS}h)")
+    return pd.read_parquet(pub.calls_path), str(pub.calls_path.parent / REPORTS)
+
+
+def run_weekly_digest(weeks: int = 1, current_week: bool = False, generation: str | None = None):
+    if SMTP_USER and SMTP_PASS:
+        # A real send is publication: production branch only (publishing/guard.py), and
+        # only the verified generation the dashboard serves.
+        require_production_branch("send the weekly digest")
+        if generation is None:
+            raise PublicationRefused("REFUSING TO SEND: a real send needs --generation "
+                                     "(the verified publication generation)")
+    if generation is not None:
+        df, reports_dir = _published_generation(generation)
+        print(f"Digest from publication generation {generation}")
+        return _run(df, weeks, current_week, reports_dir)
+
     if not os.path.exists(PARQUET_PATH):
         print(f"Parquet not found: {PARQUET_PATH} — run the pipeline first.")
         return
@@ -268,7 +302,10 @@ def run_weekly_digest(weeks: int = 1, current_week: bool = False):
               f"(limit {MAX_PARQUET_AGE_HOURS}h). Run the pipeline first.")
         return
 
-    df            = pd.read_parquet(PARQUET_PATH)
+    return _run(pd.read_parquet(PARQUET_PATH), weeks, current_week)
+
+
+def _run(df: pd.DataFrame, weeks: int, current_week: bool, reports_dir: str | None = None):
     company_names = _load_company_names()
     stocks_df     = _select_stocks(df, company_names, weeks=weeks, current_week=current_week)
     start_dt, end_dt = work_week_window(weeks=weeks, current_week=current_week)
@@ -279,7 +316,7 @@ def run_weekly_digest(weeks: int = 1, current_week: bool = False):
                                 unscored=_select_unscored(df, weeks=weeks, current_week=current_week))
     recipients    = _load_subscribers()
 
-    attachments = _collect_reports(stocks_df["stock"].tolist())
+    attachments = _collect_reports(stocks_df["stock"].tolist(), reports_dir)
     print(f"Digest: {len(stocks_df)} stocks selected, {len(attachments)} reports found, {len(recipients)} subscriber(s).")
 
     if not recipients:
@@ -287,10 +324,7 @@ def run_weekly_digest(weeks: int = 1, current_week: bool = False):
         print(html)
         return
 
-    if SMTP_USER and SMTP_PASS:
-        # A real send is publication: production branch only (publishing/guard.py).
-        # Without credentials _send only prints, which any branch may do.
-        require_production_branch("send the weekly digest")
+    # Without credentials _send only prints, which any branch may do.
     _send(recipients, subject, html, attachments=attachments or None)
 
 
@@ -302,9 +336,12 @@ if __name__ == "__main__":
     ap.add_argument("--current-week", action="store_true",
                     help="cover THIS week's Mon-Fri whatever day it is run, instead of "
                          "the next complete work week")
+    ap.add_argument("--generation", help="the verified publication generation to mail "
+                                          "(required for a real send)")
     args = ap.parse_args()
     try:
-        run_weekly_digest(weeks=args.weeks, current_week=args.current_week)
+        run_weekly_digest(weeks=args.weeks, current_week=args.current_week,
+                          generation=args.generation)
     except PublicationRefused as e:
         print(f"\n{e}\n")
         raise SystemExit(3)

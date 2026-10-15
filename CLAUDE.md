@@ -21,22 +21,49 @@ other way round until the rebuild is ready. The user commits; give them the `-m`
   deploys, mails or writes the prediction archive — on any branch.
 - *Publishing*: `scripts/full_workflow.sh`, master only. It sources `scripts/deploy_guard.sh`;
   from any other branch (or a detached HEAD) it pulls the DB and runs the pipeline locally,
-  then refuses loudly (exit 3, branch printed) before anything public. No override.
-- *Archival*: `python -m publishing.archive_calls --published`, run by the workflow right after
-  the dashboard push succeeds — the moment the calls are public. It archives exactly the pushed
-  `output/upcoming_df.parquet` (work-week window, same as the digest) into `db/predictions.duckdb`,
-  and refuses the canonical DB unless `--published`, branch master (`publishing/guard.py`) and
-  a calls file from today's run. Any other target (`BREAKWATER_PREDICTIONS_DB=…`) is scratch and
-  allowed anywhere. Same-day reruns upsert.
-- *Digest*: re-checks the branch itself before a real SMTP send (`python -m cron.cron_weekly_digest`
-  run by hand on a non-master branch exits 3); without credentials it only prints.
-- Partial failure: dashboard push fails → nothing archived, nothing mailed (set -e). Push
-  succeeds but archive fails → calls are public but unarchived; rerun
-  `python -m publishing.archive_calls --published` the same day. Archive succeeds, digest
-  fails → archived calls were public on the dashboard; the email can be resent.
-  Residual ambiguity: an rsync that dies after the remote file landed reports failure, so a
-  public call can go unarchived until the same-day rerun.
-`testing/test_deploy_guard.py` and `testing/test_publication.py` pin all of this.
+  then refuses loudly (exit 3, branch printed) before anything public. No override. On
+  master (since 2026-10-14, audit H1–H3): `publishing.generation build` freezes the calls +
+  history parquets into an immutable **generation** (`output/publication/<id>/`, manifest
+  with SHA-256s, the artifact's model version, the reference checksum); the run refuses
+  (exit 4) unless the droplet's `git rev-parse HEAD` equals this commit; the generation is
+  uploaded to `output/generations/<id>/`; `publishing.generation check-live` refuses (exit 5)
+  to replace a live generation that has no receipt or was never archived (its calls were
+  public; it prints how to finish that SAME generation); then one atomic `mv` of
+  `output/CURRENT_GENERATION` makes it live and removes the old flat parquets (a dashboard
+  still on old code shows nothing rather than stale calls); the served pointer and
+  calls-file hash are read back and
+  `publishing.generation receipt` writes `receipt.json` (`published_at`, UTC) only if they
+  match. The dashboard (`streamlit_dash/data.py`) reads the pointer on every page run and
+  caches per generation, recomputes days-to-earnings from today's NY date and drops
+  reported events — no manual cache clear, no stale calls after a publication.
+- *Archival*: `python -m publishing.archive_calls --published --generation <id>`, after the
+  receipt. Append-only, one row per call per generation (`published_at` TIMESTAMPTZ,
+  `generation_id`, `artifact_sha256`, `call_sha256`, `revision`; unique on stock +
+  earnings_date + generation_id). A retry of the same generation adds nothing; an identical
+  call in a later generation adds nothing (the first publication stands); a changed call
+  appends a revision — the original is never overwritten, even the same day. The WRITER
+  (`archive_calls()`, not only the CLI) refuses the canonical DB without a verified receipt
+  and off master, and stamps the artifact's model version, not config's. Window: the whole
+  Mon-Fri work week the digest mails, so the record is *first eligible weekly-window calls*.
+  Any other target (`BREAKWATER_PREDICTIONS_DB=…`) is scratch and allowed anywhere.
+- *Track-record eligibility* (`utilities/db_utilities.py`): 0.4.0, not void, `score_asof_date <
+  earnings_date`, and **published before the announcement** — `read_track_record(con,
+  announcements)` trusts an announcement time only if it was observed at or after itself
+  (a schedule is not a record); otherwise, and in the stored view, the call must predate
+  00:00 NY on the report date. Filtering precedes picking the earliest publication per event
+  (by `published_at`, then revision). Legacy rows have no `published_at`: never eligible.
+- *Digest*: `python -m cron.cron_weekly_digest --generation <id>`. A real send (SMTP
+  credentials set) requires master AND `--generation`, and reads the calls and the attached
+  PDF reports (frozen into the generation at build) only from the verified bundle — never
+  `output/`, which may have changed since; a receipt older than 24 h is refused. Without
+  credentials it previews from `output/upcoming_df.parquet` on any branch.
+- Partial failure: any step failing stops the run (set -e). Code check or upload fails →
+  nothing live, nothing archived. Activation done but the read-back does not match → no
+  receipt, nothing archived or mailed; investigate what the droplet serves. Receipt written
+  but archive fails → rerun `--published --generation <id>` within 24 h (idempotent).
+  Archive succeeds (`archived.json` written) → digest fails → resend with `--generation <id>`.
+`testing/test_deploy_guard.py`, `testing/test_publication.py`, `testing/test_predictions_db.py`
+and `testing/test_dashboard_freshness.py` pin all of this.
 
 The complete methodology research (Phase 3–5 evaluation, Model C research code, options,
 SEC and fundamentals experiments, vendor tooling, audit scripts and artifacts) is preserved
@@ -156,6 +183,7 @@ python -m scoring.build_model_b_reference --check --live
 # Production Model B vs the frozen refit oracle, on the pinned snapshot (research evidence)
 PYTHONPATH=. python -m analysis.model_b_validation.validate          # --live: today's output/
 PYTHONPATH=. python -m pytest analysis/model_b_validation/tests analysis/model_c_refit/tests -q
+# (`analysis.model_c_refit.evaluate build` takes the legacy A0 score from the pinned snapshot)
 
 # Run the whole test suite
 pytest testing
@@ -180,13 +208,40 @@ Every forward-looking consumer reads the event frame's pending rows (`pending_ev
 
 ## Data Storage
 
-- **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price)`, `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage, ingested_at, announce_ts_ny, announce_ts_source, announce_ts_observed_at)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
+- **DuckDB** (`db/breakwater.duckdb`, gitignored): `prices (stock, date, price, ingested_at)` (+ `price_basis_log`), `earnings (stock, earnings_date, fiscal_end_date, reported_eps, estimated_eps, surprise_percentage, ingested_at, announce_ts_ny, announce_ts_source, announce_ts_observed_at)`, `stock_data (stock, company_name, sector, sub_sector, status, reason)`, plus `iv_snapshots` and `eps_estimates`.
 - **Parquet** (`output/full_df.parquet`): the daily frame (prices, snapshots, stage 3 columns). Carries NO score; nothing customer-facing reads a score from it.
 - **Parquet** (`output/streamlit_df.parquet`, `output/upcoming_df.parquet`): produced by `streamlit_dash/streamlit_export.py`; consumed by the Streamlit app.
 - **Parquet** (`output/events_df.parquet`, ~15 MB): the Model B-scored event frame. One row per earnings event; `is_pending == 0` is history (each scored as of its own cutoff), `is_pending == 1` is the upcoming call. Every forward-looking consumer reads this.
-- **Prediction archive** (`db/predictions.duckdb`, tracked): one row per PUBLISHED call per run day, written only by `publishing/archive_calls.py --published` from the master publication workflow. Only grows; old 0.3.1 rows are evidence: their published values are never rewritten (only the void flag and reason, set by the self-migration). 0.4.0 rows add `model_b_hist_mean_abs`, `model_b_n_prior` and the cutoff in `score_asof_date`, with the legacy flag columns NULL.
+- **Prediction archive** (`db/predictions.duckdb`, tracked): one row per PUBLISHED call per generation (append-only; see *Archival* above), written only by `publishing/archive_calls.py --published --generation` from the master publication workflow. Only grows; old 0.3.1 rows are evidence: their published values are never rewritten (only the void flag and reason, set by the self-migration). 0.4.0 rows add `model_b_hist_mean_abs`, `model_b_n_prior` and the cutoff in `score_asof_date`, with the legacy flag columns NULL.
 - **Reference artifact** (`scoring/model_b_reference.json`, tracked): the frozen percentile scale, checksummed.
 - **Stock universe** (`data/stock_list.csv`): the list of stocks to process.
+
+## Price and Event Integrity (independent audit, 2026-10-14)
+
+`audit/INDEPENDENT_AUDIT_REMEDIATION_2026-10-14.md` holds the measurements. Rules:
+
+- **Prices keep one adjustment basis per stock.** yfinance ingestion
+  (`ingestion/fetch_prices.incremental_ingest_all_prices_yf`) re-fetches a window per stock
+  reaching back past its last stored row and reconciles it (`reconcile_stock_prices`): window
+  rows replaced, missing sessions filled, older rows rescaled by ONE factor onto the
+  provider's current basis (returns inside them unchanged), every rescale logged in
+  `price_basis_log`. Never go back to appending only dates after the global max: that left
+  MNST's 2026-08-11 split as a −51.7% reaction and a 497-stock hole on 2026-05-19..21.
+  Existing damage is repaired by the same function with `since="2026-02-11"` — run on the
+  DROPLET DB only, after review. Validated 2026-10-15 on a disposable copy (audit file §6):
+  MNST fixed, May hole filled, no pre-window change beyond float rounding, rerun-safe; it
+  changes 30 2026 outcomes > 0.1%, adds 19, and moves one live call (MNST → Normal). It
+  fetches ACTIVE stocks only: inactive POOL/TAP keep two small 2026 basis errors.
+- **Event identities come from the catalog**, not from price rows on the report date
+  (`pipeline/events._completed_event_rows`): a report day with no price row keeps its event,
+  with `anchor_session_status` `unresolved_price_gap` / `unresolved_no_session`; report-day
+  columns stay blank, nothing is rolled or invented, strict endpoints still decide
+  availability.
+- **IV context only beside its own event** (`attach_iv_context_status`): snapshot after the
+  previous report, on or before this one, expiry after this one; else blanked with a status.
+- The Alpha Vantage full loads (pre-2026-02) and yfinance disagree on old history (mostly
+  pre-2016); measured effect on the reference is in the fifth decimal and no change is
+  made — do not "fix" it without a third source.
 
 ## Announcement Timing and the Corrected Target (Phase 2)
 

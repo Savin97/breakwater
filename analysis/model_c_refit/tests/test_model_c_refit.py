@@ -263,3 +263,19 @@ def test_real_history_matches_the_definition(real):
         n, m = _brute_hist(real, i)
         assert real.loc[i, "n_prior"] == n
         assert real.loc[i, "hist_mean_abs"] == pytest.approx(m)
+
+
+# ─────────────────────── the fresh rebuild takes A0 from the frozen oracle ──────────────
+def test_build_takes_a0_from_the_legacy_score_never_model_b():
+    """Audit M3: `evaluate build` failed with KeyError 'risk_score' — production stopped
+    computing the legacy score in 0.4.0. A0 now comes from the frozen oracle, and a
+    production risk_score (Model B's percentile) is refused as A0."""
+    from analysis.model_c_refit import evaluate as E
+    ev = pd.DataFrame({"stock": ["AAA", "BBB"],
+                       "earnings_date": pd.to_datetime(["2020-01-02", "2020-01-03"])})
+    a0 = pd.DataFrame({"stock": ["AAA"], "earnings_date": pd.to_datetime(["2020-01-02"]),
+                       "risk_score": [71.0]})
+    got = E.attach_legacy_a0(ev, a0)
+    assert got["risk_score"].tolist()[0] == 71.0 and pd.isna(got["risk_score"].tolist()[1])
+    with pytest.raises(RuntimeError):
+        E.attach_legacy_a0(ev.assign(risk_score=[95.0, 10.0]), a0)

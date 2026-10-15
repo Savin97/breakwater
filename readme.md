@@ -4,9 +4,11 @@ Earnings-move risk for S&P 500 stocks. Before each earnings report, Breakwater r
 large the stock's move is likely to be **in size, not direction**, using only information
 available before the announcement.
 
-> **No performance figures are published at present.** The production model (Model B,
-> version 0.4.0) went live on 2026-10-04 and has no prospective record yet; the public track
-> record stays paused until enough archived 0.4.0 calls have resolved. The previously
+> **No performance figures are published at present.** Model B (version 0.4.0) is
+> implemented on the `methodology-rebuild` branch and under review; it has **not** been
+> released — `master`, which runs production, still serves the legacy 0.3.1 model. The
+> release date will be recorded here when 0.4.0 ships. It has no prospective record yet,
+> and the public track record stays paused until enough archived 0.4.0 calls have resolved. The previously
 > published figures (40% vs 6.9%, 5.8x lift, a consistent 2015–2025 OOS record) were derived
 > from a target that mismeasured before-open announcements, were overstated by roughly 3x,
 > and are retracted. The history is recorded in `audit/PHASE0_AUDIT_REV2.md`.

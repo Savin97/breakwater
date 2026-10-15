@@ -114,11 +114,15 @@ def drop_voided(df: pd.DataFrame) -> pd.DataFrame:
     return df[keep]
 
 
-def load_archived_calls(db_path: str | None = None) -> pd.DataFrame:
+def load_archived_calls(db_path: str | None = None,
+                        announcements: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Earliest eligible publication per event (utilities/db_utilities.read_track_record):
+    published before the observed announcement, or before the report day where the time
+    is unknown."""
     con = duckdb.connect(db_path or config.PREDICTIONS_DB_PATH, read_only=True)
     try:
         # From the table, not the stored view: an unmigrated DB keeps a stale view.
-        return read_track_record(con)
+        return read_track_record(con, announcements)
     finally:
         con.close()
 
@@ -199,7 +203,9 @@ def generate_public_track_record(
     if events_df is None:
         events_df = pd.read_parquet(EVENTS_PARQUET)
     if calls is None:
-        calls = load_archived_calls()
+        timing = ["stock", "earnings_date", "announce_ts_ny", "announce_ts_observed_at"]
+        calls = load_archived_calls(announcements=events_df[timing]
+                                    if set(timing) <= set(events_df.columns) else None)
     data = build_public_track_record(calls, events_df, weeks=weeks)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(data, indent=2))

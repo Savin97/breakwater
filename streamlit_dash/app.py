@@ -9,8 +9,6 @@ from pathlib import Path
 # Add project root (parent of "streamlit_dash") to Python path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-DF_PATH = ROOT / "output/streamlit_df.parquet"
-UPCOMING_PATH = ROOT / "output/upcoming_df.parquet"
 
 css_path = Path(__file__).parent / "styles.css"
 with open(css_path) as f:
@@ -20,6 +18,9 @@ from config import DB_PATH
 from report.recommendations_builder import (PERCENTILE_EXPLAINER, SIGNAL_EXPLAINER, TIER_BANDS,
                                             UNSCORED_NOTE)
 from scoring.model_b import TIERS, sort_by_risk
+# Which publication generation is live, and its per-generation caches (audit H3).
+from streamlit_dash.data import (ServedGenerationError, current_served, get_history_df,
+                                 get_upcoming_df, today_ny, upcoming_view)
 
 # Every view reads the same Model B fields: risk_tier, risk_score (Breakwater Risk
 # Percentile — a rank, not a probability), model_b_hist_mean_abs, model_b_n_prior.
@@ -57,25 +58,6 @@ def get_inactive_stocks() -> set:
 
 def label_stock(stock: str, inactive: set) -> str:
     return f"{stock} — inactive" if stock in inactive else stock
-
-
-@st.cache_data(show_spinner="Loading past reactions…")
-def get_history_df() -> pd.DataFrame:
-    """Past earnings events with their corrected 3-session reaction — no score."""
-    if not DF_PATH.exists():
-        return pd.DataFrame()
-    df = pd.read_parquet(DF_PATH)
-    df["earnings_date"] = pd.to_datetime(df["earnings_date"], errors="coerce")
-    return df
-
-
-@st.cache_data(show_spinner="Loading upcoming events…")
-def get_upcoming_df() -> pd.DataFrame:
-    if not UPCOMING_PATH.exists():
-        return pd.DataFrame()
-    df = pd.read_parquet(UPCOMING_PATH)
-    df["earnings_date"] = pd.to_datetime(df["earnings_date"], errors="coerce")
-    return df
 
 
 def ranked(df: pd.DataFrame) -> pd.DataFrame:
@@ -119,14 +101,18 @@ def main():
     st.title("Breakwater - Earnings Risk Dashboard")
     st.caption(PERCENTILE_EXPLAINER + " " + SIGNAL_EXPLAINER)
 
-    with st.sidebar:
-        st.markdown("### Data options")
-        if st.button("Reload data from disk"):
-            get_history_df.clear()
-            get_upcoming_df.clear()
-
-    upcoming = sidebar_filters(get_upcoming_df())
-    history = get_history_df()
+    # Read on every page run: a new publication generation is a new cache entry, so the
+    # page never shows the previous calls once the pointer has moved.
+    try:
+        served = current_served()
+    except ServedGenerationError as e:
+        st.error(f"Data unavailable: {e}")
+        return
+    today = today_ny()
+    all_upcoming = upcoming_view(get_upcoming_df(served.key, str(served.calls_path)), today)
+    upcoming = sidebar_filters(all_upcoming)
+    history = get_history_df(served.key, str(served.history_path))
+    st.sidebar.caption(f"Data generation: {served.generation_id or 'local output/'}")
 
     tab_upcoming, tab_stock, tab_calendar = st.tabs(
         ["Upcoming Events", "Past Earnings Reactions", "Weekly Calendar"])
@@ -183,11 +169,10 @@ def main():
 
     with tab_calendar:
         st.subheader("Earnings Risk Calendar")
-        cal = get_upcoming_df()
+        cal = all_upcoming
         if cal.empty:
             st.info("No upcoming events. Run the pipeline first.")
             return
-        today = pd.Timestamp(date.today())
         c1, c2 = st.columns(2)
         with c1:
             start_date = st.date_input("From", value=today.date(), min_value=today.date())

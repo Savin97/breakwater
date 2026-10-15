@@ -13,7 +13,12 @@ every shipped upcoming call was one earnings event stale (audit/PHASE0_AUDIT_REV
 
 What it holds
 -------------
-* every completed earnings event — one per earnings-day row of the daily frame;
+* every completed earnings event in the earnings catalog that falls inside its stock's
+  price history — one per (stock, earnings_date) the daily frame's forward-merged
+  `earnings_date` carries, whether or not the ticker has a price row ON the report date
+  (`_completed_event_rows`). A report date with no price row (an ingestion gap, or a
+  weekend/holiday date) used to drop the event silently; it now stays, with
+  `anchor_session_status` saying why its report-day price is missing;
 * one PENDING row per active stock with a future earnings date, taken from that stock's
   final daily row (price context such as IV as of the latest data) and carrying no
   outcome;
@@ -33,6 +38,15 @@ from feature_engineering.announcement_timing import (
     resolve_event_anchors,
     resolution_summary,
 )
+
+# Columns that describe the report DAY itself — its price and the returns/volatility
+# computed from it. An event whose report day has no price row has none of them; they are
+# blanked rather than borrowed from a neighbouring session.
+REPORT_DAY_COLS = ["price", "daily_ret", "vol_10d", "vol_30d", "vol_ratio_10_to_30"]
+
+# Options context (market context only; never scored) and how a snapshot is matched to
+# the event it sits beside (`attach_iv_context_status`).
+IV_COLS = ["expected_move_pct", "atm_iv", "iv_snapshot_date"]
 
 # Realized outcomes. A pending event has none — blanked so nothing downstream can read a
 # neighbouring event's result as this one's. The legacy report-date reactions are the
@@ -120,6 +134,85 @@ def attach_announcement_timing(events: pd.DataFrame,
     return events
 
 
+def _completed_event_rows(daily_df: pd.DataFrame) -> pd.DataFrame:
+    """One row per completed catalog event.
+
+    Identities come from the catalog dates the forward merge_asof attached to the daily
+    frame (`earnings_date`), not from which rows happen to fall ON a report date: every
+    (stock, earnings_date) carried by some price row and not after the stock's last price
+    row is a completed event. Where the ticker has a price row on the report date, that
+    row is the event row (unchanged). Where it has none — a ticker gap on a market session,
+    or a weekend/holiday date — the event is built from its catalog fields on the last
+    daily row before it, with the report-day columns (REPORT_DAY_COLS, the legacy
+    reactions) blank and `date` set to the report date. Nothing is rolled and no price is
+    invented: `resolve_event_anchors` then labels the report day `unresolved_price_gap` or
+    `unresolved_no_session` and anchors the outcome only on sessions the ticker has.
+
+    Not recoverable here, by construction: catalog dates before a stock's first price row
+    (no history to anchor) and a second catalog date with no price row between it and the
+    previous one (the forward merge never attaches it).
+    """
+    on_day = daily_df[daily_df["is_earnings_day"] == 1]
+    dated = daily_df[daily_df["earnings_date"].notna()]
+    last_price = daily_df.groupby("stock")["date"].max()
+    ids = dated[["stock", "earnings_date"]].drop_duplicates()
+    ids = ids[ids["earnings_date"] <= ids["stock"].map(last_price)]
+    have = pd.MultiIndex.from_frame(on_day[["stock", "earnings_date"]])
+    missing = ids[~pd.MultiIndex.from_frame(ids).isin(have)]
+    if missing.empty:
+        return on_day.copy()
+    ctx = (dated.sort_values(["stock", "date"], kind="mergesort")
+           .groupby(["stock", "earnings_date"], sort=False).tail(1))
+    built = ctx.merge(missing, on=["stock", "earnings_date"], how="inner")
+    built["date"] = built["earnings_date"]
+    for col in REPORT_DAY_COLS + [c for c in OUTCOME_COLS if c in built.columns]:
+        if col in built.columns:
+            built[col] = np.nan
+    for col, val in (("days_to_earnings", 0), ("is_earnings_day", 1),
+                     ("is_earnings_week", 1), ("is_earnings_window", 1)):
+        if col in built.columns:
+            built[col] = val
+    print(f"  {len(built)} completed events have no price row on their report date "
+          "(kept, unresolved where the anchor needs that session)")
+    return pd.concat([on_day, built[on_day.columns]], ignore_index=True)
+
+
+def attach_iv_context_status(events: pd.DataFrame) -> pd.DataFrame:
+    """Keep options context only beside the event it priced.
+
+    The IV join (utilities/db_utilities.join_iv) carries each stock's latest snapshot
+    forward to every later row, so a pending event can otherwise sit beside a snapshot
+    taken for the PREVIOUS report (September IV expiring September 18 next to November 10
+    earnings). A snapshot belongs to this event only if it was taken after the stock's
+    previous report date, on or before this report date, and its option expiry falls
+    after this report date. Anything else is blanked, never shown, and
+    `iv_context_status` says why. Model B never reads these columns.
+    """
+    if "iv_snapshot_date" not in events.columns:
+        events["iv_context_status"] = "no_snapshot"
+        return events
+    e = events.sort_values(["stock", "earnings_date", "is_pending"], kind="mergesort")
+    prev_report = e.groupby("stock")["earnings_date"].shift(1).reindex(events.index)
+    snap = pd.to_datetime(events["iv_snapshot_date"])
+    expiry = pd.to_datetime(events["iv_expiry_used"]) if "iv_expiry_used" in events.columns \
+        else pd.Series(pd.NaT, index=events.index)
+    ed = events["earnings_date"]
+    status = np.select(
+        [snap.isna(),
+         snap > ed,
+         prev_report.notna() & (snap <= prev_report),
+         expiry.isna() | (expiry <= ed)],
+        ["no_snapshot", "suppressed_snapshot_after_report",
+         "suppressed_snapshot_before_previous_report", "suppressed_expiry_not_after_report"],
+        default="matched")
+    events["iv_context_status"] = status
+    bad = events["iv_context_status"] != "matched"
+    for col in IV_COLS + ["iv_expiry_used"]:
+        if col in events.columns:
+            events[col] = events[col].where(~bad)
+    return events
+
+
 def build_event_frame(daily_df: pd.DataFrame,
                       timing_df: pd.DataFrame | None = None,
                       active_stocks=None) -> pd.DataFrame:
@@ -141,7 +234,7 @@ def build_event_frame(daily_df: pd.DataFrame,
     `reaction_*_anchored` outcomes that Model B reads. A pending event does not need a
     timestamp of its own to be scored.
     """
-    completed = daily_df[daily_df["is_earnings_day"] == 1].copy()
+    completed = _completed_event_rows(daily_df)
     completed["is_pending"] = False
 
     # True final row per stock — .tail(1), never .last(), which would skip NaN per column.
@@ -189,6 +282,7 @@ def build_event_frame(daily_df: pd.DataFrame,
     # `pending` rather than picking up an anchor for an outcome that has not happened.
     events = attach_announcement_timing(events, timing_df)
     events = pd.concat([events, resolve_event_anchors(events, daily_df)], axis=1)
+    events = attach_iv_context_status(events)
 
     # The validation target as a flag: 1/0 where the corrected 3-session outcome is
     # available, NaN everywhere else (pending, unresolved) — never 0 for "unknown".

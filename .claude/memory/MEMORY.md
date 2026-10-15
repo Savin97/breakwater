@@ -21,7 +21,32 @@ done*, replace it with the thing being done.
   (tickers, scores, outcomes) explained the score-ceiling problem instantly after
   several paragraphs of AUCs and confidence intervals had not.
 
-## Current state — updated 2026-10-13
+## Current state — updated 2026-10-15
+
+- **2026-10-15, still UNCOMMITTED (same change set as 10-14 + these):** digest real send needs
+  `--generation` and reads calls + PDF reports from the verified bundle (reports now frozen
+  into generations); `publishing.generation check-live` blocks replacing a live generation
+  without receipt/`archived.json` (exit 5, prints recovery for the SAME generation); activation
+  removes the old flat parquets on the droplet. Price repair validated on disposable copies
+  (`output/audit_2026-10-15/repair/`, audit file §6): matches dry run except inactive POOL/TAP
+  (not fetched); MNST → Normal is the only live tier change; reference identical; rerun-safe.
+  Suite 612 + 20. Live DB/archive/snapshot hashes unchanged.
+
+- **2026-10-14 (audit remediation), UNCOMMITTED on top of 30d6675** (merge of a2159de,
+  pushed): independent GPT-6.1 audit said Not ready (H1–H4). Measured first
+  (`audit/INDEPENDENT_AUDIT_REMEDIATION_2026-10-14.md`; diagnostics in gitignored
+  `output/audit_2026-10-14/`): H4 verified only post-Feb-2026 (MNST 2026-08-06 −51.7% → true
+  −3.3%; MNST pending Elevated→Normal once repaired), reference untouched; May 19–21 2026
+  market-wide hole (global-max ingestion); 317 catalog events silently dropped; 40 pending
+  calls showed previous-report IV. Fixed: publication generations + receipt + atomic pointer
+  (publishing/generation.py, full_workflow.sh), append-only archive keyed by generation with
+  published_at/revision, announcement-time eligibility, generation-keyed dashboard
+  (streamlit_dash/data.py), price reconciliation in ingestion, catalog event identities, IV
+  matching, refit A0 from snapshot, readme release wording, deploy-test false positive.
+  Model B values unchanged on all 46,207 prior events. Suite 604 + 20. Canonical DB migrated
+  → `0dfae6cd…` (63 rows identical, all void). NOT done (Michael's call): run the price repair
+  `incremental_ingest_all_prices_yf(con, since="2026-02-11")` on the droplet DB; deploy
+  dashboard code + first generation together. Backups: `output/backups/2026-10-14_*`.
 
 - **2026-10-13 (later), UNCOMMITTED:** (1) Pinned snapshot `scoring/model_b_snapshot.py` →
   gitignored read-only `data/snapshots/model_b_0.4.0_20260928/` (approved events

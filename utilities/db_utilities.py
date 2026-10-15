@@ -292,26 +292,37 @@ def create_predictions_table_if_not_exists(con):
         WHERE run_week IS NULL
     """)
 
-    # One row per (stock, earnings_date) per run DAY. A same-day re-run upserts in place
-    # (see publishing/archive_calls.py) so a re-score after a fix corrects the row rather than
-    # being dropped; a run on a new date inserts a fresh row, preserving the trajectory.
+    # ---- Publication identity (2026-10-14, audit H1/H2) ------------------------------
+    # One row per published call per GENERATION (publishing/generation.py), appended and
+    # never updated. The old key — one row per event per run DAY, upserted — let a second
+    # publication on the same day overwrite the first public call (H2), and a date cannot
+    # say whether a call went public before a same-day announcement (H1).
+    #   published_at     when the generation was verified live (timezone-aware, receipt)
+    #   generation_id    the publication generation; NULL on legacy rows
+    #   artifact_sha256  SHA-256 of that generation's calls file
+    #   call_sha256      hash of the call's content: equal hash = the same call
+    #   revision         1 for an event's first published call, +1 per changed call
+    # Legacy rows keep NULL in all five: their publication time was never recorded, so
+    # they can never qualify for a track record (they are void anyway).
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ")
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS generation_id TEXT")
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS artifact_sha256 TEXT")
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS call_sha256 TEXT")
+    con.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS revision INTEGER")
+    con.execute("DROP INDEX IF EXISTS predictions_uq")
     con.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS predictions_uq
-        ON predictions(stock, earnings_date, prediction_asof_date);
+        CREATE UNIQUE INDEX IF NOT EXISTS predictions_publication_uq
+        ON predictions(stock, earnings_date, generation_id);
     """)
 
-    # The product-of-record: the FIRST call we ever made on each event. Query this for
-    # hit rates — reading the raw table instead counts an event once per day it was
-    # scored. Keyed on the event, not on run_week: a rolling work-week window can cover
-    # the same event from two different run weeks (a Thursday run and the following
-    # Monday both see an event 4 days out), which under the old (stock, earnings_date,
-    # run_week) key produced two rows for one call.
+    # The FIRST call archived per event, any model version (history; predictions_range).
+    # Ordered by publication, then revision; legacy rows (no published_at) by their date.
     con.execute("DROP VIEW IF EXISTS predictions_week_open")
     con.execute("""
         CREATE OR REPLACE VIEW predictions_first_call AS
         SELECT DISTINCT ON (stock, earnings_date) *
         FROM predictions
-        ORDER BY stock, earnings_date, prediction_asof_date;
+        ORDER BY stock, earnings_date, prediction_asof_date, published_at NULLS FIRST, revision;
     """)
 
     # ---- 0.4.0 Model B fields (added 2026-10-04) ------------------------------------
@@ -329,15 +340,25 @@ def create_predictions_table_if_not_exists(con):
     con.execute(f"CREATE OR REPLACE VIEW predictions_track_record AS {track_record_select()}")
 
 
+# The columns a track-record call needs; an archive without them holds no eligible call.
+TRACK_RECORD_REQUIRED_COLS = {"model_version", "score_asof_date", "published_at"}
+
+
 def track_record_select(has_void_flag: bool = True) -> str:
-    """THE definition of the track record: the first ELIGIBLE call per event — a model
-    version in TRACK_RECORD_MODEL_VERSIONS, not voided, scored from data before the event.
-    Pre-0.4 calls (0.3.1, 0.3.1-preaudit) never enter it; they stay in `predictions` as
-    history. ANY published or marketing number must come from this.
+    """The CONSERVATIVE track record, in SQL: the earliest eligible publication per event.
+
+    Eligible = a model version in TRACK_RECORD_MODEL_VERSIONS, not voided, scored from data
+    before the event (score_asof_date < earnings_date), and PUBLISHED BEFORE THE REPORT DAY
+    BEGAN in New York (published_at < 00:00 America/New_York on earnings_date). That last
+    rule needs no announcement time, so it is the one the stored view can apply; it
+    excludes every same-day publication. read_track_record() can also admit a same-day
+    publication that provably went out before the observed announcement.
 
     Eligibility is in WHERE, which runs before DISTINCT ON picks the first call, so an
-    ineligible earlier call (a voided 0.3.1 call, a voided 0.4.0 call) never hides a later
-    eligible 0.4.0 call on the same event."""
+    ineligible earlier call (voided, legacy, or published too late) never hides a later
+    eligible one; the order is publication time, then revision — never insertion order.
+    Pre-0.4 calls (0.3.1, 0.3.1-preaudit) never enter it; they stay in `predictions` as
+    history. ANY published or marketing number must come from this."""
     versions = ", ".join(f"'{v}'" for v in TRACK_RECORD_MODEL_VERSIONS)
     void = "AND NOT COALESCE(void_for_track_record, FALSE)" if has_void_flag else ""
     return f"""
@@ -346,24 +367,69 @@ def track_record_select(has_void_flag: bool = True) -> str:
         WHERE model_version IN ({versions})
           {void}
           AND score_asof_date < earnings_date
-        ORDER BY stock, earnings_date, prediction_asof_date"""
+          AND published_at IS NOT NULL
+          AND published_at < timezone('America/New_York', CAST(earnings_date AS TIMESTAMP))
+        ORDER BY stock, earnings_date, published_at, revision"""
 
 
-def read_track_record(con) -> pd.DataFrame:
-    """The track record, computed from the `predictions` table with track_record_select()
-    — never read from the stored predictions_track_record view. A stored view is only as
-    current as the last migration of that file: the archive committed at 5cc7e64 still
-    carried a pre-0.4.0 view that returned 20 legacy 0.3.1 calls as the track record.
+def _publication_deadline(calls: pd.DataFrame, announcements: pd.DataFrame | None) -> pd.Series:
+    """Per call, the instant it had to be public by: the OBSERVED announcement time where
+    one is known, else the start of the report day in New York (the conservative rule).
 
-    Works on a read-only connection and on any schema: a table without model_version or
-    score_asof_date cannot hold an eligible call, so it yields no rows."""
+    An announcement time is trusted only when it was observed at or after the moment it
+    names — a pre-event observation is a schedule, which can move (CLAUDE.md), and an
+    unknown provenance is treated the same way."""
+    from utilities.time_utilities import NY_TZ
+    day_start = (pd.to_datetime(calls["earnings_date"]).dt.tz_localize(NY_TZ)
+                 .dt.tz_convert("UTC").reset_index(drop=True))
+    if announcements is None or announcements.empty:
+        return day_start
+    a = announcements[["stock", "earnings_date", "announce_ts_ny", "announce_ts_observed_at"]].copy()
+    a["earnings_date"] = pd.to_datetime(a["earnings_date"])
+    a = a.drop_duplicates(["stock", "earnings_date"])
+    m = calls[["stock"]].assign(earnings_date=pd.to_datetime(calls["earnings_date"])).merge(
+        a, on=["stock", "earnings_date"], how="left")
+    ts = pd.to_datetime(m["announce_ts_ny"])
+    seen = pd.to_datetime(m["announce_ts_observed_at"])
+    trusted = ts.notna() & seen.notna() & (seen >= ts)
+    actual = ts.dt.tz_localize(NY_TZ, ambiguous="NaT", nonexistent="NaT").dt.tz_convert("UTC")
+    return actual.where(trusted & actual.notna(), day_start)
+
+
+def read_track_record(con, announcements: pd.DataFrame | None = None) -> pd.DataFrame:
+    """The track record: the earliest ELIGIBLE publication per event, computed from the
+    `predictions` table — never read from the stored predictions_track_record view, which
+    is only as current as the last migration of that file (the archive at 5cc7e64 had one
+    returning 20 legacy 0.3.1 calls).
+
+    Eligible = as track_record_select(), except the publication deadline: with
+    `announcements` (stock, earnings_date, announce_ts_ny, announce_ts_observed_at — the
+    event frame's columns) a call published on the report day still counts if it went out
+    before the observed announcement; without them, or where the time is unknown or only
+    a schedule, it must predate the report day (conservative). Works read-only and on any
+    schema: an archive without the publication columns holds no eligible call."""
     try:
         cols = [r[0] for r in con.execute("DESCRIBE predictions").fetchall()]
     except duckdb.CatalogException:
         return pd.DataFrame()
-    if not {"model_version", "score_asof_date"} <= set(cols):
+    if not TRACK_RECORD_REQUIRED_COLS <= set(cols):
         return pd.DataFrame(columns=cols)
-    return con.execute(track_record_select("void_for_track_record" in cols)).df()
+    versions = ", ".join(f"'{v}'" for v in TRACK_RECORD_MODEL_VERSIONS)
+    void = "AND NOT COALESCE(void_for_track_record, FALSE)" if "void_for_track_record" in cols else ""
+    cand = con.execute(f"""
+        SELECT * FROM predictions
+        WHERE model_version IN ({versions}) {void}
+          AND score_asof_date < earnings_date
+          AND published_at IS NOT NULL""").df()
+    if cand.empty:
+        return cand
+    published = pd.to_datetime(cand["published_at"], utc=True).reset_index(drop=True)
+    deadline = _publication_deadline(cand, announcements)
+    eligible = cand[(published < deadline).values]
+    return (eligible.sort_values(["stock", "earnings_date", "published_at", "revision"],
+                                 kind="mergesort")
+            .drop_duplicates(["stock", "earnings_date"], keep="first")
+            .reset_index(drop=True))
 
 
 def merge_tables(con):
@@ -638,7 +704,7 @@ def join_iv(df, con):
     """
     iv_df = con.execute("""
         SELECT DISTINCT ON (i.stock, i.snapshot_date)
-               i.stock, i.expected_move_pct, i.atm_iv,
+               i.stock, i.expected_move_pct, i.atm_iv, i.expiry_used AS iv_expiry_used,
                i.snapshot_date AS iv_snapshot_date
         FROM iv_snapshots i
         WHERE i.expiry_used > (
@@ -647,8 +713,11 @@ def join_iv(df, con):
         )
         ORDER BY i.stock, i.snapshot_date, i.snapshot_hour DESC
     """).fetch_df()
+    # iv_expiry_used travels with the snapshot so the event frame can check the snapshot
+    # against the event it ends up beside (pipeline/events.attach_iv_context_status):
+    # this as-of join carries the latest snapshot forward to every later row.
     return join_dfs_by_stock_and_date(
-        df, iv_df, "iv_snapshot_date", ["expected_move_pct", "atm_iv"]
+        df, iv_df, "iv_snapshot_date", ["expected_move_pct", "atm_iv", "iv_expiry_used"]
     )
 
 
