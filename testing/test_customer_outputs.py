@@ -49,7 +49,8 @@ OUTPUT_MODULES = ["report/report_builder.py", "report/recommendations_builder.py
                   "report/calendar_builder.py", "report/chart_builder.py",
                   "streamlit_dash/app.py", "streamlit_dash/streamlit_export.py",
                   "cron/cron_weekly_digest.py", "analysis/chart_weekly.py",
-                  "analysis/last_week_results.py", "analysis/predictions_range.py",
+                  "analysis/last_week_results.py", "analysis/chart_last_week.py",
+                  "analysis/predictions_range.py",
                   "marketing/generate_public_track_record.py", "pipeline/stage5.py"]
 TEMPLATES = ["report/templates/earnings_report.html", "report/templates/weekly_calendar.html"]
 

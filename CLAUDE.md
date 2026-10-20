@@ -163,7 +163,11 @@ python -m analysis.predictions_range --weeks-back 12
 python -m analysis.predictions_range --weeks-forward 4
 python -m analysis.predictions_range --monday 2026-06-01 --weeks 3
 
-# Archived 0.4.0 calls vs corrected outcomes for last week (internal, never published)
+# Archived 0.4.0 calls vs corrected outcomes for last week. last_week_results.txt is
+# INTERNAL (tier, percentile, >=8% tally); results_chart.png (analysis/chart_last_week.py)
+# is for X, posted by hand: the same archived calls, each day's column ordered by the SIZE
+# of the corrected 3-session move, no tally or rate. Nothing drawn without an archived
+# 0.4.0 call; moves not measurable yet (Thu AMC / Fri on a Monday run) are named, not drawn.
 python -m analysis.last_week_results
 
 # Archive calls into a SCRATCH DB (validation; the canonical DB needs --published on master)
@@ -504,8 +508,8 @@ Kept but not on the pipeline path (restored 2026-10-04 at Michael's request):
 cores from the deleted `feature_engineering/event_features.py` and the legacy 73/79 and lift
 constants live inside it; most of its inputs are no longer produced by stage 3),
 `feature_engineering/pre_earnings_sector_features.py` (sector drift/vol features, not called
-by stage 3) and `analysis/chart_results.py` (the social results chart, not called while the
-track record is paused). None of them may feed a production score or tier;
+by stage 3) and `analysis/chart_results.py` (the retired 0.3.1 results chart — score
+axis, 73/79, legacy reaction; replaced by `analysis/chart_last_week.py` on 2026-10-20). None of them may feed a production score or tier;
 `testing/test_model_b.py` checks no pipeline or output module loads them.
 
 Model B's evidence is `analysis/model_c_refit/RESULTS.md` (selection) and

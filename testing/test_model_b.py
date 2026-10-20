@@ -233,7 +233,7 @@ def test_model_b_source_names_no_legacy_target():
                                   "streamlit_dash/streamlit_export.py",
                                   "cron/cron_weekly_digest.py", "analysis/chart_weekly.py",
                                   "publishing/archive_calls.py",
-                                  "analysis/last_week_results.py",
+                                  "analysis/last_week_results.py", "analysis/chart_last_week.py",
                                   "analysis/predictions_range.py",
                                   "marketing/generate_public_track_record.py"])
 def test_no_output_reads_the_legacy_target(path):
@@ -375,7 +375,8 @@ def test_pipeline_and_outputs_never_load_the_legacy_scorer():
     kept-but-retired legacy modules may end up loaded."""
     import subprocess
     entry = ["pipeline.pipeline", "cron.cron_weekly_digest", "analysis.predictions_range",
-             "analysis.last_week_results", "marketing.generate_public_track_record",
+             "analysis.last_week_results", "analysis.chart_last_week",
+             "marketing.generate_public_track_record",
              "streamlit_dash.streamlit_export", "scoring.build_model_b_reference"]
     code = ("import sys, importlib\n"
             f"for m in {entry!r}: importlib.import_module(m)\n"
@@ -431,7 +432,8 @@ def test_real_pending_order_equals_raw_order(real_events):
 @pytest.mark.parametrize("path", ["report/report_builder.py", "report/calendar_builder.py",
                                   "streamlit_dash/streamlit_export.py", "streamlit_dash/app.py",
                                   "cron/cron_weekly_digest.py", "analysis/chart_weekly.py",
-                                  "analysis/predictions_range.py", "analysis/last_week_results.py"])
+                                  "analysis/predictions_range.py", "analysis/last_week_results.py",
+                                  "analysis/chart_last_week.py"])
 def test_no_list_is_sorted_on_the_percentile(path):
     """Ordering goes through scoring.model_b.sort_by_risk; risk_score is never a sort key."""
     tree = ast.parse(open(path).read())

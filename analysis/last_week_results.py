@@ -1,12 +1,16 @@
 """
-Last week's results, for internal review: the calls we ARCHIVED for last week's events
+Last week's results: the calls we ARCHIVED for last week's events
 (db/predictions.duckdb, view predictions_track_record — first 0.4.0 call per event) next
 to each event's corrected outcome (`abs_reaction_3d_anchored` from the event frame).
 
     python -m analysis.last_week_results
     python -m analysis.last_week_results --lookback 2   # go back 2 weeks
 
-Writes last_week_results.txt into this run's output folder. Nothing else.
+Writes into this run's output folder:
+  * last_week_results.txt — INTERNAL (tier, percentile, cutoff, ≥8% tally);
+  * results_chart.png — for X (analysis/chart_last_week.py): the same archived calls,
+    each at the size of its corrected move, largest first. Outcomes only, no tally.
+    Nothing is drawn for a week without an archived 0.4.0 call.
 
 What it deliberately does not do:
   * It never re-scores the past. A call is shown exactly as it was archived; a week with
@@ -15,9 +19,8 @@ What it deliberately does not do:
   * It never uses the legacy report-date reaction, which mismeasures before-open
     reporters. An event without a verified announcement time has no corrected outcome and
     is listed as unresolved, never counted as a miss.
-  * It publishes nothing. The public track record is paused
-    (marketing/generate_public_track_record.py); the social results chart this module
-    used to draw was retired with the 0.3.1 model.
+  * It posts nothing itself: the chart is a file to post by hand. The landing-page track
+    record (marketing/generate_public_track_record.py) stays paused.
 """
 import argparse
 import os
@@ -27,6 +30,7 @@ import duckdb
 import pandas as pd
 
 import config
+from analysis.chart_last_week import generate_last_week_chart
 from feature_engineering.announcement_timing import TARGET_AVAILABLE
 from scoring.model_b import HIGH_ALERT, ELEVATED, display_score, sort_by_risk
 from utilities.db_utilities import read_track_record
@@ -133,6 +137,7 @@ def generate_last_week_results(lookback_weeks: int = 1, events_df: pd.DataFrame 
     with open(path, "w", encoding="utf-8") as f:
         f.write(text + "\n")
     print(f"Saved last week's results → {path} ({len(tbl)} archived 0.4.0 calls)")
+    generate_last_week_chart(tbl, week_start)
     return text
 
 

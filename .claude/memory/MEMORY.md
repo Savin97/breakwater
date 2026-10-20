@@ -21,7 +21,28 @@ done*, replace it with the thing being done.
   (tickers, scores, outcomes) explained the score-ceiling problem instantly after
   several paragraphs of AUCs and confidence intervals had not.
 
-## Current state — updated 2026-10-15
+## Current state — updated 2026-10-20
+
+- **2026-10-20, master weekly run + new results chart (UNCOMMITTED on methodology-rebuild).**
+  Ran `scripts/full_workflow.sh` on master (Michael ran it; the auto-mode classifier blocks
+  Claude from droplet deploys/reads). First attempt died in stage 5: master draws the weekly
+  chart BEFORE rewriting upcoming_df.parquet, so after a rebuild run it reads the Model B
+  file (no `peer_percentile`). Fix without code: regenerate master's dashboard parquets from
+  full_df first. Second run published 0.3.1 (13 HA incl. NFLX/TSLA/META), digest to 1
+  subscriber; Michael committed master `820fd97` (172 archived 0.3.1 rows + master
+  .gitignore now ignores vendor/Benzinga/snapshots). Master's results chart showed legacy
+  (wrong for BMO) moves — e.g. JNJ +2.8% vs corrected −4.0% — so it was not posted.
+  New `analysis/chart_last_week.py` (Michael: archived 0.4.0 calls only, sorted by SIZE of
+  corrected move, public on X): y = |reaction_3d_anchored|, label signed, tier colour as
+  published, unmeasurable events named under the chart, no tally; drawn by
+  `last_week_results` (txt stays internal). Draws nothing until 0.4.0 calls are archived.
+  Suite 619 pass. Backups: `output/backups/2026-10-20_pre_master_run/` (rebuild outputs +
+  DBs before the master run), `output/backups/2026-10-20_master_run/` (master's parquets);
+  output/ parquets restored to the rebuild's Oct 14 versions (announcement-timing tests
+  fail on master's full_df). Open: FDX shows an Oct 12 report (AMC) — check the date;
+  Monday runs can't measure Thu-AMC/Fri events yet.
+
+## Earlier — 2026-10-15
 
 - **2026-10-15, still UNCOMMITTED (same change set as 10-14 + these):** digest real send needs
   `--generation` and reads calls + PDF reports from the verified bundle (reports now frozen

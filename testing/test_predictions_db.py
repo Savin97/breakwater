@@ -325,6 +325,60 @@ def test_last_week_results_reads_archived_calls_and_corrected_outcomes(db_copy):
     assert "INTERNAL" in text and "1 of 1 resolved calls moved" in text
 
 
+def _week_with_more_calls():
+    """_pending_week plus two calls on the same day, so the size order is tested."""
+    start, _ = work_week_window(weeks=1)
+    d = start + pd.Timedelta(days=1)
+    extra = pd.DataFrame({
+        "stock": ["EEE", "BBB"], "earnings_date": [d, d], "is_pending": True,
+        "risk_score": [84.0, 12.0], "risk_tier": ["Elevated", "Normal"],
+        "model_b_hist_mean_abs": [0.06, 0.02], "model_b_n_prior": [20, 20],
+        "score_asof_date": [start - pd.Timedelta(days=3)] * 2, "model_version": "0.4.0"})
+    calls = pd.concat([_pending_week(), extra], ignore_index=True)
+    outcomes = pd.concat([_completed_outcomes(), pd.DataFrame({
+        "stock": ["EEE", "BBB"], "earnings_date": [d, d], "is_pending": False,
+        "announce_window": ["BMO", "AMC"], "reaction_3d_anchored": [-0.05, 0.08],
+        "abs_reaction_3d_anchored": [0.05, 0.08],
+        "reaction_3d_anchored_status": ["available", "available"],
+        "abs_reaction_3d": [0.40, 0.0]})], ignore_index=True)
+    return calls, outcomes
+
+
+def test_last_week_chart_orders_each_day_by_size_of_the_corrected_move(db_copy):
+    from analysis.last_week_results import archived_calls, results_table
+    from analysis.chart_last_week import chart_rows
+    calls, outcomes = _week_with_more_calls()
+    _archive(calls, db_copy)
+    start, end = work_week_window(weeks=1)
+    plotted, unmeasured = chart_rows(results_table(archived_calls(start, end, db_copy), outcomes))
+    # Size, not sign and not tier: −12% above +8% above −5% above +3%; legacy moves ignored.
+    assert plotted["stock"].tolist() == ["HHH", "BBB", "EEE", "NNN"]
+    assert plotted["y"].round(6).tolist() == [12.0, 8.0, 5.0, 3.0]
+    assert unmeasured == ["UUU"]                 # unresolved: named, never drawn as a small move
+
+
+def test_last_week_chart_draws_archived_calls_and_nothing_for_an_empty_week(db_copy, tmp_path):
+    from analysis.last_week_results import archived_calls, results_table
+    from analysis.chart_last_week import generate_last_week_chart
+    calls, outcomes = _week_with_more_calls()
+    _archive(calls, db_copy)
+    start, end = work_week_window(weeks=1)
+    tbl = results_table(archived_calls(start, end, db_copy), outcomes)
+    out = tmp_path / "results_chart.png"
+    assert generate_last_week_chart(tbl, start, str(out)) == str(out) and out.stat().st_size > 0
+    empty = tmp_path / "empty.png"
+    assert generate_last_week_chart(tbl.iloc[0:0], start, str(empty)) == ""
+    assert not empty.exists()
+
+
+def test_last_week_chart_wording_is_honest():
+    from analysis import chart_last_week as C
+    from testing.test_customer_outputs import assert_honest
+    for text in (C.MOVE_NOTE, C.NOT_PLOTTED_NOTE, C.UNSCORED_LEGEND):
+        assert_honest(text, "last week's chart")
+    assert "not low risk" in C.UNSCORED_LEGEND
+
+
 def test_last_week_results_ignores_pre_0_4_calls(db_copy):
     from analysis.last_week_results import archived_calls
     calls = archived_calls(pd.Timestamp("2026-08-31"), pd.Timestamp("2026-10-02"), db_copy)
